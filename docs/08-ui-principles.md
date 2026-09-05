@@ -67,7 +67,7 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 ┌──────────────────────────────────────────────────────────────────┐
 │ rtl-sdr #0 ▾ › A · Tuner ▾ › B · Gate ▾ › C · AM ▾ › D · PWM ▾   │ breadcrumb
 ├──────────────────────────────────────────────────────────────────┤
-│ Spectrum │ Time │ Constellation │ Bits │ Flow │ +                │ view tabs
+│ Spectrum │ C · AM env │ D · PWM │ Flow │ +                      │ block tabs
 ├──────────────────────────────────────────────────────────────────┤
 │      ╱╲        ╱╲                                           ▓    │ live + peak
 │  ╱╲╱  ╲──╱╲──╱  ╲───╲                                       ▓    │ hold traces

@@ -32,7 +32,7 @@ class App {
   constructor() {
     this.engine = new MockEngine();
     this.viewParams = new Map();   // nodeId -> params
-    this.activeView = new Map();   // nodeId -> view name
+    this.tabs = new Map();         // channelId -> 'spectrum' | 'flow' | blockNodeId
     this.selection = null;
     this.metrics = new Metrics($('#metrics'));
     this.menu = new ContextMenu(document.body);
@@ -47,9 +47,10 @@ class App {
 
   async start() {
     const root = await this.engine.createSession();
-    this.current = root.id;
+    this.channel = root.id;        // where the breadcrumb is
+    this.current = root.id;        // whose result is on screen
     this.vp(root.id);
-    this.activeView.set(root.id, 'Spectrum');
+    this.tabs.set(root.id, 'spectrum');
     this.wire();
     this.refresh();
     requestAnimationFrame((t) => this.loop(t));
@@ -73,7 +74,44 @@ class App {
     box.hidden = true;
     box.classList.remove('armed');
   }
-  view() { return this.activeView.get(this.current) || VIEWS[this.node().out.kind][0]; }
+  /**
+   * A *channel* is a node that carries IQ — the source, a tuner, a gate. Everything
+   * downstream of one until the next channel is a *block*, and blocks are tabs rather
+   * than places you navigate to: a channel is a workspace you stay in while you flip
+   * between the results of what you applied to it.
+   *
+   * This is also exactly where the engine splits flowgraph fragments (ADR-0004), so
+   * the unit of navigation and the unit of execution are the same thing.
+   */
+  isChannel(n) { return !!(n && n.out && n.out.kind === 'iq'); }
+
+  blocksOf(channelId) {
+    const out = [];
+    const walk = (id) => {
+      for (const c of this.engine.children(id)) {
+        if (this.isChannel(c)) continue;      // that is a channel of its own
+        out.push(c);
+        walk(c.id);
+      }
+    };
+    walk(channelId);
+    return out;
+  }
+
+  tabKey() { return this.tabs.get(this.channel) || 'spectrum'; }
+
+  setTab(key) {
+    this.tabs.set(this.channel, key);
+    this.current = (key === 'spectrum' || key === 'flow') ? this.channel : key;
+  }
+
+  view() {
+    const k = this.tabKey();
+    if (k === 'spectrum') return 'Spectrum';
+    if (k === 'flow') return 'Flow';
+    const n = this.engine.node(k);
+    return n ? VIEWS[n.out.kind][0] : 'Spectrum';
+  }
 
   // ── chrome ───────────────────────────────────────────────────────────────
   refresh() {
@@ -85,49 +123,71 @@ class App {
   }
 
   renderStatus() {
+    const ch = this.engine.node(this.channel);
     const n = this.node();
+    const where = n.id === ch.id ? '' : ` › ${n.letter} · ${n.label}`;
     $('#status').innerHTML =
       `<span class="live">synthetic #0</span>` +
       `<span>${fmtHz(this.engine.root.out.centerHz)} MHz</span>` +
       `<span>${fmtRate(this.engine.root.out.sampleRate)}</span>` +
-      `<span class="sp">viewing ${n.label || 'source'} · ${n.out.kind} · ${fmtRate(n.out.sampleRate)}</span>`;
+      `<span class="sp">${ch.op === 'core.source' ? ch.label : ch.letter + ' · ' + ch.label}` +
+      ` · ${fmtRate(ch.out.sampleRate)}${where}</span>`;
   }
 
   renderCrumbs() {
-    const path = this.engine.path(this.current);
+    // channels only — blocks are tabs, not destinations
+    const path = this.engine.path(this.channel).filter((n) => this.isChannel(n));
     const el = $('#crumbs');
     el.innerHTML = path.map((n, i) => {
-      const sibs = this.engine.children(n.parent).length;
       const label = n.op === 'core.source' ? n.label : `${n.letter} · ${n.label}`;
-      return `<button class="crumb${n.id === this.current ? ' cur' : ''}${OPS[n.op] && OPS[n.op].external ? ' ext' : ''}" data-id="${n.id}">${label}${sibs > 1 ? ' <i>▾</i>' : ''}</button>` +
+      return `<button class="crumb${n.id === this.channel ? ' cur' : ''}" data-id="${n.id}">${label}</button>` +
         (i < path.length - 1 ? '<span class="sepc">›</span>' : '');
     }).join('');
 
-    // children of the current node hang off the end, so the tree stays reachable
-    const kids = this.engine.children(this.current);
+    const kids = this.engine.children(this.channel).filter((k) => this.isChannel(k));
     if (kids.length) {
       el.innerHTML += '<span class="sepc">›</span>' + kids.map((k) =>
         `<button class="crumb dim" data-id="${k.id}">${k.letter} · ${k.label}</button>`).join('');
     }
 
     for (const b of el.querySelectorAll('.crumb')) {
-      b.addEventListener('click', () => { this.clearSelection(); this.current = b.dataset.id; this.metrics.interaction(); this.refresh(); });
+      b.addEventListener('click', () => { this.goChannel(b.dataset.id); });
     }
   }
 
+  goChannel(id) {
+    this.clearSelection();
+    this.channel = id;
+    if (!this.tabs.has(id)) this.tabs.set(id, 'spectrum');
+    this.setTab(this.tabKey());
+    this.metrics.interaction();
+    this.refresh();
+  }
+
   renderTabs() {
-    const n = this.node();
-    const views = VIEWS[n.out.kind] || ['Flow'];
-    if (!views.includes(this.view())) this.activeView.set(n.id, views[0]);
+    const blocks = this.blocksOf(this.channel);
+    const key = this.tabKey();
+    if (key !== 'spectrum' && key !== 'flow' && !blocks.some((b) => b.id === key)) this.setTab('spectrum');
+
+    const items = [{ k: 'spectrum', label: 'Spectrum' }]
+      .concat(blocks.map((b) => ({ k: b.id, label: `${b.letter} · ${b.label}`, kind: b.out.kind, ext: OPS[b.op] && OPS[b.op].external })))
+      .concat([{ k: 'flow', label: 'Flow' }]);
+
     const el = $('#tabs');
-    el.innerHTML = views.map((v) =>
-      `<button class="tab${v === this.view() ? ' on' : ''}" data-v="${v}">${v}</button>`).join('') +
+    el.innerHTML = items.map((it) =>
+      `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}" data-k="${it.k}">` +
+      `${it.label}${it.kind ? `<span class="tk">${it.kind}</span>` : ''}</button>`).join('') +
       '<button class="tab plus" title="operations valid here">+</button>';
 
-    for (const b of el.querySelectorAll('.tab[data-v]')) {
-      b.addEventListener('click', () => { this.clearSelection(); this.activeView.set(n.id, b.dataset.v); this.metrics.interaction(); this.refresh(); });
+    for (const b of el.querySelectorAll('.tab[data-k]')) {
+      b.addEventListener('click', () => {
+        this.clearSelection();
+        this.setTab(b.dataset.k);
+        this.metrics.interaction();
+        this.refresh();
+      });
     }
-    el.querySelector('.plus').addEventListener('click', async (e) => {
+    el.querySelector('.plus').addEventListener('click', (e) => {
       const r = e.target.getBoundingClientRect();
       this.metrics.beginOp();
       this.openMenu(r.left, r.bottom + 4, null);
@@ -176,13 +236,7 @@ class App {
     }).join('');
     for (const m of host.querySelectorAll('.marker')) {
       m.addEventListener('pointerdown', (e) => e.stopPropagation());
-      m.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.clearSelection();
-        this.current = m.dataset.id;
-        this.metrics.interaction();
-        this.refresh();
-      });
+      m.addEventListener('click', (e) => { e.stopPropagation(); this.goChannel(m.dataset.id); });
     }
   }
 
@@ -232,7 +286,17 @@ class App {
     $('#pane-flow').innerHTML =
       `<div class="flowwrap"><div class="flowhead">Compiled graph — read-only. Export to <code>.grc</code> arrives with the real engine at M1.</div>${walk(this.engine.root.id, 0)}</div>`;
     for (const el of $('#pane-flow').querySelectorAll('.fnode')) {
-      el.addEventListener('click', () => { this.clearSelection(); this.current = el.dataset.id; this.metrics.interaction(); this.refresh(); });
+      el.addEventListener('click', () => {
+        const n = this.engine.node(el.dataset.id);
+        if (this.isChannel(n)) { this.goChannel(n.id); return; }
+        let ch = this.engine.node(n.parent);
+        while (ch && !this.isChannel(ch)) ch = this.engine.node(ch.parent);
+        this.clearSelection();
+        if (ch) this.channel = ch.id;
+        this.setTab(n.id);
+        this.metrics.interaction();
+        this.refresh();
+      });
     }
   }
 
@@ -342,10 +406,18 @@ class App {
         const sel = selection || this.defaultSelection();
         const node = await this.engine.addNode({ parent: this.current, op: opId, selection: sel });
         this.clearSelection();
-        this.current = node.id;
         this.vp(node.id);
+        if (this.isChannel(node)) {
+          this.channel = node.id;              // a new channel is a new workspace
+          this.tabs.set(node.id, 'spectrum');
+          this.current = node.id;
+          this.trace.reset();
+        } else {
+          this.setTab(node.id);                // a block is a tab on the one you are in
+        }
+        this._tsCache = null;
+        this._bitsSeen = false;
         this.metrics.endOp();
-        this.trace.reset();
         this.refresh();
       });
     });

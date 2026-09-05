@@ -31,7 +31,7 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 ┌──────────────────────────────────────────────────────────────────┐
 │ rtl-sdr #0 ▾ › A · Tuner ▾ › B · Gate ▾ › C · AM ▾ › D · PWM ▾   │ breadcrumb
 ├──────────────────────────────────────────────────────────────────┤
-│ Spectrum │ Time │ Constellation │ Bits │ Flow │ +                │ view tabs
+│ Spectrum │ C · AM env │ D · PWM │ Flow │ +                      │ block tabs
 ├──────────────────────────────────────────────────────────────────┤
 │      ╱╲        ╱╲                                           ▓    │ live + peak
 │  ╱╲╱  ╲──╱╲──╱  ╲───╲                                       ▓    │ hold traces
@@ -54,8 +54,11 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 - **Breadcrumb.** The path from source to the selected node. Each `▾` opens that
   node's siblings — which is how you navigate a tree without spending a permanent
   rail on it. The whole tree, when you want the overview, is the **Flow** tab.
-- **View tabs.** A node's views, several at once. A demodulator usually wants Time
-  *and* Constellation; a decoder wants Bits *and* the event table. The compiled
+- **Block tabs.** A *channel* — the source, a tuner, a gate, anything carrying IQ —
+  is a workspace. Everything you apply to it downstream, until the next channel, is a
+  **block**, and each block's result is a tab rather than somewhere you navigate to.
+  Adding a demodulator does not move you; it adds a tab beside the spectrum you were
+  already looking at. The compiled
   flowgraph is an ordinary tab here, not a special corner toggle. Views sharing an
   axis live in one tab together: **spectrum and waterfall stack over a single
   frequency axis** ([ADR-0020](adr/0020-views-that-share-an-axis.md)), as do a

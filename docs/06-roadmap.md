@@ -38,7 +38,10 @@ explanation, and the full tune → AM envelope → PWM slicer chain recovering
 `aa aa 3c 69` out of the synthetic scene. Metrics for interaction count, pointer
 travel, frame rate and jitter run live.
 
-**Still open:** drag-and-drop of a real SigMF file, the time `gate` selection,
+Also built since: channel markers on the parent spectrum, a burst-triggered time view
+with a real axis, a located bit table, and blocks as tabs within a channel.
+
+**Still open:** drag-and-drop of a real SigMF file, the time `gate` selection gesture,
 scrubbing back through history, tearing tabs into tiles, and the newcomer test that
 ADR-0018 asks for.
 

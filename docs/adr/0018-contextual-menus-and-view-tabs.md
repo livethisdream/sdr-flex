@@ -9,20 +9,28 @@
 
 - The **operation palette is a contextual menu** opened at the pointer, not a pinned
   sidebar. Releasing a selection drag opens it automatically, at the release point.
-- The **analysis tree is a breadcrumb** across the top, each segment a menu of its
-  siblings. The full tree/flowgraph is available as a view tab, not a permanent rail.
-- **Each node's views are tabs** in the centre pane — Spectrum, Time, Constellation,
-  Bits, Flow. A node can hold several at once and you switch between them without
-  losing either. Views that share an axis occupy one tab together, stacked:
-  spectrum and waterfall are the **Spectrum** tab
+- The **analysis tree is a breadcrumb** across the top, listing *channels only*, each
+  segment a menu of its siblings. The full tree/flowgraph is available as a view tab,
+  not a permanent rail.
+- **Each channel's blocks are tabs** in the centre pane. A *channel* is a node that
+  carries IQ — the source, a tuner, a gate; everything downstream of one until the
+  next channel is a *block*. Blocks are tabs, not destinations: a channel is a
+  workspace you stay in while you flip between the results of what you applied to it.
+  So a gate's tab bar reads `Spectrum │ C · AM env │ D · PWM │ Flow`. Views that share
+  an axis occupy one tab together — spectrum and waterfall are the **Spectrum** tab
   ([ADR-0020](0020-views-that-share-an-axis.md)).
+
+  This puts the unit of navigation exactly where the engine splits flowgraph fragments
+  ([ADR-0004](0004-flowgraph-splitting-at-taps.md)), which is not a coincidence: a
+  channel is a tap boundary, and a tap boundary is where a rebuild stops. What you
+  navigate between and what the engine rebuilds independently are the same thing.
 - **Parameters live in a bottom strip**, full width, under the canvas.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │ rtl-sdr #0 ▾ › A · Tuner ▾ › B · Gate ▾ › C · AM ▾ › D · PWM ▾   │ breadcrumb
 ├──────────────────────────────────────────────────────────────────┤
-│ Spectrum │ Time │ Constellation │ Bits │ Flow │ +                 │ view tabs
+│ Spectrum │ C · AM env │ D · PWM │ Flow │ +                       │ block tabs
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │                  CANVAS — full width                             │

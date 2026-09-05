@@ -209,3 +209,12 @@ select.cv option { background:var(--raised); color:var(--bright); }
   font-family:var(--mono); font-size:.58rem; color:#160906;
   background:var(--accent); padding:.05rem .3rem; border-radius:2px; white-space:nowrap;
 }
+
+/* a block tab names what it yields, so the chain reads across the tab bar */
+.tab .tk {
+  font-family:var(--mono); font-size:.54rem; letter-spacing:.09em;
+  color:var(--rule); margin-left:.35rem; text-transform:uppercase;
+}
+.tab.on .tk { color:var(--dim); }
+.tab.ext { border-bottom-style:dashed; }
+.tab.ext .tk { color:var(--warn); }
