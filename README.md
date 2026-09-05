@@ -11,9 +11,13 @@ Two constraints shape everything else:
 - **Reuse over rewrite.** The field's best decoders already exist. `rtl_433` (250+ ISM
   protocols), `multimon-ng`, `dump1090`, `direwolf`, `dsd`, and the whole GNU Radio OOT
   ecosystem are reachable as plugins for ~20 lines of manifest each. See [reuse](docs/07-reuse.md).
-- **Friction is a correctness property.** Six interactions from cold launch to decoded
-  bits. 50 ms from dragging a tuner to the child spectrum moving. Under 4 ms of frame
-  jitter. These are budgets in CI, not aspirations. See [UI principles](docs/08-ui-principles.md).
+- **Friction is a correctness property.** Six interactions and under 900 px of pointer
+  travel from cold launch to decoded bits. 50 ms from dragging a tuner to the child
+  spectrum moving. Under 4 ms of frame jitter. These are budgets in CI, not
+  aspirations. See [UI principles](docs/08-ui-principles.md).
+- **It is an exploratory tool, so nothing is only automatic.** Every derived value —
+  and the choice of decoder itself — carries an explicit auto/manual state, and auto
+  always shows the evidence it reasoned from.
 
 ## Why another one
 
@@ -36,7 +40,7 @@ Two constraints shape everything else:
 - [Roadmap](docs/06-roadmap.md) — milestones, each one shippable
 - [Reuse](docs/07-reuse.md) — what already exists and how we reach it without rewriting it
 - [UI principles](docs/08-ui-principles.md) — the friction contract: interaction and latency budgets
-- [Decisions](docs/adr/) — ADRs 0001–0016
+- [Decisions](docs/adr/) — ADRs 0001–0018
 
 ## Settled
 

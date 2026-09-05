@@ -16,42 +16,57 @@ baseband plane. That nesting *is* the analysis tree.
 
 ### One decision at each step: what next?
 
-At any node, the palette shows only the operations whose input type matches that
-node's output type. On `iq` you can tune, demodulate, record, or measure. On `real`
-you can filter, listen, view, or slice symbols. On `bits` you can frame, CRC-check,
-decode, or diff. The list is short and always correct.
+At any node, the menu shows only the operations whose input type matches that node's
+output type. On `iq` you can tune, demodulate, record, or measure. On `real` you can
+filter, listen, view, or slice symbols. On `bits` you can frame, CRC-check, decode, or
+diff. The list is short and always correct — which is precisely why it can live at the
+cursor instead of on the wall.
 
-### Three panes, always
+### The canvas gets the window
+
+Actions come to the cursor. State gets a persistent surface. Views are tabs.
+([ADR-0018](adr/0018-contextual-menus-and-view-tabs.md))
 
 ```
-┌─────────────────────┬────────────────────────────────────────────┬──────────────┐
-│ ANALYSIS TREE       │ CANVAS (the selected node's view)          │ INSPECTOR    │
-│                     │                                            │              │
-│ ▾ 📡 rtlsdr @433.9M │  ┌──────────────────────────────────────┐  │ Tuner "A"    │
-│   │  2.4 MS/s       │  │        waterfall / spectrum          │  │              │
-│   │                 │  │                                      │  │ center       │
-│   ▾ ▭ A  ±25 kHz    │  │   ░░▓█▓░░      ▓█▓                   │  │  433.9201 MHz│
-│     │  100 kS/s     │  │  ░░░▓▓░░░  ┌───────┐ ← drag to make  │  │ width        │
-│     │               │  │            │  sel  │   a child       │  │  50.0 kHz    │
-│     ▾ ∿ AM env      │  │            └───────┘                 │  │ decim  24 ⟳  │
-│       │  100 kS/s   │  │                                      │  │ window Hann  │
-│       │             │  └──────────────────────────────────────┘  │              │
-│       ▾ ⠿ PWM       │  ├──────────────────────────────────────┤  │ ─── palette ─│
-│         │  bits     │  │ timeline / scrubber   [◀◀][▶][▶▶]    │  │ + Demodulate │
-│         └ 📋 hex    │  └──────────────────────────────────────┘  │ + Record     │
-│                     │                                            │ + Measure    │
-└─────────────────────┴────────────────────────────────────────────┴──────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│ rtl-sdr #0 ▾ › A · Tuner ▾ › B · Gate ▾ › C · AM ▾ › D · PWM ▾   │ breadcrumb
+├──────────────────────────────────────────────────────────────────┤
+│ Spectrum │ Waterfall │ Time │ Bits │ Flow │ +                    │ view tabs
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│                  CANVAS — full width                             │
+│                                                                  │
+│              drag a box ──▶ release ──▶ menu opens here          │
+│                                          ┌──────────────────┐    │
+│                                          │ / search…        │    │
+│                                          │ ── DEMODULATE ── │    │
+│                                          │ AM envelope      │    │
+│                                          │ NBFM             │    │
+│                                          │ ── DECODE ────── │    │
+│                                          │ ⌁ Identify       │    │
+│                                          │ rtl_433  ext     │    │
+│                                          └──────────────────┘    │
+├──────────────────────────────────────────────────────────────────┤
+│ ◀◀ ▶ ▶▶  ──────────●───────────────────────────────  12.331 s    │ transport
+├──────────────────────────────────────────────────────────────────┤
+│ PWM D   symbol 417 µs ⟲   threshold 0.42 🔒   invert off ⟲       │ inspector
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-- **Left — analysis tree.** The full chain. Each node shows its output type and rate.
-  Selecting a node swaps the canvas. Nodes are cheap: adding one never disturbs a sibling.
-- **Center — canvas.** The default view for the selected node's output type, plus a
-  timeline scrubber that is *always* present and *always* refers to source time.
-- **Right — inspector + palette.** Parameters of the selected node above, valid next
-  operations below. The palette is the only place you add anything.
-
-Two toggles live in the corner: **Flowgraph** (read-only render of the compiled GR
-graph, for the people who want to see it) and **Annotations**.
+- **Breadcrumb.** The path from source to the selected node. Each `▾` opens that
+  node's siblings — which is how you navigate a tree without spending a permanent
+  rail on it. The whole tree, when you want the overview, is the **Flow** tab.
+- **View tabs.** A node's views, several at once. A demodulator usually wants Time
+  *and* Constellation; a decoder wants Bits *and* the event table. The compiled
+  flowgraph is an ordinary tab here, not a special corner toggle.
+- **Canvas, full width.** Frequency resolution is horizontal, so width is the scarce
+  dimension and no chrome takes it.
+- **Contextual menu.** Releasing a selection drag opens it at the release point —
+  flat, grouped, searchable with `/`. There is no pinned palette; a `+` on the tab
+  bar opens the same menu for anyone who hasn't found the gesture yet.
+- **Inspector strip.** Parameters of the selected node. Every derived value shows
+  `⟲ auto` (re-derives when upstream changes) or `🔒 manual` (sticky) —
+  [ADR-0017](adr/0017-auto-manual-parameters.md).
 
 ### What the user never sees
 
@@ -76,9 +91,13 @@ disclosure triangle.
 4. Palette on B offers demodulators valid for `iq`. Picks **AM envelope**.
    → Node **C**, output `real @ 100 kS/s`. Canvas becomes a time-series: a clean
    OOK pulse train. Amplitude histogram in the inspector shows two clusters.
-5. Palette on C offers **PWM / PPM slicer**. The slicer's inspector auto-suggests a
-   symbol period from pulse-width autocorrelation (`417 µs ±3`). Accepts.
+5. Menu on C offers **PWM / PPM slicer**. Its symbol period arrives as `⟲ 417 µs` —
+   auto, from pulse-width autocorrelation. Clicking the `⟲` shows the histogram it
+   reasoned from: two clean clusters, so the estimate is trustworthy. Accepts.
    → Node **D**, output `bits`. Canvas becomes a bit raster.
+   Later, widening A's filter to check the band edges does *not* disturb 417 µs,
+   because one click on the value pinned it to `🔒 manual` first — the comparison
+   survives ([ADR-0017](adr/0017-auto-manual-parameters.md)).
 6. Every burst in the ring lines up in the raster. Preamble is obviously
    `0xAAAA`. Selects those bits, hits **Annotate → "preamble"**. The annotation
    appears as a highlight on the *top-level* waterfall too, on every burst.
@@ -86,9 +105,10 @@ disclosure triangle.
    who opens it and lands on node D with the same view.
 
 **What made this work:** the ring recorder (step 3 scrubs backwards on a *live*
-source), type-filtered palettes (steps 4–5 each had ~4 options, not 200), and
-provenance (step 6's highlight propagating up). **Six interactions**, cold launch to
-bits — see the [interaction budget](08-ui-principles.md#interaction-budget).
+source), type-filtered menus (steps 4–5 each had ~4 options, not 200), auto values
+that show their evidence and stay put once pinned (step 5), and provenance (step 6's
+highlight propagating up). **Six interactions and under 900 px of pointer travel**,
+cold launch to bits — see the [budgets](08-ui-principles.md#interaction-budget).
 
 ### UC-1' — the same signal, the fast way: **Identify**
 
@@ -133,7 +153,9 @@ already knows which decoders can accept this stream
    because the server builds a multi-resolution pyramid of the file (see
    [ADR-0012](adr/0012-server-side-display-rendering.md)) — never ships raw IQ for display.
 2. Sees a hopping pattern. Selects the whole hop band → Tuner **A**.
-3. On A, applies **Burst detector** (an analyzer, not a transform): produces an
+3. On A, applies **Burst detector** (an analyzer, not a transform). Its threshold
+   and minimum-duration arrive as `⟲ auto`; the engineer pins minimum-duration to
+   `🔒 200 µs` so it stops changing as she sweeps the threshold. Produces an
    *event stream* of 1,412 detected bursts with time, center frequency, duration,
    and peak power. Canvas becomes a sortable event table + a scatter of freq vs. time.
 4. Clicking any row **seeks the whole tree** to that burst and creates a transient
@@ -157,8 +179,9 @@ subtree over a new time window.
 2. A gets `P25 control channel decoder` (a plugin) → event stream of grants.
 3. B and C get `P25 voice` → audio. Both play; a mixer strip appears with per-node
    mute/solo/gain.
-4. Switches the canvas to **Grid layout**: four tiles — source waterfall, A's event
-   log, B and C's audio meters — updating simultaneously.
+4. Switches the canvas to **Grid layout**: four view tabs torn off into tiles —
+   source waterfall, A's event log, B and C's audio meters — updating simultaneously.
+   Tearing a tab out of the tab bar is how a tile gets made.
 5. A grant event on A auto-retunes C via a **link**: `C.center_hz ← A.events.last.freq`.
    Links are a first-class, declarative binding between an event field and a hot
    parameter. This is the one piece of "programming" exposed in the GUI, and it is
@@ -254,4 +277,7 @@ privileged path into the engine.
 | Git-friendly project files | UC-6 | [0009](adr/0009-command-log.md) |
 | Existing CLI decoders usable as nodes | UC-1', UC-3.2 | [0013](adr/0013-external-decoders-as-subprocesses.md) |
 | Speculative multi-decoder probe (`Identify`) | UC-1' | [0013](adr/0013-external-decoders-as-subprocesses.md) + [0006](adr/0006-semantic-stream-types.md) |
+| Held vs. varied quantities during exploration | UC-1.5, UC-2.3 | [0017](adr/0017-auto-manual-parameters.md) |
+| Several views of one node at once | UC-2.4, UC-3.4 | [0018](adr/0018-contextual-menus-and-view-tabs.md) |
+| Near-zero pointer travel per operation | all | [0018](adr/0018-contextual-menus-and-view-tabs.md) |
 | Drag feels attached to the cursor (<50 ms) | UC-1.2, UC-3.5 | [0014](adr/0014-rust-data-plane.md), [0010](adr/0010-hot-vs-cold-parameters.md) |

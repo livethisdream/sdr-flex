@@ -33,13 +33,18 @@ The one gesture the whole product rests on.
 - Node tree data model + command log
 - Graph compiler for `source` and `tuner` only
 - Selection → derived decimation and taps
-- Tree pane, canvas switching, inspector with overridable derived values
-- Hot retune (drag the box, spectrum follows)
+- **Breadcrumb, view tabs, and the contextual menu on drag-release** (ADR-0018) —
+  the layout is settled here rather than retrofitted, since it decides where every
+  later feature lands
+- **Auto/manual parameter state** with evidence views (ADR-0017)
+- Inspector strip; hot retune (drag the box, spectrum follows)
 
 **Done when:** drag a box, get a child waterfall, drag the box again and the child
-follows live.
-**Validates:** ADR-0002 and ADR-0010. If drilling in doesn't feel instant here, the
-premise is wrong and it is cheap to find out now.
+follows live — in under 50 ms and under 120 px of pointer travel.
+**Validates:** ADR-0002, ADR-0010, ADR-0018. If drilling in doesn't feel instant here,
+the premise is wrong and it is cheap to find out now. This is also the first milestone
+whose demo video is worth watching a newcomer attempt: the contextual menu's one real
+risk is discoverability, and that is the only way to measure it.
 
 ---
 

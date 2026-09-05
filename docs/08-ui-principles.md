@@ -14,8 +14,10 @@ contract we can be held to, with numbers.
    Sceptre bury their capability. Parameters live in the inspector, always visible.
    Confirmation is undo, not a prompt.
 
-3. **Menu depth ≤ 1.** Palette → operation. That is the deepest nesting in the
-   product. Anything that wants to be a submenu becomes a filtered search instead.
+3. **Menu depth ≤ 1.** One flat, searchable list of operations, grouped by headers.
+   Anything that wants to be a submenu becomes a filtered search instead. This law is
+   what makes contextual menus safe ([ADR-0018](adr/0018-contextual-menus-and-view-tabs.md));
+   a nested context menu would be worse than the sidebar it replaced.
 
 4. **One structural gesture.** Drag a box. Everything else is picking from a short,
    always-valid list.
@@ -36,13 +38,53 @@ contract we can be held to, with numbers.
    tree, `←→` steps bursts, `Space` play/pause, `Z` zoom to selection, `Esc` clears.
    A power user should be able to run UC-2 without the mouse leaving the waterfall.
 
-9. **Never ask what can be derived.** Decimation, filter taps, FFT size, colormap
-   range, symbol period, audio rate. All computed, all shown, all overridable, none
-   required.
+9. **Never ask what can be derived — and let the user hold it.** Decimation, filter
+   taps, FFT size, colormap range, symbol period, audio rate: all computed, all shown,
+   none required. But derivation is a *mode*, not a one-time gift. Every derived value
+   carries an explicit **auto** (`⟲`, re-derives when upstream changes) or **manual**
+   (`🔒`, sticky) state, and auto can always show the evidence it reasoned from
+   ([ADR-0017](adr/0017-auto-manual-parameters.md)). Exploration is a sequence of held
+   and varied quantities; the tool has to know which is which.
 
 10. **Chrome recedes; the signal is the hero.** No gradient buttons, no chrome
-    borders, no decorative panels. The waterfall is the brightest thing on screen and
-    everything else is quiet until hovered.
+    borders, no decorative panels. The waterfall is the brightest thing on screen,
+    it gets the full width of the window, and everything else is quiet until hovered.
+    Operations come to the cursor rather than occupying a permanent rail.
+
+## Layout
+
+Actions come to the cursor. State gets a persistent surface. Views are tabs.
+([ADR-0018](adr/0018-contextual-menus-and-view-tabs.md))
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ rtl-sdr #0 ▾ › A · Tuner ▾ › B · Gate ▾ › C · AM ▾ › D · PWM ▾   │ breadcrumb
+│                              each ▾ opens that node's siblings   │
+├──────────────────────────────────────────────────────────────────┤
+│ Spectrum │ Waterfall │ Time │ Bits │ Flow │ +                    │ view tabs
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│                  CANVAS — full width                             │
+│                                                                  │
+│              drag a box ──▶ release ──▶ menu opens here          │
+│                                          ┌──────────────────┐    │
+│                                          │ / search…        │    │
+│                                          │ ── DEMODULATE ── │    │
+│                                          │ AM envelope      │    │
+│                                          │ NBFM             │    │
+│                                          │ ── DECODE ────── │    │
+│                                          │ ⌁ Identify       │    │
+│                                          │ rtl_433  ext     │    │
+│                                          └──────────────────┘    │
+├──────────────────────────────────────────────────────────────────┤
+│ ◀◀ ▶ ▶▶  ──────────●───────────────────────────────  12.331 s    │ transport
+├──────────────────────────────────────────────────────────────────┤
+│ PWM D   symbol 417 µs ⟲   threshold 0.42 🔒   invert off ⟲       │ inspector
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Three thin bars and a canvas. The tree is a breadcrumb because it is *navigation*,
+not a palette; the whole tree, when you want it, is the **Flow** tab.
 
 ## Interaction budget
 
@@ -60,6 +102,20 @@ Countable, testable, and a regression test for the workflow. From cold launch:
 
 If a change to the design makes any of these numbers go up, the change is wrong until
 argued otherwise. These get counted in review.
+
+### Pointer travel
+
+Clicks alone are the wrong metric, and counting only clicks would have scored the old
+pinned-sidebar layout as equal to the contextual one. It was not equal — it charged a
+~600 px round trip for every single operation. So travel is measured too:
+
+| | Budget |
+|---|---|
+| Pointer travel per operation, after a selection drag | **< 120 px** |
+| Pointer travel, full UC-1 run | **< 900 px** |
+
+A design that adds a pinned panel between the canvas and a frequent action fails this
+even if it adds no clicks.
 
 ## Latency budget
 

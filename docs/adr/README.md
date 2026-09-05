@@ -21,3 +21,5 @@ why, what it costs, and what would make us change our minds.
 | [0014](0014-rust-data-plane.md) | The hot path never touches Python | Accepted |
 | [0015](0015-licensing-posture.md) | Licensing posture: Apache-2.0 core, GPL-3 workers | Accepted |
 | [0016](0016-performance-envelope.md) | Pluto class now, ~60 MS/s tier later; source layer is not SoapySDR | Accepted |
+| [0017](0017-auto-manual-parameters.md) | Every derived value has an auto/manual state | Accepted |
+| [0018](0018-contextual-menus-and-view-tabs.md) | Contextual menus over sidebars; views are tabs | Accepted |

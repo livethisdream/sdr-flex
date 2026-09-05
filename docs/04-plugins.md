@@ -53,16 +53,20 @@ params:
   - id: baud
     type: enum
     values: [512, 1200, 2400]
-    default: 1200
+    auto:                         # derivable → gets a ⟲ / 🔒 toggle
+      estimator: baud_autocorr
+      evidence: autocorrelation   # opens as a view tab when you click ⟲
+    default: auto
     hot: false                    # rate change → rebuild this fragment downward
     ui: { widget: segmented }
   - id: invert
     type: bool
-    default: false
+    default: false                # no `auto:` block → manual-only, no ⟲ shown
     hot: true                     # live toggle, no rebuild
   - id: threshold
     type: float
-    default: 0.5
+    auto: { estimator: otsu, evidence: histogram }
+    default: auto
     min: 0.0
     max: 1.0
     scale: linear
@@ -71,7 +75,7 @@ params:
 
 views:
   default: event_table
-  suggested: [event_table, bit_raster]
+  suggested: [event_table, bit_raster]   # become tabs on the node (ADR-0018)
 
 actions:                          # optional verbs surfaced as buttons
   - { id: resync, label: "Force resync", kind: message, port: cmd }
@@ -83,6 +87,11 @@ actions:                          # optional verbs surfaced as buttons
   SDRangel's wall of buttons.
 - **`params[].hot`** — lets the client decide between a live-drag slider and a
   control with a rebuild badge. Without it, every parameter feels dangerous.
+- **`params[].auto`** — names an estimator and the evidence view behind it. A
+  parameter with this block gets the `⟲ auto` / `🔒 manual` toggle
+  ([ADR-0017](adr/0017-auto-manual-parameters.md)); one without it is manual-only.
+  Estimators are themselves plugins, so a third party can ship a better
+  symbol-period guesser without touching the slicer that uses it.
 - **`params[].ui`** and `scale` — the difference between a usable log-scale gain
   slider and a text box. Cheap to declare, disproportionate effect.
 - **`requires`** — a missing OOT module becomes a greyed palette entry with a reason,

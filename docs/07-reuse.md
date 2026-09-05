@@ -101,6 +101,18 @@ ring, faster than real time, and reports which produced records. One click on an
 `iq` node answers "what is this?" — with a useful negative result when nothing hits,
 because you have now ruled out 250+ known protocols and know to build a chain by hand.
 
+**Identify is the auto mode of choosing a decoder — not the only mode.** Picking a
+decoder yourself and pinning its protocol is an equal peer, and in an exploratory
+tool it is often the *better* one: you may know it is POCSAG and want to force 512
+baud even though auto-detect insists on 1200, precisely to see what breaks. This is
+the same auto/manual distinction that governs every other derived value
+([ADR-0017](adr/0017-auto-manual-parameters.md)), applied one level up at decoder
+selection.
+
+So `rtl_433`'s protocol list is a parameter with `auto: all` — leave it and every
+protocol is tried; pin it and only that one runs, faster and without false positives
+from a neighbouring protocol that happens to fit.
+
 This is the single highest-value feature that falls out of the reuse strategy, and it
 costs almost nothing on top of [ADR-0013](adr/0013-external-decoders-as-subprocesses.md).
 It is also what makes "hobbyist path as a shortcut through the analyst product" real
@@ -132,7 +144,12 @@ ports:
   out: { type: events }
 
 params:
-  - { id: protocols, type: multiselect, source: "rtl_433 -R help", hot: false }
+  - id: protocols                 # auto = try everything; pin one to force it
+    type: multiselect
+    source: "rtl_433 -R help"
+    auto: { estimator: all }
+    default: auto
+    hot: false
   - { id: level,     type: float, default: 0.0, hot: false }
 
 views: { default: event_table }
