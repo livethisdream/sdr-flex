@@ -4,9 +4,24 @@ The real client running against a **mock engine in the browser**. No server, no 
 step, no GNU Radio. See [ADR-0021](../docs/adr/0021-mock-engine-first.md) for why this
 is the first thing built rather than the last.
 
+**Live:** https://livethisdream.github.io/sdr-flex/
+
+Locally:
+
 ```bash
 cd web && python3 -m http.server 8000    # ES modules need http://, not file://
 ```
+
+## Deployment
+
+Pages serves the repository from the default branch, so the app is at `/web/` and the
+root `index.html` redirects there. `.nojekyll` at the root stops Jekyll from trying to
+build `docs/`, which is what usually breaks a branch-based Pages deploy of a repo that
+contains markdown.
+
+To publish `web/` as the site root instead, with no redirect: Settings → Pages →
+Source → **GitHub Actions**, then uncomment the push trigger in
+`.github/workflows/pages.yml`.
 
 ## What is real
 
