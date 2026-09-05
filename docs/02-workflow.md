@@ -31,27 +31,24 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 ┌──────────────────────────────────────────────────────────────────┐
 │ rtl-sdr #0 ▾ › A · Tuner ▾ › B · Gate ▾ › C · AM ▾ › D · PWM ▾   │ breadcrumb
 ├──────────────────────────────────────────────────────────────────┤
-│ Spectrum │ Waterfall │ Time │ Bits │ Flow │ +                    │ view tabs
+│ Spectrum │ Time │ Constellation │ Bits │ Flow │ +                │ view tabs
 ├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│                  CANVAS — full width                             │
-│                                                                  │
-│              drag a box ──▶ release ──▶ menu opens here          │
-│                                          ┌──────────────────┐    │
-│                                          │ / search…        │    │
-│                                          │ ── DEMODULATE ── │    │
-│                                          │ AM envelope      │    │
-│                                          │ NBFM             │    │
-│                                          │ ── DECODE ────── │    │
-│                                          │ ⌁ Identify       │    │
-│                                          │ rtl_433  ext     │    │
-│                                          └──────────────────┘    │
+│      ╱╲        ╱╲                                           ▓    │ live + peak
+│  ╱╲╱  ╲──╱╲──╱  ╲───╲                                       ▓    │ hold traces
+├────────────────── draggable splitter ───────────────────────▒────┤
+│ ░░░▒▓█▓▒░░    ░▒▓░                                          ░    │ waterfall
+│ ░░░▒▓█▓▒░░    ░▒▓░        ← drag a box, release, menu opens       │ + colour bar
+├──────────────────────────────────────────────────────────────────┤
+│ 433.720    433.820    433.920 MHz    434.020    434.120          │ ONE axis
 ├──────────────────────────────────────────────────────────────────┤
 │ ◀◀ ▶ ▶▶  ──────────●───────────────────────────────  12.331 s    │ transport
 ├──────────────────────────────────────────────────────────────────┤
-│ PWM D  symbol 417 µs ⟲  threshold 0.42 🔒  ┊  BITS  8 col  MSB ⌄ │ inspector
-│ ╰────────────── node ──────────────────╯     ╰──── view ───────╯ │
+│ TUNER A                              │ WATERFALL                 │ inspector
+│ ┃CENTER    ┃WIDTH    ┃DECIM ┃TAPS    │ ┃FFT  ┃WIN  ┃AVG ┃RANGE   │
+│ ┃433.8950  ┃50.0     ┃24    ┃129     │ ┃2048 ┃Hann ┃4   ┃−96/−18 │
+│ ┃MHz       ┃kHz      ┃      ┃Hann    │ ┃     ┃     ┃    ┃dBFS  ⌄ │
 └──────────────────────────────────────────────────────────────────┘
+   ┃ green edge = ⟲ auto     ┃ coral edge = 🔒 manual
 ```
 
 - **Breadcrumb.** The path from source to the selected node. Each `▾` opens that
@@ -59,14 +56,19 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
   rail on it. The whole tree, when you want the overview, is the **Flow** tab.
 - **View tabs.** A node's views, several at once. A demodulator usually wants Time
   *and* Constellation; a decoder wants Bits *and* the event table. The compiled
-  flowgraph is an ordinary tab here, not a special corner toggle.
+  flowgraph is an ordinary tab here, not a special corner toggle. Views sharing an
+  axis live in one tab together: **spectrum and waterfall stack over a single
+  frequency axis** ([ADR-0020](adr/0020-views-that-share-an-axis.md)), as do a
+  demodulated waveform and the bit raster beneath it.
 - **Canvas, full width.** Frequency resolution is horizontal, so width is the scarce
   dimension and no chrome takes it.
 - **Contextual menu.** Releasing a selection drag opens it at the release point —
   flat, grouped, searchable with `/`. There is no pinned palette; a `+` on the tab
   bar opens the same menu for anyone who hasn't found the gesture yet.
-- **Inspector strip.** Parameters of the selected node, a divider, then the *active
-  view's* parameters — which belong to the view, not the node, since Spectrum and
+- **Inspector strip.** Cells, not a text run — label above, value in tabular mono,
+  a 2 px left edge carrying the mode (green `⟲ auto`, coral `🔒 manual`), grouped
+  under the node name and the view name. Parameters of the selected node, then the
+  *active view's* — which belong to the view, not the node, since Spectrum and
   Waterfall want different settings on the same node. Every derived value shows
   `⟲ auto` (re-derives when upstream changes) or `🔒 manual` (sticky) —
   [ADR-0017](adr/0017-auto-manual-parameters.md). `⌄` expands the strip into a

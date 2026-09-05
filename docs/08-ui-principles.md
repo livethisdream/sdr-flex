@@ -59,33 +59,54 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │ rtl-sdr #0 ▾ › A · Tuner ▾ › B · Gate ▾ › C · AM ▾ › D · PWM ▾   │ breadcrumb
-│                              each ▾ opens that node's siblings   │
 ├──────────────────────────────────────────────────────────────────┤
-│ Spectrum │ Waterfall │ Time │ Bits │ Flow │ +                    │ view tabs
+│ Spectrum │ Time │ Constellation │ Bits │ Flow │ +                │ view tabs
 ├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│                  CANVAS — full width                             │
-│                                                                  │
-│              drag a box ──▶ release ──▶ menu opens here          │
-│                                          ┌──────────────────┐    │
-│                                          │ / search…        │    │
-│                                          │ ── DEMODULATE ── │    │
-│                                          │ AM envelope      │    │
-│                                          │ NBFM             │    │
-│                                          │ ── DECODE ────── │    │
-│                                          │ ⌁ Identify       │    │
-│                                          │ rtl_433  ext     │    │
-│                                          └──────────────────┘    │
+│      ╱╲        ╱╲                                           ▓    │ live + peak
+│  ╱╲╱  ╲──╱╲──╱  ╲───╲                                       ▓    │ hold traces
+├────────────────── draggable splitter ───────────────────────▒────┤
+│ ░░░▒▓█▓▒░░    ░▒▓░                                          ░    │ waterfall
+│ ░░░▒▓█▓▒░░    ░▒▓░        ← drag a box, release, menu opens       │ + colour bar
+├──────────────────────────────────────────────────────────────────┤
+│ 433.720    433.820    433.920 MHz    434.020    434.120          │ ONE axis
 ├──────────────────────────────────────────────────────────────────┤
 │ ◀◀ ▶ ▶▶  ──────────●───────────────────────────────  12.331 s    │ transport
 ├──────────────────────────────────────────────────────────────────┤
-│ PWM D  symbol 417 µs ⟲  threshold 0.42 🔒  ┊  BITS  8 col  MSB ⌄ │ inspector
-│ ╰────────────── node ──────────────────╯     ╰──── view ───────╯ │
+│ TUNER A                              │ WATERFALL                 │ inspector
+│ ┃CENTER    ┃WIDTH    ┃DECIM ┃TAPS    │ ┃FFT  ┃WIN  ┃AVG ┃RANGE   │
+│ ┃433.8950  ┃50.0     ┃24    ┃129     │ ┃2048 ┃Hann ┃4   ┃−96/−18 │
+│ ┃MHz       ┃kHz      ┃      ┃Hann    │ ┃     ┃     ┃    ┃dBFS  ⌄ │
 └──────────────────────────────────────────────────────────────────┘
+   ┃ green edge = ⟲ auto     ┃ coral edge = 🔒 manual
 ```
 
 Three thin bars and a canvas. The tree is a breadcrumb because it is *navigation*,
 not a palette; the whole tree, when you want it, is the **Flow** tab.
+
+**Spectrum and waterfall are one tab, not two** ([ADR-0020](adr/0020-views-that-share-an-axis.md)).
+They plot against the same frequency, so they stack over one shared axis drawn once.
+A peak in the trace only means something once you can see whether it has been there
+for five seconds or five milliseconds — you read them together, always. The splitter
+between them is draggable and collapses either way, which is how "waterfall only"
+exists without being a mode.
+
+### The strip is cells, not a text run
+
+A horizontal list of `label: value` pairs is a status line, not a control surface —
+everything carries equal weight and nothing invites a gesture. So each parameter is a
+**cell**: label above, value large in tabular mono, unit beneath. Cells group under
+the node name and the view name.
+
+Three things do the organising work, and none of them is a text badge:
+
+- **A 2 px left edge carries the mode.** Green for `⟲ auto`, coral for `🔒 manual`.
+  Six repeated "auto" chips were noise; a coloured edge is scannable at a glance and
+  silent when you are not looking for it. Clicking the edge toggles the mode.
+- **Read-only outputs look read-only.** A derived output rate has no fill and no
+  edge — it is a consequence, not a control, and should not invite a drag.
+- **Each cell is its own drag target.** Value cells scrub; enums cycle; the range
+  cell opens two handles. The control gets the affordance its *type* deserves rather
+  than every parameter rendering identically.
 
 ### Where settings live
 
@@ -99,7 +120,7 @@ things with four lifetimes, and one test assigns every one of them
 | Home | What lives there |
 |---|---|
 | **On the object** | dB range (drag the colour bar), span (scroll the axis), selection bounds, playhead. No chrome at all — the control belongs where its effect is. |
-| **The strip** | Node parameters, then a divider, then the *active view's* parameters. Device gain and PPM are node parameters of the source. A `⌄` expands the strip into a temporary panel when a node has many. |
+| **The strip** | Node parameters, then the *active view's*, as two labelled groups of cells. Device gain and PPM are node parameters of the source. A `⌄` expands the strip into a temporary panel when a node has many. |
 | **A view tab** | Flow, Plugins, Annotations, Project. Full canvas, zero chrome, reached like any other view. |
 | **A preferences overlay** | Theme, keybindings, plugin paths, disk budget, audio device. A modal is honest here — law 2 governs the analysis loop, and configuring the tool means deliberately stepping out of it. |
 
@@ -189,8 +210,12 @@ Colormap range auto-fits from a running percentile of the data, and is draggable
 the color bar.
 
 **Color is data, not decoration.** The waterfall owns the saturated end of the
-palette. UI chrome is neutral grey. Accent color appears in exactly three places:
-the active selection box, the playhead, and error states. Nothing else is colored.
+palette. UI chrome is neutral grey. **The accent marks what the user placed** — the
+selection box, the playhead, a parameter pinned to manual. Nothing else takes it.
+(Errors use the semantic critical red, not the accent; a failure is not something the
+user placed.) That single rule is easier to hold than a list of allowed locations,
+and it is why a pinned parameter and a selection box share a colour: both are the
+user's mark on the instrument.
 
 **Typography.** One sans family for UI, one mono for numbers. Every frequency,
 rate, and timestamp is tabular-figure mono so digits don't jitter as they update —

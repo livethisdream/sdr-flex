@@ -11,16 +11,18 @@
   sidebar. Releasing a selection drag opens it automatically, at the release point.
 - The **analysis tree is a breadcrumb** across the top, each segment a menu of its
   siblings. The full tree/flowgraph is available as a view tab, not a permanent rail.
-- **Each node's views are tabs** in the centre pane — Spectrum, Waterfall, Time,
-  Constellation, Bits, Flow. A node can hold several at once and you switch between
-  them without losing either.
+- **Each node's views are tabs** in the centre pane — Spectrum, Time, Constellation,
+  Bits, Flow. A node can hold several at once and you switch between them without
+  losing either. Views that share an axis occupy one tab together, stacked:
+  spectrum and waterfall are the **Spectrum** tab
+  ([ADR-0020](0020-views-that-share-an-axis.md)).
 - **Parameters live in a bottom strip**, full width, under the canvas.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │ rtl-sdr #0 ▾ › A · Tuner ▾ › B · Gate ▾ › C · AM ▾ › D · PWM ▾   │ breadcrumb
 ├──────────────────────────────────────────────────────────────────┤
-│ Spectrum │ Waterfall │ Time │ Bits │ Flow │ +                    │ view tabs
+│ Spectrum │ Time │ Constellation │ Bits │ Flow │ +                 │ view tabs
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │                  CANVAS — full width                             │
