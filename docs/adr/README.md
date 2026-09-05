@@ -19,4 +19,5 @@ why, what it costs, and what would make us change our minds.
 | [0012](0012-server-side-display-rendering.md) | Display rendering is server-side and lossy | Accepted |
 | [0013](0013-external-decoders-as-subprocesses.md) | External decoders are first-class subprocess plugins | Accepted |
 | [0014](0014-rust-data-plane.md) | The hot path never touches Python | Accepted |
-| [0015](0015-licensing-posture.md) | Licensing posture | **Proposed** |
+| [0015](0015-licensing-posture.md) | Licensing posture: Apache-2.0 core, GPL-3 workers | Accepted |
+| [0016](0016-performance-envelope.md) | Pluto class now, ~60 MS/s tier later; source layer is not SoapySDR | Accepted |

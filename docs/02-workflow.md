@@ -90,16 +90,38 @@ source), type-filtered palettes (steps 4–5 each had ~4 options, not 200), and
 provenance (step 6's highlight propagating up). **Six interactions**, cold launch to
 bits — see the [interaction budget](08-ui-principles.md#interaction-budget).
 
-### UC-1' — the same signal, the fast way
+### UC-1' — the same signal, the fast way: **Identify**
 
-Steps 1–2 identical. Then, on node **A**, the palette also offers **`rtl_433`
-(250+ protocols)** — an [external decoder](07-reuse.md), marked opaque. One click,
-and the event table fills with `{"model":"Acurite-609TXC","temperature_C":21.4,...}`.
+Steps 1–2 identical. Then, on node **A**, one button: **Identify**.
 
-**Four interactions**, no DSP knowledge required, and it either works immediately or
-it doesn't — at which point you fall back to the transparent chain above. Offering
-both, clearly labeled, is the whole reuse strategy
-([ADR-0013](adr/0013-external-decoders-as-subprocesses.md)).
+The engine runs every [external decoder](07-reuse.md) whose rate and format
+constraints fit this stream — `rtl_433`, `multimon-ng`, `dump1090`, and friends —
+speculatively, in parallel, over the last N seconds of ring. Then it reports which
+ones produced output:
+
+```
+  Identify — 8 s window, 6 decoders tried
+  ─────────────────────────────────────────────────────────
+  ✓ rtl_433          41 records   Acurite-609TXC, Nexus-TH
+    multimon-ng       0 records   POCSAG1200, FLEX
+    dump1090          0 records
+  ─────────────────────────────────────────────────────────
+  [ Add rtl_433 as a node ]        [ Build a chain instead ]
+```
+
+**Three interactions**, cold launch to a named device. No DSP knowledge required.
+
+`Identify` is the hobbyist path, and it is deliberately a *shortcut through* the
+analyst product rather than a separate mode: it is one action on an ordinary node,
+its result is an ordinary node, and when it finds nothing you are already standing in
+the right place to build the transparent chain by hand. It also serves the analyst —
+"what is this?" is the first question either persona has, and ruling out 250 known
+protocols in one click is a genuinely useful negative result.
+
+It falls almost free out of two decisions already made: the process plugin kind
+([ADR-0013](adr/0013-external-decoders-as-subprocesses.md)) and the type system that
+already knows which decoders can accept this stream
+([ADR-0006](adr/0006-semantic-stream-types.md)).
 
 ---
 
@@ -231,4 +253,5 @@ privileged path into the engine.
 | Headless, scriptable, reproducible | UC-5 | [0001](adr/0001-client-server-split.md) |
 | Git-friendly project files | UC-6 | [0009](adr/0009-command-log.md) |
 | Existing CLI decoders usable as nodes | UC-1', UC-3.2 | [0013](adr/0013-external-decoders-as-subprocesses.md) |
+| Speculative multi-decoder probe (`Identify`) | UC-1' | [0013](adr/0013-external-decoders-as-subprocesses.md) + [0006](adr/0006-semantic-stream-types.md) |
 | Drag feels attached to the cursor (<50 ms) | UC-1.2, UC-3.5 | [0014](adr/0014-rust-data-plane.md), [0010](adr/0010-hot-vs-cold-parameters.md) |

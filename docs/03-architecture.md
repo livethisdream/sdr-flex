@@ -184,6 +184,7 @@ and the control plane never blocks on either.**
 | Control plane | Python 3.11+, FastAPI + uvicorn | Never in the sample path. Same language as GR bindings. Fast to iterate on the parts that change most (compiler, registry). |
 | Data plane | **Rust relay process** | Reads worker rings via shared memory, formats frames, fans out over WebSocket. No GC in the hot path — jitter, not throughput, is the binding constraint ([ADR-0014](adr/0014-rust-data-plane.md)) |
 | DSP | GNU Radio 3.10, one worker process per source | Enormous existing block ecosystem; process isolation dodges the GIL and contains crashes ([ADR-0003](adr/0003-gnuradio-in-worker-processes.md)) |
+| Devices | Our own source-plugin interface; **SoapySDR is one implementation, not the layer** | Pluto needs libiio/gr-iio and is network-attached; SignalHound BB60 has only a vendor SDK ([ADR-0016](adr/0016-performance-envelope.md)) |
 | Server↔worker | ZMQ (control/events) + shared-memory rings (bulk) | ZMQ is GR-native; rings avoid copying IQ through the broker, and let the Rust relay read without a Python hop |
 | External decoders | Subprocesses over pipes | `rtl_433`, `multimon-ng`, `dump1090`, `direwolf`, … — hundreds of proven decoders for ~20 lines of manifest each ([ADR-0013](adr/0013-external-decoders-as-subprocesses.md), [reuse](07-reuse.md)) |
 | Data wire | WebSocket, binary framed | One connection, browser-native, no polyfill; header + raw `Float32Array` is directly paintable |
@@ -207,9 +208,13 @@ consequences are ADR-0014 (no GC in the hot path) and ADR-0004 (small, local reb
    fragmenting at taps so rebuilds are small and localized, and by build-then-swap
    rather than in-place mutation. If it still glitches, escalate to fragment-per-node.
    *This is the top technical risk in the design.*
-2. **Ring-recording every live source is expensive.** 2.4 MS/s complex float32 is
-   ~19 MB/s. Mitigations: default to complex int16 for the ring (9.6 MB/s), a bounded
-   default window (60 s), and an explicit "promote to permanent capture" action.
+2. **Ring-recording every live source costs disk bandwidth.** At the v1 target of
+   ≤ 10 MS/s ([ADR-0016](adr/0016-performance-envelope.md)) this is 40 MB/s in cs16 —
+   comfortable on NVMe. Mitigations: cs16 by default, a **disk budget** (default 4 GB)
+   from which the ring *duration* is derived rather than being asked for, and an
+   explicit "promote to permanent capture" action. At the future 40–61 MS/s tier the
+   ring must be able to record decimated or be switched off per source, so the
+   recorder interface takes a rate/format policy from day one.
 3. **The Python↔Rust ring contract.** The shared-memory ring format is now a
    three-way contract between C++ workers, the Rust relay, and Python control. It must
    be specified, versioned, and tested from all three sides, or it becomes the place

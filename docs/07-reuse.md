@@ -26,7 +26,7 @@ shell-out escape hatch. See [ADR-0013](adr/0013-external-decoders-as-subprocesse
 | Project | Content | Path |
 |---|---|---|
 | **gr-satellites** | ~100 satellite telemetry decoders, framing, FEC | `gr_hier`, direct |
-| gr-osmosdr / **SoapySDR** | Every mainstream SDR device | Source plugins |
+| gr-osmosdr / **SoapySDR** | Most mainstream SDR devices | Source plugins — but *not* the source layer itself; Pluto needs gr-iio and the SignalHound BB60 needs its vendor SDK ([ADR-0016](adr/0016-performance-envelope.md)) |
 | gr-pager, gr-dab, gr-ieee802-11, gr-rds, gr-air-modes | Protocol decoders | `gr_hier`, direct |
 | **liquid-dsp** (MIT) | Fast modem/filter/sync primitives | Native link — our own fast path |
 | VOLK | SIMD kernels | Comes with GR |
@@ -89,6 +89,22 @@ labeled, and the user chooses knowing what they get.
 
 This is a feature, not a compromise. "Try rtl_433 on this, and if it doesn't
 recognize it, build the chain yourself" is exactly the workflow an analyst wants.
+
+## `Identify` — the payoff for having many adapters
+
+Once a dozen external decoders are installed, the engine knows which of them can
+accept a given stream (their manifests declare rate and format constraints, and the
+type system already filters on that). So it can just **try them all**.
+
+**Identify** runs every applicable decoder in parallel over the last N seconds of
+ring, faster than real time, and reports which produced records. One click on any
+`iq` node answers "what is this?" — with a useful negative result when nothing hits,
+because you have now ruled out 250+ known protocols and know to build a chain by hand.
+
+This is the single highest-value feature that falls out of the reuse strategy, and it
+costs almost nothing on top of [ADR-0013](adr/0013-external-decoders-as-subprocesses.md).
+It is also what makes "hobbyist path as a shortcut through the analyst product" real
+rather than a slogan: same node, same tree, ordinary result.
 
 ## Adapter shape
 

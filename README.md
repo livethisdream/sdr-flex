@@ -36,7 +36,19 @@ Two constraints shape everything else:
 - [Roadmap](docs/06-roadmap.md) — milestones, each one shippable
 - [Reuse](docs/07-reuse.md) — what already exists and how we reach it without rewriting it
 - [UI principles](docs/08-ui-principles.md) — the friction contract: interaction and latency budgets
-- [Decisions](docs/adr/) — ADRs 0001–0015
+- [Decisions](docs/adr/) — ADRs 0001–0016
+
+## Settled
+
+- **Target hardware:** PlutoSDR and below (≤ 10 MS/s). USRP B205mini and SignalHound
+  BB60 named as a future ~60 MS/s tier — not built, not precluded
+  ([ADR-0016](docs/adr/0016-performance-envelope.md)).
+- **License:** Apache-2.0 core (server, relay, client, plugin SDK, protocol), GPL-3
+  for the GNU-Radio-linking worker, with the boundary enforced in CI
+  ([ADR-0015](docs/adr/0015-licensing-posture.md)).
+- **Primary user:** the analyst chasing unknown signals — with the hobbyist's
+  one-click `Identify` as a first-class shortcut *through* that product, not a
+  separate mode.
 
 ## Status
 

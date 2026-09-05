@@ -14,6 +14,8 @@ Prove the three-plane architecture end to end with the least DSP possible.
 - Display renderer: FFT → `spectrum` frames at 30 fps
 - Client: WebGL2 waterfall + spectrum, transport controls
 - **Frame-timing instrumentation from day one** — jitter is the number that matters
+- **License-boundary CI check** — control plane and relay must never import GNU Radio
+  (ADR-0015). Trivial now; an audit later.
 
 **Done when:** open a SigMF file, see a smooth waterfall, scrub it, and the p99
 frame interval is within 4 ms of the mean. No tree, no tuner, no demod.
@@ -56,8 +58,10 @@ feedback is worth collecting.
 
 ## M3 — Time is real *(now it's better than GQRX)*
 
-- Ring recorder for live sources; live and file unified (ADR-0005)
-- Live SDR sources via gr-osmosdr / SoapySDR
+- Ring recorder for live sources; live and file unified (ADR-0005). Disk-budget-derived
+  window, cs16 default, rate/format policy in the interface (ADR-0016)
+- **Source plugin interface defined in our own terms**, with SoapySDR/gr-osmosdr and
+  **gr-iio (PlutoSDR)** as its first two implementations — not SoapySDR as the layer
 - Time selection → `gate` node
 - Multi-resolution pyramid: instant overview of large files, zoom as a server query
 - Scrub backwards on a live source
@@ -76,8 +80,13 @@ ahead of the rest of the plugin system, because it is small and the payoff is en
 - `jsonl` output parser, `events` stream type, event-table view
 - Opaque-node UI treatment
 - Adapters: `rtl_433`, `multimon-ng`, `dump1090`
+- **`Identify`** — run every applicable decoder in parallel over the ring, report
+  which produced records, offer the winner as a node
 
-**Done when:** four interactions from launch to a decoded temperature sensor.
+**Done when:** three interactions from launch to a named device, and `Identify`
+returns in under 3 s with progressive per-decoder results.
+This is the **hobbyist shipping moment**, and it is a shortcut *through* the analyst
+product — one action on an ordinary node, producing an ordinary node.
 **Roughly 60 lines of manifest buy 270+ protocols.** Nothing else in this roadmap has
 that ratio, which is why it is not waiting for M4.
 
@@ -152,3 +161,7 @@ kind of rewrite this roadmap exists to avoid:
   cheaper to define before there is anything on either side of it.
 - **Frame-timing instrumentation** (M0) — you cannot fix jitter you never measured,
   and by M5 nobody will remember which change caused it.
+
+And two enforced from M0 because they erode silently: the **license boundary**
+(ADR-0015) and the **source plugin interface** staying independent of SoapySDR
+(ADR-0016).

@@ -51,7 +51,8 @@ Countable, testable, and a regression test for the workflow. From cold launch:
 | Use case | Target | Breakdown |
 |---|---|---|
 | **UC-1** live dongle → decoded bits | **≤ 6** | device (2) · freq box (1) · time box (1) · demod (1) · slicer (1) |
-| **UC-1'** same, but via `rtl_433` | **≤ 4** | device (2) · freq box (1) · pick rtl_433 (1) |
+| **UC-1'** same, via **Identify** | **≤ 3** | device (2) · Identify (1) |
+| **UC-1''** same, picking `rtl_433` directly | **≤ 4** | device (2) · freq box (1) · pick rtl_433 (1) |
 | **UC-2** open file → burst event table | **≤ 4** | open (2) · freq box (1) · burst detector (1) |
 | **UC-3** add a monitored channel | **≤ 2** | freq box (1) · demod (1) |
 | Retune an existing channel | **1** | drag the box |
@@ -75,6 +76,7 @@ number below is a hard target, measured end to end, at 2.4 MS/s on a mid-range l
 | Open a 4 GB capture → overview | **< 2 s** | Pyramid read, not a scan ([ADR-0012](adr/0012-server-side-display-rendering.md)) |
 | Zoom to a new time window | **< 120 ms** | Server round trip; cached pyramid levels make small zooms instant |
 | Seek to a burst from an event row | **< 200 ms** | |
+| `Identify` over an 8 s window | **< 3 s** | Decoders run in parallel over ring data at faster-than-real-time. Progressive results — each decoder reports as it finishes, no all-or-nothing wait. |
 | Audio glitch on a sibling edit | **0** | Fragment isolation ([ADR-0004](adr/0004-flowgraph-splitting-at-taps.md)) — this is a correctness bug, not a performance one |
 
 ### Where the 50 ms goes
