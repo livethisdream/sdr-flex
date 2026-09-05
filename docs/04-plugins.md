@@ -106,11 +106,19 @@ reinterpret `symbols` as `bits`.
 
 | Kind | What you write | Use when |
 |---|---|---|
-| `gr_hier` | A GNU Radio hier block (Python or C++) | Default. Composes existing GR blocks. |
+| `gr_hier` | A GNU Radio hier block (Python or C++) | Default for transparent chains. Composes existing GR blocks. |
+| `process` | A manifest wrapping an existing CLI program | **Reusing the field's existing decoders** — `rtl_433`, `multimon-ng`, `dump1090`, `direwolf`, `dsd`. See [ADR-0013](adr/0013-external-decoders-as-subprocesses.md) and [reuse](07-reuse.md). |
 | `gr_block` | A single GR block from an OOT module | Wrapping something that already exists |
 | `grc` | A `.grc` file | Prototyping in GRC, promoting to a plugin |
 | `python` | A plain callable over numpy arrays | Analyzers and decoders that aren't stream DSP |
 | `wasm` | A WASM module | **Views only**, runs client-side |
+
+`process` is a **peer of `gr_hier`, not an escape hatch**. It is how the project gets
+250+ ISM protocols, ADS-B, POCSAG, APRS, and four digital voice modes on day one
+without writing a decoder. Nodes backed by a process are marked **opaque** in the UI:
+no drill-down, approximate provenance, visibly distinct. That tradeoff — breadth via
+opaque reuse, depth via transparent native chains — is covered in
+[reuse](07-reuse.md#the-transparency-tradeoff).
 
 `grc` as a first-class kind matters: it means the on-ramp from "I prototyped this in
 GNU Radio Companion" to "it's a first-class operation in the workflow" is writing a

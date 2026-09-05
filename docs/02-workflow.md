@@ -87,7 +87,19 @@ disclosure triangle.
 
 **What made this work:** the ring recorder (step 3 scrubs backwards on a *live*
 source), type-filtered palettes (steps 4–5 each had ~4 options, not 200), and
-provenance (step 6's highlight propagating up).
+provenance (step 6's highlight propagating up). **Six interactions**, cold launch to
+bits — see the [interaction budget](08-ui-principles.md#interaction-budget).
+
+### UC-1' — the same signal, the fast way
+
+Steps 1–2 identical. Then, on node **A**, the palette also offers **`rtl_433`
+(250+ protocols)** — an [external decoder](07-reuse.md), marked opaque. One click,
+and the event table fills with `{"model":"Acurite-609TXC","temperature_C":21.4,...}`.
+
+**Four interactions**, no DSP knowledge required, and it either works immediately or
+it doesn't — at which point you fall back to the transparent chain above. Offering
+both, clearly labeled, is the whole reuse strategy
+([ADR-0013](adr/0013-external-decoders-as-subprocesses.md)).
 
 ---
 
@@ -218,3 +230,5 @@ privileged path into the engine.
 | Third-party blocks with zero UI code | UC-4 | [0006](adr/0006-semantic-stream-types.md), [plugins](04-plugins.md) |
 | Headless, scriptable, reproducible | UC-5 | [0001](adr/0001-client-server-split.md) |
 | Git-friendly project files | UC-6 | [0009](adr/0009-command-log.md) |
+| Existing CLI decoders usable as nodes | UC-1', UC-3.2 | [0013](adr/0013-external-decoders-as-subprocesses.md) |
+| Drag feels attached to the cursor (<50 ms) | UC-1.2, UC-3.5 | [0014](adr/0014-rust-data-plane.md), [0010](adr/0010-hot-vs-cold-parameters.md) |

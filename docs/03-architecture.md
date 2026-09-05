@@ -18,20 +18,33 @@
 │  ┌────────────────────────────────────────────────────────────────┐   │
 │  │ Command Log (append-only, serializable → project file)         │   │
 │  └────────────────────────────────────────────────────────────────┘   │
-│  ┌───────────┐  ┌──────────────┐  ┌────────────────────────────────┐  │
-│  │ Stream    │  │ Media Store  │  │ Display Renderer               │  │
-│  │ Multiplex │  │ (SigMF +     │  │ (FFT pyramid, min/max envelope)│  │
-│  │ (WS fan)  │  │  ring recs)  │  │                                │  │
-│  └─────▲─────┘  └──────▲───────┘  └────────────────▲───────────────┘  │
-└────────┼───────────────┼───────────────────────────┼──────────────────┘
-         │ ZMQ           │ mmap / shared ring        │
-┌────────┴───────────────┴───────────────────────────┴──────────────────┐
+│  ┌──────────────┐  ┌────────────────────────────────┐                 │
+│  │ Media Store  │  │ Display Renderer               │                 │
+│  │ (SigMF +     │  │ (FFT pyramid, min/max envelope)│                 │
+│  │  ring recs)  │  │                                │                 │
+│  └──────▲───────┘  └────────────────▲───────────────┘                 │
+└─────────┼───────────────────────────┼─────────────────────────────────┘
+          │ mmap                      │      ╔═══════════════════════════╗
+          │                           │      ║ DATA-PLANE RELAY (Rust)   ║
+          │                           └──────╢ ring → frame → WebSocket  ║
+          │                                  ║ newest-wins, no GC        ║
+          │        configured by control ────╢ (ADR-0014)                ║
+          │                                  ╚═════════▲═════════════════╝
+          │  shared-memory rings                       │
+┌─────────┴────────────────────────────────────────────┴────────────────┐
 │                    DSP WORKERS (separate processes)                    │
 │  worker[source-1]: GNU Radio top_block(s)   worker[source-2]: ...      │
 │    ├ osmosdr/file src → tap:root                                       │
 │    ├ tap:root → xlating filter → tap:A                                 │
-│    └ tap:A   → demod → decoder → event sink                            │
-└────────────────────────────────────────────────────────────────────────┘
+│    ├ tap:A   → demod → decoder → event sink                            │
+│    └ tap:A   → convert/resample →┐                                     │
+└──────────────────────────────────┼─────────────────────────────────────┘
+                                   │ pipe (samples in, records out)
+                          ┌────────▼──────────────────────────┐
+                          │ EXTERNAL DECODERS (ADR-0013)      │
+                          │ rtl_433 · multimon-ng · dump1090  │
+                          │ direwolf · dsd · acarsdec · …     │
+                          └───────────────────────────────────┘
          │
     ┌────┴─────────┐
     │ Hardware /   │
@@ -168,9 +181,11 @@ and the control plane never blocks on either.**
 
 | Layer | Choice | Why |
 |---|---|---|
-| Server | Python 3.11+, FastAPI + uvicorn | Not in the sample path. Same language as GR bindings. Fast to iterate on a design that will change a lot. |
+| Control plane | Python 3.11+, FastAPI + uvicorn | Never in the sample path. Same language as GR bindings. Fast to iterate on the parts that change most (compiler, registry). |
+| Data plane | **Rust relay process** | Reads worker rings via shared memory, formats frames, fans out over WebSocket. No GC in the hot path — jitter, not throughput, is the binding constraint ([ADR-0014](adr/0014-rust-data-plane.md)) |
 | DSP | GNU Radio 3.10, one worker process per source | Enormous existing block ecosystem; process isolation dodges the GIL and contains crashes ([ADR-0003](adr/0003-gnuradio-in-worker-processes.md)) |
-| Server↔worker | ZMQ (control/events) + shared-memory rings (bulk) | ZMQ is GR-native; rings avoid copying IQ through the broker |
+| Server↔worker | ZMQ (control/events) + shared-memory rings (bulk) | ZMQ is GR-native; rings avoid copying IQ through the broker, and let the Rust relay read without a Python hop |
+| External decoders | Subprocesses over pipes | `rtl_433`, `multimon-ng`, `dump1090`, `direwolf`, … — hundreds of proven decoders for ~20 lines of manifest each ([ADR-0013](adr/0013-external-decoders-as-subprocesses.md), [reuse](07-reuse.md)) |
 | Data wire | WebSocket, binary framed | One connection, browser-native, no polyfill; header + raw `Float32Array` is directly paintable |
 | Control wire | HTTP/JSON + OpenAPI | Trivially scriptable, self-documenting, cheap to write a second client against |
 | Client | TypeScript + React, WebGL2 | Waterfall at 60 fps needs GPU; canvas2D does not scale past a few hundred kilopixels/frame |
@@ -178,6 +193,13 @@ and the control plane never blocks on either.**
 | IQ format | SigMF | The only real standard; annotations round-trip ([ADR-0008](adr/0008-sigmf-native.md)) |
 | Project file | YAML serialization of the command log | Diffable, reviewable, replayable ([ADR-0009](adr/0009-command-log.md)) |
 | Packaging | Container image, plus radioconda env | GNU Radio installation is the single biggest onboarding tax; eliminate it |
+
+## Latency budget
+
+Perceived speed is set by the slowest link and by *jitter*, not average throughput.
+The full budget, including the 50 ms drag-to-pixel target and where every millisecond
+goes, is in [UI principles](08-ui-principles.md#latency-budget). The architectural
+consequences are ADR-0014 (no GC in the hot path) and ADR-0004 (small, local rebuilds).
 
 ## Known risks
 
@@ -188,13 +210,19 @@ and the control plane never blocks on either.**
 2. **Ring-recording every live source is expensive.** 2.4 MS/s complex float32 is
    ~19 MB/s. Mitigations: default to complex int16 for the ring (9.6 MB/s), a bounded
    default window (60 s), and an explicit "promote to permanent capture" action.
-3. **Python in the data-plane relay.** 30 fps × several MB is comfortable; 20 live
-   audio branches plus 8 waterfalls may not be. Instrument early; the relay is the
-   piece most likely to need a Rust rewrite, and it is small enough to be replaceable.
+3. **The Python↔Rust ring contract.** The shared-memory ring format is now a
+   three-way contract between C++ workers, the Rust relay, and Python control. It must
+   be specified, versioned, and tested from all three sides, or it becomes the place
+   where the hardest bugs live.
 4. **The type system may be too rigid.** Real-world blocks do strange things with
    rates and framing. Escape hatch: a manifest may declare `out_type: dynamic` and
    report its type at runtime, at the cost of a palette that can only be filtered
    after first run.
-5. **Plugins run in-process with the worker.** A bad plugin can take down a source
-   session (contained, by design) but not the server. True sandboxing is deferred;
-   plugin installation is an explicitly trusted action in v1.
+5. **Plugins run in-process with the worker.** A bad GR plugin can take down a source
+   session (contained, by design) but not the server. External decoders (ADR-0013) are
+   better off — they only kill their own pipe. True sandboxing of GR plugins is
+   deferred; installing one is an explicitly trusted action in v1.
+6. **External decoder version drift.** A user's `rtl_433` may not match what a
+   manifest assumes. Manifests declare version constraints; the Plugins panel reports
+   mismatches rather than failing at run time. Adapters need testing against real
+   releases, which is ongoing maintenance we are signing up for.

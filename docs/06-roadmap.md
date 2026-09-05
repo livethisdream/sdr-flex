@@ -9,15 +9,18 @@ exists still works and is worth using. No milestone is a refactor of the previou
 
 Prove the three-plane architecture end to end with the least DSP possible.
 
-- Server: session manager, SigMF file source, one worker process, ZMQ control
+- Control plane: session manager, SigMF file source, one worker process, ZMQ control
+- Worker → shared-memory ring; **Rust relay: ring → frame → WebSocket**
 - Display renderer: FFT → `spectrum` frames at 30 fps
-- Data plane: WebSocket binary framing, one subscription
 - Client: WebGL2 waterfall + spectrum, transport controls
+- **Frame-timing instrumentation from day one** — jitter is the number that matters
 
-**Done when:** open a SigMF file, see a smooth waterfall, scrub it. No tree, no
-tuner, no demod.
-**Validates:** ADR-0001, ADR-0012, and the WebGL rendering path — the three things
-most likely to be wrong in a way that forces a rewrite.
+**Done when:** open a SigMF file, see a smooth waterfall, scrub it, and the p99
+frame interval is within 4 ms of the mean. No tree, no tuner, no demod.
+**Validates:** ADR-0001, ADR-0012, ADR-0014, and the WebGL path — the things most
+likely to be wrong in a way that forces a rewrite. The relay is built here rather
+than later precisely because retrofitting the ring contract across three languages
+is the expensive version.
 
 ---
 
@@ -63,12 +66,29 @@ feedback is worth collecting.
 full resolution, and re-run a chain over it.
 **This is the first capability no free tool has.**
 
+### M3.5 — `rtl_433` in a box *(the cheapest win in the project)*
+
+The `process` plugin kind ([ADR-0013](adr/0013-external-decoders-as-subprocesses.md))
+ahead of the rest of the plugin system, because it is small and the payoff is enormous.
+
+- `process` implementation kind: pipe management, supervision, format negotiation
+- Auto-derived convert + resample chain to whatever the program wants on stdin
+- `jsonl` output parser, `events` stream type, event-table view
+- Opaque-node UI treatment
+- Adapters: `rtl_433`, `multimon-ng`, `dump1090`
+
+**Done when:** four interactions from launch to a decoded temperature sensor.
+**Roughly 60 lines of manifest buy 270+ protocols.** Nothing else in this roadmap has
+that ratio, which is why it is not waiting for M4.
+
 ---
 
 ## M4 — Third parties *(now it's extensible)*
 
 - Plugin manifest schema + registry + validation with real error reporting
-- `gr_hier`, `gr_block`, and `grc` implementation kinds
+- `gr_hier`, `gr_block`, and `grc` implementation kinds (`process` landed at M3.5)
+- More adapters: `direwolf`, `dsd`, `acarsdec`, `redsea`
+- gr-satellites integration — ~100 decoders behind one dependency
 - Plugins panel: what loaded, what didn't, why
 - View plugins (client-side)
 - Read-only compiled-flowgraph render + `.grc` export
@@ -110,16 +130,25 @@ and render a block, find out before there are 40 built-in blocks assuming otherw
 The order is chosen so that **the riskiest assumption in each layer is tested as
 early as it possibly can be**:
 
-- M0 tests whether the transport and rendering design can hold 30 fps at all.
+- M0 tests whether the transport and rendering design can hold 30 fps *without jitter*.
 - M1 tests whether "drag a box, get a node" actually feels like the product does in
   our heads. This is the premise; it is tested second.
 - M2 is the first shippable thing, deliberately early — real users beat speculation.
 - M3 is the differentiator, placed before extensibility because it shapes what the
   plugin API must expose about time.
+- M3.5 is out of order on purpose: highest capability-per-line-of-code in the plan,
+  and it stress-tests the type system's auto-resampling against real programs with
+  real format demands before the plugin API is frozen.
 - M4 tests the manifest contract while the built-in block count is still small enough
   to change it.
 - M5 and M6 are additive and carry no architectural risk.
 
-The one thing deliberately **not** deferred is the command log (M1). Retrofitting
-undo, project files, and scripting onto a mutable-state design is the kind of rewrite
-this roadmap exists to avoid.
+Three things are deliberately **not** deferred, because retrofitting each one is the
+kind of rewrite this roadmap exists to avoid:
+
+- **The command log** (M1) — undo, project files, crash recovery, and scripting all
+  hang off it.
+- **The Rust relay and ring contract** (M0) — a three-language interface is far
+  cheaper to define before there is anything on either side of it.
+- **Frame-timing instrumentation** (M0) — you cannot fix jitter you never measured,
+  and by M5 nobody will remember which change caused it.

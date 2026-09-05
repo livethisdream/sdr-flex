@@ -6,6 +6,15 @@ A modern, extensible signal analysis toolkit.
 waterfall, pick a demodulator, or attach a decoder, the tool builds a GNU Radio
 flowgraph behind you. You never author a flowgraph — you get one.
 
+Two constraints shape everything else:
+
+- **Reuse over rewrite.** The field's best decoders already exist. `rtl_433` (250+ ISM
+  protocols), `multimon-ng`, `dump1090`, `direwolf`, `dsd`, and the whole GNU Radio OOT
+  ecosystem are reachable as plugins for ~20 lines of manifest each. See [reuse](docs/07-reuse.md).
+- **Friction is a correctness property.** Six interactions from cold launch to decoded
+  bits. 50 ms from dragging a tuner to the child spectrum moving. Under 4 ms of frame
+  jitter. These are budgets in CI, not aspirations. See [UI principles](docs/08-ui-principles.md).
+
 ## Why another one
 
 | Tool | What it gets right | What we take, what we fix |
@@ -25,7 +34,9 @@ flowgraph behind you. You never author a flowgraph — you get one.
 - [Plugin model](docs/04-plugins.md) — how third parties extend the chain
 - [API sketch](docs/05-api-sketch.md) — control plane and data plane
 - [Roadmap](docs/06-roadmap.md) — milestones, each one shippable
-- [Decisions](docs/adr/) — ADRs 0001–0012
+- [Reuse](docs/07-reuse.md) — what already exists and how we reach it without rewriting it
+- [UI principles](docs/08-ui-principles.md) — the friction contract: interaction and latency budgets
+- [Decisions](docs/adr/) — ADRs 0001–0015
 
 ## Status
 

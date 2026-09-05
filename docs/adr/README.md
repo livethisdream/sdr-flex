@@ -17,3 +17,6 @@ why, what it costs, and what would make us change our minds.
 | [0010](0010-hot-vs-cold-parameters.md) | Parameters declare hot vs. cold | Accepted |
 | [0011](0011-web-client-first.md) | Web client first, WebGL rendering, native shell later | Accepted |
 | [0012](0012-server-side-display-rendering.md) | Display rendering is server-side and lossy | Accepted |
+| [0013](0013-external-decoders-as-subprocesses.md) | External decoders are first-class subprocess plugins | Accepted |
+| [0014](0014-rust-data-plane.md) | The hot path never touches Python | Accepted |
+| [0015](0015-licensing-posture.md) | Licensing posture | **Proposed** |
