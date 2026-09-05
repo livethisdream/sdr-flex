@@ -26,3 +26,4 @@ why, what it costs, and what would make us change our minds.
 | [0019](0019-settings-surfaces.md) | Settings have four homes; none is a left pane | Accepted |
 | [0020](0020-views-that-share-an-axis.md) | Views that share an axis are one view | Accepted |
 | [0021](0021-mock-engine-first.md) | The client is built first, against a mock engine | Accepted |
+| [0022](0022-conversational-control.md) | Language is a peer client, not a replacement for the GUI | Accepted |

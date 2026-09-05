@@ -154,3 +154,32 @@ select.cv option { background:var(--raised); color:var(--bright); }
 .hint.gone { opacity:0; pointer-events:none; }
 
 @media (prefers-reduced-motion: reduce) { * { transition-duration:.001ms !important; } }
+
+/* ── child channels as bands on the parent's spectrum ──────────────────────
+   The accent marks what the user placed, so a tuned channel and a live
+   selection share the hue and differ in weight: the marker is quiet and
+   permanent, the selection is bright and transient. */
+.markers { position:absolute; inset:0; pointer-events:none; }
+.marker {
+  position:absolute; top:0; bottom:0; padding:0;
+  background:rgba(255,122,92,.055);
+  border-left:1px solid rgba(255,122,92,.4);
+  border-right:1px solid rgba(255,122,92,.4);
+  pointer-events:auto; cursor:pointer;
+}
+.marker:hover { background:rgba(255,122,92,.13); }
+.marker span {
+  position:absolute; left:0; bottom:3px;
+  font-family:var(--mono); font-size:.58rem; color:#160906;
+  background:rgba(255,122,92,.85); padding:.03rem .26rem; border-radius:2px;
+}
+.marker:hover span { background:var(--accent); }
+
+/* a drawn box that is waiting on a decision says so, and is clickable */
+.selbox { pointer-events:none; }
+.selbox.armed { pointer-events:auto; cursor:pointer; }
+.selbox.armed::before {
+  content:"▾ actions"; position:absolute; left:3px; bottom:3px;
+  font-family:var(--mono); font-size:.58rem; color:#160906;
+  background:var(--accent); padding:.05rem .3rem; border-radius:2px; white-space:nowrap;
+}

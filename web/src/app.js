@@ -60,6 +60,18 @@ class App {
   }
 
   node() { return this.engine.node(this.current); }
+
+  /**
+   * A drag box belongs to the node it was drawn on. Carrying it to another node,
+   * or another tab, would leave a coral rectangle sitting over pixels it does not
+   * describe — so navigation always clears it.
+   */
+  clearSelection() {
+    this.selection = null;
+    const box = $('#selbox');
+    box.hidden = true;
+    box.classList.remove('armed');
+  }
   view() { return this.activeView.get(this.current) || VIEWS[this.node().out.kind][0]; }
 
   // ── chrome ───────────────────────────────────────────────────────────────
@@ -85,7 +97,7 @@ class App {
     const el = $('#crumbs');
     el.innerHTML = path.map((n, i) => {
       const sibs = this.engine.children(n.parent).length;
-      const label = n.op === 'core.source' ? n.label : `${OPS[n.op].letter} · ${n.label}`;
+      const label = n.op === 'core.source' ? n.label : `${n.letter} · ${n.label}`;
       return `<button class="crumb${n.id === this.current ? ' cur' : ''}${OPS[n.op] && OPS[n.op].external ? ' ext' : ''}" data-id="${n.id}">${label}${sibs > 1 ? ' <i>▾</i>' : ''}</button>` +
         (i < path.length - 1 ? '<span class="sepc">›</span>' : '');
     }).join('');
@@ -94,11 +106,11 @@ class App {
     const kids = this.engine.children(this.current);
     if (kids.length) {
       el.innerHTML += '<span class="sepc">›</span>' + kids.map((k) =>
-        `<button class="crumb dim" data-id="${k.id}">${OPS[k.op].letter} · ${k.label}</button>`).join('');
+        `<button class="crumb dim" data-id="${k.id}">${k.letter} · ${k.label}</button>`).join('');
     }
 
     for (const b of el.querySelectorAll('.crumb')) {
-      b.addEventListener('click', () => { this.current = b.dataset.id; this.metrics.interaction(); this.refresh(); });
+      b.addEventListener('click', () => { this.clearSelection(); this.current = b.dataset.id; this.metrics.interaction(); this.refresh(); });
     }
   }
 
@@ -112,7 +124,7 @@ class App {
       '<button class="tab plus" title="operations valid here">+</button>';
 
     for (const b of el.querySelectorAll('.tab[data-v]')) {
-      b.addEventListener('click', () => { this.activeView.set(n.id, b.dataset.v); this.metrics.interaction(); this.refresh(); });
+      b.addEventListener('click', () => { this.clearSelection(); this.activeView.set(n.id, b.dataset.v); this.metrics.interaction(); this.refresh(); });
     }
     el.querySelector('.plus').addEventListener('click', async (e) => {
       const r = e.target.getBoundingClientRect();
@@ -138,8 +150,39 @@ class App {
       this.renderAxis();
       this.renderCbarLabels();
     }
+    if (v === 'Spectrum') this.renderMarkers();
     if (v === 'Flow') this.renderFlow();
     if (v === 'Events') $('#pane-events').innerHTML = '<div class="empty">Event streams arrive with the external decoders at M4.5.</div>';
+  }
+
+  /**
+   * Every child tuner is a band on this node's spectrum, labelled and clickable.
+   * The analysis tree ought to be visible on the signal it describes, not only in
+   * the breadcrumb — and it answers "what did that box I drew become?".
+   */
+  renderMarkers() {
+    const n = this.node();
+    const lo = n.out.centerHz - n.out.sampleRate / 2;
+    const host = $('#markers');
+    const kids = this.engine.children(n.id).filter((k) => k.params && k.params.centerHz && k.params.widthHz);
+    host.innerHTML = kids.map((k) => {
+      const w = k.params.widthHz.value;
+      const left = ((k.params.centerHz.value - w / 2 - lo) / n.out.sampleRate) * 100;
+      const width = (w / n.out.sampleRate) * 100;
+      if (left > 100 || left + width < 0) return '';
+      return `<button class="marker" data-id="${k.id}" style="left:${left}%;width:${width}%"
+                title="${k.letter} · ${k.label}"><span>${k.letter}</span></button>`;
+    }).join('');
+    for (const m of host.querySelectorAll('.marker')) {
+      m.addEventListener('pointerdown', (e) => e.stopPropagation());
+      m.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.clearSelection();
+        this.current = m.dataset.id;
+        this.metrics.interaction();
+        this.refresh();
+      });
+    }
   }
 
   renderAxis() {
@@ -164,7 +207,7 @@ class App {
       const spec = OPS[n.op];
       const kids = this.engine.children(id);
       return `<div class="fnode${id === this.current ? ' cur' : ''}${spec && spec.external ? ' ext' : ''}" style="margin-left:${depth * 22}px" data-id="${id}">
-          <span class="fn">${n.op === 'core.source' ? n.label : `${spec.letter} · ${n.label}`}</span>
+          <span class="fn">${n.op === 'core.source' ? n.label : `${n.letter} · ${n.label}`}</span>
           <span class="fk">${n.out.kind}</span>
           <span class="fr">${fmtRate(n.out.sampleRate)}</span>
         </div>` + kids.map((k) => walk(k.id, depth + 1)).join('');
@@ -172,7 +215,7 @@ class App {
     $('#pane-flow').innerHTML =
       `<div class="flowwrap"><div class="flowhead">Compiled graph — read-only. Export to <code>.grc</code> arrives with the real engine at M1.</div>${walk(this.engine.root.id, 0)}</div>`;
     for (const el of $('#pane-flow').querySelectorAll('.fnode')) {
-      el.addEventListener('click', () => { this.current = el.dataset.id; this.metrics.interaction(); this.refresh(); });
+      el.addEventListener('click', () => { this.clearSelection(); this.current = el.dataset.id; this.metrics.interaction(); this.refresh(); });
     }
   }
 
@@ -207,7 +250,7 @@ class App {
       }
       nodeCells.push({ key: 'out', label: 'out', unit: 'kS/s', type: 'ro', value: n.out.sampleRate, fmt: (v) => (v / 1e3).toFixed(1) });
     }
-    groups.push({ key: 'node', title: n.op === 'core.source' ? 'Source' : `${OPS[n.op].letter} · ${n.label}`, cells: nodeCells });
+    groups.push({ key: 'node', title: n.op === 'core.source' ? 'Source' : `${n.letter} · ${n.label}`, cells: nodeCells });
 
     if (this.view() === 'Spectrum') {
       groups.push({
@@ -269,7 +312,7 @@ class App {
       this.menu.open(x, y, usable.length ? usable : ops, async (opId) => {
         const sel = selection || this.defaultSelection();
         const node = await this.engine.addNode({ parent: this.current, op: opId, selection: sel });
-        this.selection = null;
+        this.clearSelection();
         this.current = node.id;
         this.vp(node.id);
         this.metrics.endOp();
@@ -289,9 +332,20 @@ class App {
     const stage = $('#stage');
     const box = $('#selbox');
 
+    // clicking the box you already drew reopens its menu, so dismissing it is not
+    // a dead end with an orphaned rectangle and nowhere to go
+    box.addEventListener('pointerdown', (e) => e.stopPropagation());
+    box.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!this.selection) return;
+      const r = box.getBoundingClientRect();
+      this.metrics.beginOp();
+      this.openMenu(r.left + 8, r.bottom + 8, this.selection);
+    });
+
     stage.addEventListener('pointerdown', (e) => {
       if (this.view() !== 'Spectrum') return;
-      if (e.target.closest('#cbar-wrap')) return;
+      if (e.target.closest('#cbar-wrap') || e.target.closest('#markers')) return;
       const r = stage.getBoundingClientRect();
       const x0 = e.clientX - r.left;
       stage.setPointerCapture(e.pointerId);
@@ -320,10 +374,12 @@ class App {
       const f0 = toHz(Math.min(x0, x1)), f1 = toHz(Math.max(x0, x1));
       this.selection = { f0, f1, t0: this.engine.t - 0.05, t1: this.engine.t };
       box.dataset.label = `${((f1 - f0) / 1e3).toFixed(1)} kHz`;
+      box.classList.add('armed');
+      this._menuAt = { x: e.clientX + 14, y: e.clientY + 14 };
 
       // the gesture completes itself: the menu opens where the drag was released
       this.metrics.beginOp();
-      this.openMenu(e.clientX + 12, e.clientY - 8, this.selection);
+      this.openMenu(this._menuAt.x, this._menuAt.y, this.selection);
     });
 
     // colour bar: dragging the handles is where dB range lives (ADR-0019, tier A)
@@ -359,7 +415,7 @@ class App {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
       if (e.key === ' ') { e.preventDefault(); $('#play').click(); }
       if (e.key === '/') { e.preventDefault(); this.metrics.beginOp(); const r = $('#stage').getBoundingClientRect(); this.openMenu(r.left + r.width / 2, r.top + 60, this.selection); }
-      if (e.key === 'Escape') { this.selection = null; $('#selbox').hidden = true; }
+      if (e.key === 'Escape') { this.clearSelection(); this.menu.close(); }
     });
 
     addEventListener('resize', () => this.renderStage());

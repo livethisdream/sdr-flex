@@ -55,6 +55,7 @@ export class MockEngine {
   constructor() {
     this.nodes = new Map();
     this.root = null;
+    this.letters = 0;      // nodes are named in creation order, not by op
     this.t = 0;            // playhead, seconds since scene start
     this.playing = true;
     this._last = performance.now();
@@ -108,7 +109,10 @@ export class MockEngine {
     await sleep(LATENCY.structuralMs);
     const p = this.node(parent);
     const spec = OPS[op];
-    const node = { id: nid('n'), parent, op, label: '', params: {}, out: null, stub: !!spec.stub };
+    const node = {
+      id: nid('n'), parent, op, label: '', params: {}, out: null, stub: !!spec.stub,
+      letter: String.fromCharCode(65 + (this.letters++ % 26)),
+    };
 
     if (op === 'core.tuner') {
       const centerHz = (selection.f0 + selection.f1) / 2;
