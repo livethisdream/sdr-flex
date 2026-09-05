@@ -169,10 +169,27 @@ not a hiding place.
 
 > **No sentence appears in persistent chrome.**
 
-Chrome carries labels, values and units — nothing that parses as prose. Sentences live
-in tooltips, empty states, error messages and the preferences overlay. A placeholder
+Chrome carries labels, values and units — nothing that parses as prose. A placeholder
 like an em-dash standing in for an absent unit is also a word: leave the space blank
 and keep the baseline instead.
+
+**"Persistent" is doing the work in that sentence.** Prose is welcome in four places,
+all of them transient or opt-in — which is also where the newcomer's on-ramp lives,
+and the answer to the discoverability cost of
+[ADR-0018](adr/0018-contextual-menus-and-view-tabs.md):
+
+| Where prose is allowed | Why it is not clutter |
+|---|---|
+| **Tooltips** | Summoned, never occupying |
+| **Empty states** | Vanish the moment there is content — the canvas before any node exists is the right place to say "drag a box" |
+| **Error messages** | The one time explanation is the whole point |
+| **Preferences overlay** | You deliberately left the analysis loop |
+
+**Scope: this law governs the product, not its documentation.** The design docs and
+the published design page are *supposed* to explain themselves at length — that is
+their entire job, and captions, legends and rationale belong there. A reader of the
+spec and a user of the instrument have opposite text budgets. Do not point this budget
+at `docs/`.
 
 ## Interaction budget
 
