@@ -56,6 +56,8 @@ Two constraints shape everything else:
 
 ## Status
 
-Planning. No code yet. [M0](docs/06-roadmap.md) is a static toy model — the real client against a
+[M0](docs/06-roadmap.md) is under way in [`web/`](web/) — a static toy model with no
+backend, which already tunes, demodulates and decodes the synthetic scene end to end.
+Everything else is still planning. [M0](docs/06-roadmap.md) is a static toy model — the real client against a
 mock engine in the browser, hosted, no backend. It tests the premise in days and needs
 GNU Radio on nobody's machine ([ADR-0021](docs/adr/0021-mock-engine-first.md)).

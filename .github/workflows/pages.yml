@@ -1,0 +1,38 @@
+# Deploys the M0 toy model to GitHub Pages.
+#
+# The app is plain ES modules with no build step, so this just uploads web/.
+# Before the first run, enable Pages: Settings → Pages → Source → GitHub Actions.
+# Note that Pages on a *private* repository requires a paid plan; on a free plan,
+# either make the repository public or deploy to Cloudflare Pages / Netlify
+# instead (see docs/adr/0021-mock-engine-first.md).
+name: Deploy toy model
+
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDR Flex — M0 toy model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+  <div class="bar" id="status"></div>
+  <div class="crumbs" id="crumbs"></div>
+  <div class="tabs" id="tabs"></div>
+
+  <div class="panes">
+    <!-- Spectrum + waterfall: one tab, one shared frequency axis (ADR-0020) -->
+    <div class="pane" id="pane-spectrum">
+      <div class="stage" id="stage">
+        <canvas id="sp" class="sp"></canvas>
+        <div class="splitter"></div>
+        <canvas id="wf" class="wf"></canvas>
+        <div class="selbox" id="selbox" hidden></div>
+        <div id="cbar-wrap" title="drag to set the dB range">
+          <div class="cbar" id="cbar"></div>
+          <span class="cb-l" id="cb-hi"></span>
+          <span class="cb-l" id="cb-lo"></span>
+        </div>
+      </div>
+      <div class="axis" id="axis"></div>
+    </div>
+
+    <div class="pane" id="pane-time" hidden><canvas id="ts" class="ts"></canvas></div>
+    <div class="pane scrolly" id="pane-bits" hidden><div id="bits" class="bitwrap"></div></div>
+    <div class="pane scrolly" id="pane-flow" hidden></div>
+    <div class="pane scrolly" id="pane-events" hidden></div>
+  </div>
+
+  <div class="transport">
+    <button id="play" class="tbtn" aria-label="play or pause">❚❚</button>
+    <span class="track"><i></i></span>
+    <span id="clock" class="mono">0.000 s</span>
+  </div>
+
+  <div class="strip" id="strip"></div>
+  <div class="metrics" id="metrics"></div>
+</div>
+
+<div class="tip" id="tip" hidden></div>
+<div class="hint" id="hint">Drag a box across the spectrum. The menu opens where you release.</div>
+
+<script type="module" src="src/app.js"></script>
+<script>
+  // the on-ramp is an empty state, not permanent chrome (law 11)
+  addEventListener('pointerup', function once() {
+    const h = document.getElementById('hint');
+    if (h) h.classList.add('gone');
+    removeEventListener('pointerup', once);
+  });
+</script>
+</body>
+</html>

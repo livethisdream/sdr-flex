@@ -8,7 +8,7 @@ as it possibly can be** — which is why the first thing built has no server in 
 
 ---
 
-## M0 — Toy model *(static, hosted, no backend)*
+## M0 — Toy model *(static, hosted, no backend)* — **in progress**, see [`web/`](../web/)
 
 A real client running against a **mock engine inside the browser** that speaks the
 same protocol the real server will. Deployed as a static site; anyone can click a link
@@ -29,6 +29,18 @@ processes, GNU Radio, audio.
 
 **Done when:** a stranger can open the link, drag a box, drill in, and reach bits —
 and the interaction and travel budgets are being measured automatically.
+
+**Built so far:** the shell (breadcrumb, view tabs, contextual menu on drag-release,
+cell strip), stacked spectrum + waterfall on one shared axis with a WebGL2 renderer
+and a 2D fallback, working FFT size / window / averaging / dB range / colormap /
+scroll speed, a draggable colour bar, auto/manual with real estimators and hover
+explanation, and the full tune → AM envelope → PWM slicer chain recovering
+`aa aa 3c 69` out of the synthetic scene. Metrics for interaction count, pointer
+travel, frame rate and jitter run live.
+
+**Still open:** drag-and-drop of a real SigMF file, the time `gate` selection,
+scrubbing back through history, tearing tabs into tiles, and the newcomer test that
+ADR-0018 asks for.
 
 **Validates:** ADR-0002 (the premise), ADR-0018 (the biggest UX bet, including its one
 real risk: whether a newcomer finds the contextual menu), ADR-0017, ADR-0020, and the
