@@ -30,7 +30,7 @@ at 40 MS/s without the user doing arithmetic. Consistent with
 
 **GNU Radio handles the whole path.** At ≤ 10 MS/s, source → first tuner in GR with
 VOLK is not close to a bottleneck. No native fast path is needed, which removes a
-large chunk of work from M0–M3.
+large chunk of work from M1–M4.
 
 ## Consequences at the future tier
 

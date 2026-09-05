@@ -33,5 +33,5 @@ second client stops being cheap and the property is gone.
 ## Would change our mind
 
 Nothing short of the round-trip latency making direct manipulation feel bad, which
-we test at M1. Even then the fix is optimistic local prediction on the client, not
+we test at M0. Even then the fix is optimistic local prediction on the client, not
 collapsing the split.

@@ -21,7 +21,7 @@ Five features that are usually five separate subsystems become one mechanism:
 | Reviewable diffs | The log is line-oriented YAML; `git diff` is meaningful (UC-6) |
 
 Retrofitting undo and project files onto mutable state is a rewrite. Adopting this
-at M1 costs almost nothing; adopting it at M5 costs the whole model layer.
+at M2 costs almost nothing; adopting it at M6 costs the whole model layer.
 
 ## Cost
 

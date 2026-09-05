@@ -40,7 +40,7 @@ Two constraints shape everything else:
 - [Roadmap](docs/06-roadmap.md) — milestones, each one shippable
 - [Reuse](docs/07-reuse.md) — what already exists and how we reach it without rewriting it
 - [UI principles](docs/08-ui-principles.md) — the friction contract: interaction and latency budgets
-- [Decisions](docs/adr/) — ADRs 0001–0020
+- [Decisions](docs/adr/) — ADRs 0001–0021
 
 ## Settled
 
@@ -56,4 +56,6 @@ Two constraints shape everything else:
 
 ## Status
 
-Planning. No code yet. Read [the roadmap](docs/06-roadmap.md) for what M0 looks like.
+Planning. No code yet. [M0](docs/06-roadmap.md) is a static toy model — the real client against a
+mock engine in the browser, hosted, no backend. It tests the premise in days and needs
+GNU Radio on nobody's machine ([ADR-0021](docs/adr/0021-mock-engine-first.md)).

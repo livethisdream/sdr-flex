@@ -25,3 +25,4 @@ why, what it costs, and what would make us change our minds.
 | [0018](0018-contextual-menus-and-view-tabs.md) | Contextual menus over sidebars; views are tabs | Accepted |
 | [0019](0019-settings-surfaces.md) | Settings have four homes; none is a left pane | Accepted |
 | [0020](0020-views-that-share-an-axis.md) | Views that share an axis are one view | Accepted |
+| [0021](0021-mock-engine-first.md) | The client is built first, against a mock engine | Accepted |

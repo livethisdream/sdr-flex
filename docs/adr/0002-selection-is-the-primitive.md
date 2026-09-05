@@ -34,4 +34,4 @@ GRC, wrap it in a manifest, and it becomes a single node in the tree.
 ## Would change our mind
 
 If more than a small minority of real analyses need structure the tree can't hold,
-even with secondary inputs. Revisit after M5, with evidence from actual projects.
+even with secondary inputs. Revisit after M6, with evidence from actual projects.
