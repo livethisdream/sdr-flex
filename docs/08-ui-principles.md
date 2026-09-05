@@ -4,7 +4,7 @@ The premise of this project is that the *workflow* is the product. That makes GU
 friction a correctness property, not a polish item. This document is written as a
 contract we can be held to, with numbers.
 
-## Ten laws
+## Eleven laws
 
 1. **Five seconds to spectrum.** Launch to a moving waterfall, no project dialog, no
    wizard, no sample-rate prompt. The app opens onto a single list: recent captures
@@ -50,6 +50,13 @@ contract we can be held to, with numbers.
     borders, no decorative panels. The waterfall is the brightest thing on screen,
     it gets the full width of the window, and everything else is quiet until hovered.
     Operations come to the cursor rather than occupying a permanent rail.
+
+11. **Name it on screen; explain it on hover.** Visual simplicity is the goal, and
+    words are the most expensive thing on a dense screen. Labels and values stay
+    visible — a thing you cannot read is a thing you cannot find. *Descriptions*,
+    rationale, constraints and consequences go in tooltips. And state earns a
+    **cheaper visual encoding** rather than a word: the auto/manual mode is a 2 px
+    coloured edge, not a chip reading "auto".
 
 ## Layout
 
@@ -127,6 +134,45 @@ things with four lifetimes, and one test assigns every one of them
 The one hard case — clipping while four levels deep, with gain belonging to the
 source — is answered by the rig bar carrying live source health: the clip indicator
 is clickable and moves the breadcrumb to the source. One click, no permanent chrome.
+
+## Law 11 in detail — because the naive version is harmful
+
+"Move text into tooltips" taken literally produces a wall of unlabelled controls: the
+SDRangel failure we [named as an anti-pattern](#named-anti-patterns). Three boundaries
+keep it honest.
+
+**Identity is visible; explanation is on hover.** The test is *what* versus *why*.
+
+| Always visible | On hover |
+|---|---|
+| `CENTER` · `433.8950` · `MHz` | why 433.8950 — the estimator and its evidence |
+| The coloured mode edge | "Manual, pinned 12:04. Auto would suggest 47.5 kHz." |
+| `AM envelope` in the menu | what it does, what it outputs, its rate constraint |
+| `rtl_433` and its `ext` mark | "External process — opaque, no drill-down past this node" |
+| `ring 41.2 s` | retention policy, disk budget, where the ring is written |
+| A node's error mark | the traceback |
+
+An auto/manual tooltip **shows what the other mode would have said** — pinning a width
+to 50 kHz should tell you auto would have chosen 47.5. That is exactly the kind of
+content that is invaluable on demand and unbearable as permanent text.
+
+**What you need mid-gesture stays visible.** You cannot hover while dragging. Any
+state you check *during* a gesture — the mode edge, the value you are scrubbing, the
+selection bounds — is visible, always. This is the boundary that stops the law from
+eating the interface.
+
+**A tooltip is never the only path.** Everything in one is reachable from the expanded
+strip or a details view, for keyboard and touch users. A tooltip is an accelerator,
+not a hiding place.
+
+### Word budget
+
+> **No sentence appears in persistent chrome.**
+
+Chrome carries labels, values and units — nothing that parses as prose. Sentences live
+in tooltips, empty states, error messages and the preferences overlay. A placeholder
+like an em-dash standing in for an absent unit is also a word: leave the space blank
+and keep the baseline instead.
 
 ## Interaction budget
 
@@ -257,7 +303,7 @@ review:
 
 - The interaction and latency budgets are in CI as **automated tests**, not aspirations:
   a scripted client counts interactions for each use case and measures frame timing.
-- Any PR that adds a modal, a submenu, or a required-value prompt needs an explicit
-  argument in the description.
+- Any PR that adds a modal, a submenu, a required-value prompt, or a **sentence in
+  persistent chrome** needs an explicit argument in the description.
 - Every milestone demo is a **cold launch running a full use case on video**, timed.
   If it doesn't feel good on video, it doesn't feel good.

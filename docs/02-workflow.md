@@ -67,7 +67,10 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
   bar opens the same menu for anyone who hasn't found the gesture yet.
 - **Inspector strip.** Cells, not a text run — label above, value in tabular mono,
   a 2 px left edge carrying the mode (green `⟲ auto`, coral `🔒 manual`), grouped
-  under the node name and the view name. Parameters of the selected node, then the
+  under the node name and the view name. The edge replaced a text chip because state
+  earns a cheaper visual encoding than a word; hovering it explains the mode *and*
+  what the other mode would have chosen
+  ([law 11](08-ui-principles.md#law-11-in-detail--because-the-naive-version-is-harmful)). Parameters of the selected node, then the
   *active view's* — which belong to the view, not the node, since Spectrum and
   Waterfall want different settings on the same node. Every derived value shows
   `⟲ auto` (re-derives when upstream changes) or `🔒 manual` (sticky) —
