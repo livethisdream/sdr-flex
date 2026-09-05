@@ -252,24 +252,53 @@ export class MockEngine {
     }
 
     if (n.out.kind === 'real') {
-      const span = opts.spanS || 0.12;
-      const count = Math.min(48000, Math.max(256, Math.floor(n.out.sampleRate * span)));
+      const fs = n.out.sampleRate;
       const p = this.node(n.parent);
+      // look over a whole burst period so the trigger has something to find
+      const searchS = opts.trigger === 'free' ? (opts.spanS || 0.12) : 1.05;
+      const count = Math.min(131072, Math.max(256, Math.floor(fs * searchS)));
       const iq = this._readIQ(p, this.t, count);
-      const env = dsp.smooth(dsp.amEnvelope(iq, count), dsp.envelopeWindow(n.out.sampleRate));
-      return { kind: 'timeseries', data: env, sampleRate: n.out.sampleRate, spanS: count / n.out.sampleRate };
+      const env = dsp.smooth(dsp.amEnvelope(iq, count), dsp.envelopeWindow(fs));
+      const windowEnd = this.t;                        // absolute time of the last sample
+
+      if (opts.trigger === 'free') {
+        return { kind: 'timeseries', data: env, sampleRate: fs,
+                 spanS: count / fs, t0: windowEnd - count / fs, triggered: false };
+      }
+
+      const b = dsp.findLastBurst(env, fs);
+      if (!b) return { kind: 'timeseries', data: env, sampleRate: fs,
+                       spanS: count / fs, t0: windowEnd - count / fs, triggered: false };
+
+      const pad = Math.round(fs * 0.004);
+      const s = Math.max(0, b.start - pad);
+      const e = Math.min(env.length, b.end + pad);
+      return {
+        kind: 'timeseries', data: env.subarray(s, e), sampleRate: fs,
+        spanS: (e - s) / fs, t0: windowEnd - (count - s) / fs, triggered: true,
+      };
     }
 
     if (n.out.kind === 'bits') {
       const p = this.node(n.parent);           // the envelope feeding the slicer
-      // a full second, so a whole burst is always inside the window; the app
-      // recomputes this a few times a second rather than every frame
-      const span = opts.spanS || 1.0;
-      const count = Math.min(131072, Math.floor(p.out.sampleRate * span));
+      // a couple of burst periods, so there is always a complete one to show; the
+      // app recomputes this a few times a second rather than every frame
+      const fs = p.out.sampleRate;
+      const span = opts.spanS || 2.0;
+      const count = Math.min(262144, Math.floor(fs * span));
       const gp = this.node(p.parent);
-      const env = dsp.smooth(dsp.amEnvelope(this._readIQ(gp, this.t, count), count), dsp.envelopeWindow(p.out.sampleRate));
-      const bits = dsp.pwmSlice(env, n.params.threshold.value, p.out.sampleRate, n.params.symbolUs.value);
-      return { kind: 'bits', bits, env, sampleRate: p.out.sampleRate };
+      const env = dsp.smooth(dsp.amEnvelope(this._readIQ(gp, this.t, count), count), dsp.envelopeWindow(fs));
+      const groups = dsp.pwmSlice(env, n.params.threshold.value, fs, n.params.symbolUs.value);
+      const windowStart = this.t - count / fs;
+      return {
+        kind: 'bits', env, sampleRate: fs,
+        symbolUs: n.params.symbolUs.value,
+        groups: groups.map((g) => ({
+          bits: g.bits,
+          t: windowStart + g.start / fs,
+          durationS: (g.end - g.start) / fs,
+        })),
+      };
     }
     return { kind: 'none' };
   }

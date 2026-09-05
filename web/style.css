@@ -128,16 +128,42 @@ select.cv option { background:var(--raised); color:var(--bright); }
 .tip .dim { color:var(--rule); }
 
 /* ── bits + flow ── */
-.bitwrap { display:flex; flex-direction:column; gap:.5rem; }
-.brow { display:flex; align-items:center; gap:.6rem; font-family:var(--mono); font-size:.7rem; color:var(--dim); }
-.bn { width:2rem; }
-.bits { display:flex; gap:2px; }
-.bits i { width:9px; height:17px; border-radius:1px; background:var(--rule); }
+.empty { color:var(--dim); font-size:.82rem; padding:1rem 0; max-width:60ch; line-height:1.6; }
+
+/* ── bits: one row per burst, located in source time ── */
+.bits-table { border-collapse:collapse; font-family:var(--mono); font-size:.72rem; }
+.bits-table th {
+  text-align:left; font-size:.56rem; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--dim); font-weight:500; padding:0 1rem .45rem 0;
+  border-bottom:1px solid var(--rule); white-space:nowrap;
+}
+.bits-table td { padding:.4rem 1rem .4rem 0; border-bottom:1px solid var(--rule-lo); vertical-align:middle; }
+.bits-table tr:last-child td { border-bottom:0; }
+.bits-table .key { margin-left:.6rem; color:var(--dim); letter-spacing:0; text-transform:none; }
+.bits-table .key i { width:8px; height:8px; display:inline-block; border-radius:1px; vertical-align:baseline; margin-right:.15rem; }
+.bt, .bc, .bd { color:var(--dim); font-variant-numeric:tabular-nums; text-align:right; }
+.bt { color:var(--body); }
+.bh { color:var(--bright); white-space:nowrap; }
+.bh .rem { color:var(--dim); }
+.bits { display:inline-flex; gap:2px; }
+.bits i { width:8px; height:16px; border-radius:1px; background:var(--rule); }
 .bits i.one { background:var(--ok); }
 .bits i.zero { background:var(--rule-lo); border:1px solid var(--rule); }
-.bits i.pre { opacity:.55; }
-.bhex { color:var(--bright); }
-.empty { color:var(--dim); font-size:.82rem; padding:1rem 0; }
+.bits i.mark { margin-right:7px; position:relative; }
+.bits i.mark::after {
+  content:""; position:absolute; right:-5px; top:-2px; bottom:-2px;
+  width:1px; background:var(--accent);
+}
+.bits-foot { margin-top:.8rem; font-family:var(--mono); font-size:.64rem; color:var(--dim); }
+
+/* ── time pane: a latched display says so ── */
+.tstage { position:relative; flex:1; min-height:0; background:var(--stage); }
+.tstage .ts { position:absolute; inset:0; width:100%; height:100%; }
+.trig {
+  position:absolute; top:8px; left:10px; font-family:var(--mono); font-size:.62rem;
+  color:var(--dim); background:rgba(10,12,17,.78); padding:.12rem .38rem; border-radius:2px;
+}
+.trig.on { color:var(--ok); }
 
 .flowwrap { display:flex; flex-direction:column; gap:2px; }
 .flowhead { color:var(--dim); font-size:.76rem; margin-bottom:.7rem; }

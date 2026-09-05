@@ -25,6 +25,7 @@ const VIEWS = {
 const defaultViewParams = () => ({
   bins: 1024, window: 'Hann', avg: 4,
   dbMin: -74, dbMax: -18, colormap: 'Viridis', speed: 60,
+  trigger: 'auto', spanS: 0.12,
 });
 
 class App {
@@ -195,6 +196,22 @@ class App {
     }).join('');
   }
 
+  /** The Time pane gets a real axis in ms, and says whether it is latched. */
+  renderTimeAxis(f) {
+    const el = $('#taxis');
+    if (!el) return;
+    const ms = f.spanS * 1e3;
+    el.innerHTML = [0, 0.25, 0.5, 0.75, 1].map((k) => {
+      const v = k * ms;
+      return `<span>${v.toFixed(ms < 20 ? 2 : 1)}${k === 1 ? ' ms' : ''}</span>`;
+    }).join('');
+    const badge = $('#trig');
+    if (badge) {
+      badge.textContent = f.triggered ? `⊓ triggered · burst at ${f.t0.toFixed(3)} s` : '~ free-running';
+      badge.className = 'trig' + (f.triggered ? ' on' : '');
+    }
+  }
+
   renderCbarLabels() {
     const p = this.vp(this.current);
     $('#cb-hi').textContent = `${Math.round(p.dbMax)} dBFS`;
@@ -252,6 +269,17 @@ class App {
     }
     groups.push({ key: 'node', title: n.op === 'core.source' ? 'Source' : `${n.letter} · ${n.label}`, cells: nodeCells });
 
+    if (this.view() === 'Time') {
+      groups.push({
+        key: 'view', title: 'Time',
+        cells: [
+          { key: 'trigger', label: 'trigger', unit: '', type: 'enum', value: p.trigger, values: ['auto', 'free'] },
+          { key: 'spanS', label: 'span', unit: 'ms', type: 'num', value: p.spanS,
+            fmt: (v) => (v * 1e3).toFixed(0), step: 0.0008, min: 0.002, max: 1.0 },
+        ],
+      });
+    }
+
     if (this.view() === 'Spectrum') {
       groups.push({
         key: 'view', title: 'Spectrum + waterfall',
@@ -277,6 +305,7 @@ class App {
       const p = this.vp(this.current);
       if (key === 'bins') { p.bins = parseInt(value, 10); this.trace.reset(); }
       else if (key === 'window') p.window = value;
+      else if (key === 'trigger') { p.trigger = value; this._tsCache = null; }
       else if (key === 'colormap') { p.colormap = value; this.waterfall.setColormap(value); $('#cbar').style.background = cssGradient(value); }
       else p[key] = value;
       if (key === 'dbMin' && p.dbMin > p.dbMax - 5) p.dbMin = p.dbMax - 5;
@@ -442,15 +471,26 @@ class App {
         this.waterfall.draw();
       }
     } else if (v === 'Time') {
-      const f = this.engine.frame(this.current, { spanS: 0.12 });
-      if (f.kind === 'timeseries') {
-        const n = this.node();
-        this.timeSeries.threshold = null;
-        for (const c of this.engine.children(n.id)) if (c.op === 'core.pwm_slicer') this.timeSeries.threshold = c.params.threshold.value;
-        this.timeSeries.draw(f.data, f.spanS);
-      } else if (f.kind === 'bits') {
-        this.timeSeries.threshold = this.node().params.threshold.value;
-        this.timeSeries.draw(f.env, 0.12);
+      // a triggered display is latched, so it is recomputed a few times a second
+      // and simply redrawn in between — free-run still needs every frame
+      this._tsAcc = (this._tsAcc || 0) + dt;
+      const live = p.trigger === 'free';
+      if (live || this._tsAcc > 220 || !this._tsCache) {
+        this._tsAcc = 0;
+        const f = this.engine.frame(this.current, { spanS: p.spanS, trigger: p.trigger });
+        if (f.kind === 'timeseries') {
+          const n = this.node();
+          this.timeSeries.threshold = null;
+          for (const c of this.engine.children(n.id)) if (c.op === 'core.pwm_slicer') this.timeSeries.threshold = c.params.threshold.value;
+          this._tsCache = f;
+        } else if (f.kind === 'bits') {
+          this.timeSeries.threshold = this.node().params.threshold.value;
+          this._tsCache = { data: f.env, spanS: f.env.length / f.sampleRate, t0: this.engine.t - f.env.length / f.sampleRate, triggered: false };
+        }
+      }
+      if (this._tsCache) {
+        this.timeSeries.draw(this._tsCache.data, this._tsCache.spanS);
+        this.renderTimeAxis(this._tsCache);
       }
     } else if (v === 'Bits') {
       // decoded records do not need 60 fps, and a one-second window is expensive
@@ -459,7 +499,7 @@ class App {
         this._bitsAcc = 0;
         this._bitsSeen = true;
         const f = this.engine.frame(this.current, {});
-        if (f.kind === 'bits') this.bitRaster.draw(f.bits);
+        if (f.kind === 'bits') this.bitRaster.draw(f.groups, f.symbolUs);
       }
     }
 

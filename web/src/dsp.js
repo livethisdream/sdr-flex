@@ -296,31 +296,64 @@ export function estimateSymbolPeriod(env, threshold, sampleRate) {
 }
 
 /** PWM/OOK slicer: one symbol period per bit, long pulse = 1. */
+/**
+ * Slice an envelope into bursts of bits, each located in the sample stream so the
+ * display can say *when* it happened rather than just what it said.
+ * Returns [{ bits, start, end }].
+ */
 export function pwmSlice(env, threshold, sampleRate, symbolUs) {
   const sps = Math.max(2, Math.round((symbolUs * 1e-6) * sampleRate));
   const minRun = Math.max(2, Math.round(sps * 0.35));
-  const bits = [];
+  const gapEnd = sps * 5;
+  const groups = [];
+  let cur = null;
   let i = 0;
+
   // a window that opens mid-pulse caught a burst already in progress; that group
   // is partial by construction, so skip to the first clean gap
   if (env[0] > threshold) {
     while (i < env.length && env[i] > threshold) i++;
-    let g = 0;
-    while (i + g < env.length && env[i + g] <= threshold) g++;
-    if (g <= sps * 5) { while (i < env.length && !(env[i] <= threshold && env[i + 1] > threshold)) i++; }
   }
+
   while (i < env.length) {
     if (env[i] > threshold) {
+      const pulseStart = i;
       let run = 0;
       while (i + run < env.length && env[i + run] > threshold) run++;
       i += run;
-      if (run < minRun) continue;                 // noise blip, not a pulse
-      bits.push(run > sps * 1.5 ? 1 : 0);
+      if (run < minRun) continue;                      // noise blip, not a pulse
+      if (!cur) cur = { bits: [], start: pulseStart, end: i };
+      cur.bits.push(run > sps * 1.5 ? 1 : 0);
+      cur.end = i;
       let gap = 0;
       while (i + gap < env.length && env[i + gap] <= threshold) gap++;
-      if (gap > sps * 5 && bits.length) bits.push(null);   // inter-burst gap
       i += gap;
+      if (gap > gapEnd) { groups.push(cur); cur = null; }
     } else { i++; }
   }
-  return bits;
+  if (cur && cur.bits.length) groups.push(cur);
+  return groups;
+}
+
+/**
+ * Find the most recent burst in an envelope — the trigger every oscilloscope has.
+ * Without one the display free-runs and a 40 ms burst is gone before you can read it.
+ */
+export function findLastBurst(env, sampleRate) {
+  let hi = 0;
+  for (let i = 0; i < env.length; i++) if (env[i] > hi) hi = env[i];
+  if (hi <= 0) return null;
+  const thr = hi * 0.3;
+  const quiet = Math.round(sampleRate * 0.01);         // 10 ms of silence ends a burst
+
+  let end = -1;
+  for (let i = env.length - 1; i >= 0; i--) if (env[i] > thr) { end = i; break; }
+  if (end < 0) return null;
+
+  let start = end, run = 0;
+  for (let i = end; i >= 0; i--) {
+    if (env[i] > thr) { start = i; run = 0; }
+    else if (++run > quiet) break;
+  }
+  return { start, end };
 }

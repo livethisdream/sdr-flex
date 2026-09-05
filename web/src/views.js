@@ -128,22 +128,43 @@ export class TimeSeries {
 
 export class BitRaster {
   constructor(el) { this.el = el; }
-  draw(bits) {
-    if (!bits || !bits.length) { this.el.innerHTML = '<div class="empty">No bits yet — the burst train fires about once a second.</div>'; return; }
-    const groups = [];
-    let cur = [];
-    for (const b of bits) {
-      if (b === null) { if (cur.length) groups.push(cur); cur = []; } else cur.push(b);
-    }
-    if (cur.length) groups.push(cur);
 
-    this.el.innerHTML = groups.slice(-6).map((g, i) => {
-      const cells = g.map((b, j) => `<i class="${b ? 'one' : 'zero'}${j < 16 ? ' pre' : ''}"></i>`).join('');
+  /** groups: [{ bits, t, durationS }] — each one burst, located in source time. */
+  draw(groups, symbolUs) {
+    if (!groups || !groups.length) {
+      this.el.innerHTML =
+        '<div class="empty">Nothing sliced yet. The burst train fires about once a second — ' +
+        'if this stays empty, the threshold or symbol period in the strip below is wrong.</div>';
+      return;
+    }
+
+    const rows = groups.slice(-8).reverse().map((g) => {
       const hex = [];
-      for (let k = 0; k + 8 <= g.length; k += 8) {
-        hex.push(g.slice(k, k + 8).reduce((a, b) => (a << 1) | b, 0).toString(16).padStart(2, '0'));
+      for (let k = 0; k + 8 <= g.bits.length; k += 8) {
+        hex.push(g.bits.slice(k, k + 8).reduce((a, b) => (a << 1) | b, 0).toString(16).padStart(2, '0'));
       }
-      return `<div class="brow"><span class="bn">#${i + 1}</span><span class="bits">${cells}</span><span class="bhex">${hex.join(' ')}</span></div>`;
+      const tail = g.bits.length % 8;
+      const cells = g.bits.map((b, j) =>
+        `<i class="${b ? 'one' : 'zero'}${j === 15 ? ' mark' : ''}"></i>`).join('');
+      return `<tr>
+        <td class="bt">${g.t.toFixed(3)}</td>
+        <td class="bc">${g.bits.length}</td>
+        <td class="bd">${(g.durationS * 1e3).toFixed(1)}</td>
+        <td class="bp"><span class="bits">${cells}</span></td>
+        <td class="bh">${hex.join(' ')}${tail ? ` <span class="rem">+${tail}b</span>` : ''}</td>
+      </tr>`;
     }).join('');
+
+    this.el.innerHTML = `
+      <table class="bits-table">
+        <thead><tr>
+          <th>time · s</th><th>bits</th><th>ms</th>
+          <th>pattern <span class="key"><i class="one"></i>1 <i class="zero"></i>0</span></th>
+          <th>hex</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="bits-foot">One row per burst, newest first · ${symbolUs ? symbolUs + ' µs/symbol' : ''}
+        · the tick after bit 16 marks the end of the preamble</div>`;
   }
 }
