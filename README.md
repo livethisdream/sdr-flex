@@ -40,7 +40,7 @@ Two constraints shape everything else:
 - [Roadmap](docs/06-roadmap.md) — milestones, each one shippable
 - [Reuse](docs/07-reuse.md) — what already exists and how we reach it without rewriting it
 - [UI principles](docs/08-ui-principles.md) — the friction contract: interaction and latency budgets
-- [Decisions](docs/adr/) — ADRs 0001–0018
+- [Decisions](docs/adr/) — ADRs 0001–0019
 
 ## Settled
 

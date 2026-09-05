@@ -79,12 +79,33 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 ├──────────────────────────────────────────────────────────────────┤
 │ ◀◀ ▶ ▶▶  ──────────●───────────────────────────────  12.331 s    │ transport
 ├──────────────────────────────────────────────────────────────────┤
-│ PWM D   symbol 417 µs ⟲   threshold 0.42 🔒   invert off ⟲       │ inspector
+│ PWM D  symbol 417 µs ⟲  threshold 0.42 🔒  ┊  BITS  8 col  MSB ⌄ │ inspector
+│ ╰────────────── node ──────────────────╯     ╰──── view ───────╯ │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
 Three thin bars and a canvas. The tree is a breadcrumb because it is *navigation*,
 not a palette; the whole tree, when you want it, is the **Flow** tab.
+
+### Where settings live
+
+There is **no settings pane** — not on the left, not anywhere. "Settings" is four
+things with four lifetimes, and one test assigns every one of them
+([ADR-0019](adr/0019-settings-surfaces.md)):
+
+> **If you must see the signal change as you change it, the setting goes on the object
+> or in the strip. If not, it can go where the signal isn't.**
+
+| Home | What lives there |
+|---|---|
+| **On the object** | dB range (drag the colour bar), span (scroll the axis), selection bounds, playhead. No chrome at all — the control belongs where its effect is. |
+| **The strip** | Node parameters, then a divider, then the *active view's* parameters. Device gain and PPM are node parameters of the source. A `⌄` expands the strip into a temporary panel when a node has many. |
+| **A view tab** | Flow, Plugins, Annotations, Project. Full canvas, zero chrome, reached like any other view. |
+| **A preferences overlay** | Theme, keybindings, plugin paths, disk budget, audio device. A modal is honest here — law 2 governs the analysis loop, and configuring the tool means deliberately stepping out of it. |
+
+The one hard case — clipping while four levels deep, with gain belonging to the
+source — is answered by the rig bar carrying live source health: the clip indicator
+is clickable and moves the breadcrumb to the source. One click, no permanent chrome.
 
 ## Interaction budget
 

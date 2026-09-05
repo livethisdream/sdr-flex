@@ -23,3 +23,4 @@ why, what it costs, and what would make us change our minds.
 | [0016](0016-performance-envelope.md) | Pluto class now, ~60 MS/s tier later; source layer is not SoapySDR | Accepted |
 | [0017](0017-auto-manual-parameters.md) | Every derived value has an auto/manual state | Accepted |
 | [0018](0018-contextual-menus-and-view-tabs.md) | Contextual menus over sidebars; views are tabs | Accepted |
+| [0019](0019-settings-surfaces.md) | Settings have four homes; none is a left pane | Accepted |

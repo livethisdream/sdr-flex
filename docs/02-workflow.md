@@ -49,7 +49,8 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 ├──────────────────────────────────────────────────────────────────┤
 │ ◀◀ ▶ ▶▶  ──────────●───────────────────────────────  12.331 s    │ transport
 ├──────────────────────────────────────────────────────────────────┤
-│ PWM D   symbol 417 µs ⟲   threshold 0.42 🔒   invert off ⟲       │ inspector
+│ PWM D  symbol 417 µs ⟲  threshold 0.42 🔒  ┊  BITS  8 col  MSB ⌄ │ inspector
+│ ╰────────────── node ──────────────────╯     ╰──── view ───────╯ │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -64,9 +65,17 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 - **Contextual menu.** Releasing a selection drag opens it at the release point —
   flat, grouped, searchable with `/`. There is no pinned palette; a `+` on the tab
   bar opens the same menu for anyone who hasn't found the gesture yet.
-- **Inspector strip.** Parameters of the selected node. Every derived value shows
+- **Inspector strip.** Parameters of the selected node, a divider, then the *active
+  view's* parameters — which belong to the view, not the node, since Spectrum and
+  Waterfall want different settings on the same node. Every derived value shows
   `⟲ auto` (re-derives when upstream changes) or `🔒 manual` (sticky) —
-  [ADR-0017](adr/0017-auto-manual-parameters.md).
+  [ADR-0017](adr/0017-auto-manual-parameters.md). `⌄` expands the strip into a
+  temporary panel for parameter-heavy nodes.
+
+There is **no settings pane.** Anything you tune while watching the signal is on the
+object itself (drag the colour bar for dB range, scroll an axis for span) or in the
+strip; everything else is a view tab or the preferences overlay
+([ADR-0019](adr/0019-settings-surfaces.md)).
 
 ### What the user never sees
 
@@ -280,4 +289,5 @@ privileged path into the engine.
 | Held vs. varied quantities during exploration | UC-1.5, UC-2.3 | [0017](adr/0017-auto-manual-parameters.md) |
 | Several views of one node at once | UC-2.4, UC-3.4 | [0018](adr/0018-contextual-menus-and-view-tabs.md) |
 | Near-zero pointer travel per operation | all | [0018](adr/0018-contextual-menus-and-view-tabs.md) |
+| Settings reachable without leaving the signal | all | [0019](adr/0019-settings-surfaces.md) |
 | Drag feels attached to the cursor (<50 ms) | UC-1.2, UC-3.5 | [0014](adr/0014-rust-data-plane.md), [0010](adr/0010-hot-vs-cold-parameters.md) |
