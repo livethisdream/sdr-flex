@@ -27,10 +27,9 @@ export const OPS = {
     name: 'Tune here', group: 'Narrow', in: 'iq', out: 'iq', letter: 'A',
     fromSelection: true,
   },
-  'core.gate': {
-    name: 'Gate to selection', group: 'Narrow', in: 'iq', out: 'iq', letter: 'G',
-    fromSelection: true, needsTime: true,
-  },
+  // A time window is a property of a channel, not a node of its own
+  // (ADR-0023) — and the time-drag gesture it needs does not exist until
+  // scrubbing does, so nothing here offers one yet.
   'core.am_envelope': {
     name: 'AM envelope', group: 'Demodulate', in: 'iq', out: 'real', letter: 'C',
   },
@@ -129,13 +128,6 @@ export class MockEngine {
       };
       node.out = { kind: 'iq', sampleRate: rate, centerHz };
       node.label = 'Tuner';
-    } else if (op === 'core.gate') {
-      node.params = {
-        t0: param(selection.t0, 'auto', { from: 'selection start' }),
-        t1: param(selection.t1, 'auto', { from: 'selection end' }),
-      };
-      node.out = { ...p.out };
-      node.label = 'Gate';
     } else if (op === 'core.am_envelope') {
       node.out = { kind: 'real', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'AM env';
@@ -223,11 +215,6 @@ export class MockEngine {
       return dsp.xlateFilterDecimate(src, taps, offset, p.out.sampleRate, decim, count, startPhase).samples;
     }
 
-    if (node.op === 'core.gate') {
-      const t0 = node.params.t0.value, t1 = node.params.t1.value;
-      const clamped = Math.max(t0, Math.min(tEnd, t1));
-      return this._readIQ(p, clamped, count);
-    }
     return this._readIQ(p, tEnd, count);
   }
 

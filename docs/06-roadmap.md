@@ -41,9 +41,9 @@ travel, frame rate and jitter run live.
 Also built since: channel markers on the parent spectrum, a burst-triggered time view
 with a real axis, a located bit table, and blocks as tabs within a channel.
 
-**Still open:** drag-and-drop of a real SigMF file, the time `gate` selection gesture,
-scrubbing back through history, tearing tabs into tiles, and the newcomer test that
-ADR-0018 asks for.
+**Still open:** drag-and-drop of a real SigMF file, scrubbing back through history and
+the time-window gesture that depends on it (ADR-0023), tearing tabs into tiles, and
+the newcomer test that ADR-0018 asks for.
 
 **Validates:** ADR-0002 (the premise), ADR-0018 (the biggest UX bet, including its one
 real risk: whether a newcomer finds the contextual menu), ADR-0017, ADR-0020, and the

@@ -27,3 +27,4 @@ why, what it costs, and what would make us change our minds.
 | [0020](0020-views-that-share-an-axis.md) | Views that share an axis are one view | Accepted |
 | [0021](0021-mock-engine-first.md) | The client is built first, against a mock engine | Accepted |
 | [0022](0022-conversational-control.md) | Language is a peer client, not a replacement for the GUI | Accepted |
+| [0023](0023-frequency-makes-a-channel.md) | Frequency makes a channel; time is a property of one | Accepted |

@@ -115,6 +115,24 @@ Three things do the organising work, and none of them is a text badge:
   cell opens two handles. The control gets the affordance its *type* deserves rather
   than every parameter rendering identically.
 
+### Naming tabs
+
+A block tab is named for the node whose result it shows — `C · AM env` — and the
+channel is named **once**, as a chip at the left edge of the tab bar, rather than
+prefixed onto every tab.
+
+Prefixing (`A: Spectrum`, `A: Time`, `A: Flow`) repeats information that is identical
+across the entire row, in the most horizontally constrained strip in the layout, which
+is the word budget's exact failure mode. It also collides: a block already carries its
+own letter, so `B: C · AM env` puts two letters side by side meaning different things.
+
+Siblings stay visible at the current breadcrumb level rather than collapsing to the
+selected one — a set of channels off one source is the normal case, and a breadcrumb
+that hides the others reads as though the tool forgot what you built.
+
+The prefix does become right in one place: a **torn-off tile** has no breadcrumb above
+it, so a floating pane is labelled with its full path, `B · Tuner › D · PWM`.
+
 ### Where settings live
 
 There is **no settings pane** — not on the left, not anywhere. "Settings" is four

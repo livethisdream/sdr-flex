@@ -135,20 +135,31 @@ class App {
   }
 
   renderCrumbs() {
-    // channels only — blocks are tabs, not destinations
-    const path = this.engine.path(this.channel).filter((n) => this.isChannel(n));
-    const el = $('#crumbs');
-    el.innerHTML = path.map((n, i) => {
-      const label = n.op === 'core.source' ? n.label : `${n.letter} · ${n.label}`;
-      return `<button class="crumb${n.id === this.channel ? ' cur' : ''}" data-id="${n.id}">${label}</button>` +
-        (i < path.length - 1 ? '<span class="sepc">›</span>' : '');
-    }).join('');
-
+    // Channels only — blocks are tabs, not destinations. Siblings stay on screen at
+    // the current level: a set of channels off one source is the normal case
+    // (UC-3 watches three at once), and losing them on selection makes the tool feel
+    // like it forgot what you built.
+    const cur = this.engine.node(this.channel);
+    const ancestors = this.engine.path(this.channel).filter((n) => this.isChannel(n)).slice(0, -1);
+    const siblings = cur.parent
+      ? this.engine.children(cur.parent).filter((n) => this.isChannel(n))
+      : [cur];
     const kids = this.engine.children(this.channel).filter((k) => this.isChannel(k));
+
+    const name = (n) => (n.op === 'core.source' ? n.label : `${n.letter} · ${n.label}`);
+    const el = $('#crumbs');
+    let html = ancestors.map((n) =>
+      `<button class="crumb" data-id="${n.id}">${name(n)}</button><span class="sepc">›</span>`).join('');
+
+    html += `<span class="sibs">` + siblings.map((n) =>
+      `<button class="crumb${n.id === this.channel ? ' cur' : ''}" data-id="${n.id}">${name(n)}</button>`
+    ).join('') + `</span>`;
+
     if (kids.length) {
-      el.innerHTML += '<span class="sepc">›</span>' + kids.map((k) =>
-        `<button class="crumb dim" data-id="${k.id}">${k.letter} · ${k.label}</button>`).join('');
+      html += '<span class="sepc">›</span>' + kids.map((k) =>
+        `<button class="crumb dim" data-id="${k.id}">${name(k)}</button>`).join('');
     }
+    el.innerHTML = html;
 
     for (const b of el.querySelectorAll('.crumb')) {
       b.addEventListener('click', () => { this.goChannel(b.dataset.id); });
@@ -173,8 +184,11 @@ class App {
       .concat(blocks.map((b) => ({ k: b.id, label: `${b.letter} · ${b.label}`, kind: b.out.kind, ext: OPS[b.op] && OPS[b.op].external })))
       .concat([{ k: 'flow', label: 'Flow' }]);
 
+    const ch = this.engine.node(this.channel);
+    const chip = `<span class="chchip">${ch.op === 'core.source' ? ch.label : ch.letter + ' · ' + ch.label}</span>`;
+
     const el = $('#tabs');
-    el.innerHTML = items.map((it) =>
+    el.innerHTML = chip + items.map((it) =>
       `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}" data-k="${it.k}">` +
       `${it.label}${it.kind ? `<span class="tk">${it.kind}</span>` : ''}</button>`).join('') +
       '<button class="tab plus" title="operations valid here">+</button>';
@@ -320,8 +334,6 @@ class App {
           taps: { label: 'taps', unit: '', fmt: (v) => String(v), step: 0.4, min: 9, max: 255, integer: true, type: 'num' },
           threshold: { label: 'threshold', unit: '', fmt: (v) => v.toFixed(3), step: 0.0006, min: 0, type: 'num' },
           symbolUs: { label: 'symbol', unit: 'µs', fmt: (v) => String(Math.round(v)), step: 0.7, min: 20, integer: true, type: 'num' },
-          t0: { label: 'from', unit: 's', fmt: (v) => v.toFixed(3), step: 0.002, type: 'num' },
-          t1: { label: 'to', unit: 's', fmt: (v) => v.toFixed(3), step: 0.002, type: 'num' },
         }[key] || { label: key, unit: '', fmt: String, type: 'num', step: 1 };
         nodeCells.push({
           key, ...meta, value: pr.value, mode: pr.mode, canAuto: !!pr.auto,

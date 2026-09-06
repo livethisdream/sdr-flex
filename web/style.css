@@ -218,3 +218,14 @@ select.cv option { background:var(--raised); color:var(--bright); }
 .tab.on .tk { color:var(--dim); }
 .tab.ext { border-bottom-style:dashed; }
 .tab.ext .tk { color:var(--warn); }
+
+/* siblings stay on screen at the current level, grouped so they read as a set */
+.sibs { display:inline-flex; gap:.1rem; padding:.1rem; border-radius:4px; background:var(--panel); }
+
+/* the channel names its tab bar once, at the left edge, rather than prefixing
+   every tab with information identical across the whole row (law 11) */
+.chchip {
+  align-self:center; margin-right:.55rem; padding:.14rem .45rem;
+  font-family:var(--mono); font-size:.64rem; color:var(--bright);
+  background:var(--accent-lo); border-radius:3px; white-space:nowrap;
+}
