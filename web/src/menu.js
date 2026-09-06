@@ -14,7 +14,13 @@ export class ContextMenu {
     });
     addEventListener('keydown', (e) => {
       if (this.el.hidden) return;
-      if (e.key === 'Escape') { this.close(); e.preventDefault(); }
+      if (e.key === 'Escape') { this.close(); e.preventDefault(); return; }
+      // typing anywhere in an open menu goes to the search box, so not autofocusing
+      // costs a touch user nothing and a keyboard user nothing either
+      const input = this.el.querySelector('input');
+      if (input && document.activeElement !== input && e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
+        input.focus();
+      }
     });
   }
 
@@ -31,11 +37,26 @@ export class ContextMenu {
     const top = Math.min(y, innerHeight - r.height - pad);
     this.el.style.left = Math.max(pad, left) + 'px';
     this.el.style.top = Math.max(pad, top) + 'px';
-    const input = this.el.querySelector('input');
-    if (input) input.focus();
+
+    // Focusing the search box summons the on-screen keyboard on a touch device,
+    // which covers half the screen to save a keystroke nobody asked for. Autofocus
+    // only where a hardware keyboard is implied; elsewhere the first printable key
+    // still focuses it (see _render), so the desktop flow is unchanged.
+    if (this._wantsKeyboard()) {
+      const input = this.el.querySelector('input');
+      if (input) input.focus();
+    }
   }
 
   close() { this.el.hidden = true; }
+
+  _wantsKeyboard() {
+    try {
+      return matchMedia('(pointer: fine)').matches && !matchMedia('(hover: none)').matches;
+    } catch (e) {
+      return true;
+    }
+  }
 
   _render() {
     const q = this.filter.toLowerCase();

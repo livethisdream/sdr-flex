@@ -51,12 +51,31 @@ signal processing.
 - The **trigger** on the time view ([`views.js`](../../web/src/views.js)) is the
   transient form of the same idea, and stays.
 
+## The gesture
+
+One box does both, which is what [ADR-0002](0002-selection-is-the-primitive.md)
+promised all along and the first implementation only half-delivered:
+
+- **Width** → the channel's frequency extent.
+- **Height, on the waterfall** → the channel's time window.
+
+The spectrum trace has no time axis, so a box drawn there is frequency-only and the
+channel stays `live`. The waterfall has both axes, so a box drawn there can pin. That
+distinction needs no explanation because it is just what the two panes *are*.
+
+**Pinned means these samples and no others.** Every view under a pinned channel clamps
+its window to the box — the time display, the slicer's estimator, the bit table. A view
+that quietly read outside the rectangle you drew would make the pin a lie.
+
+A pinned channel's waterfall is a **fixed spectrogram** painted once across the window,
+not a scrolling one. Scrolling implies time is passing; here it is not.
+
 ## Status in M0
 
-The time-window gesture needs vertical dragging over scrollable history, and neither
-exists yet — so M0 **offers no time constraint at all** rather than shipping a menu
-item that produces an invisible node. `core.gate` has been removed. The window lands
-with scrubbing, at M4 where the ring recorder does.
+Built. `core.gate` is gone; the window is a channel parameter (`live` / `pinned` with
+`t0`/`t1`) shown in the strip and in the status bar. Scrubbing *back* through history
+to find a burst that has already scrolled off still lands with the ring recorder at M4;
+until then you pin what is on screen.
 
 ## Would change our mind
 

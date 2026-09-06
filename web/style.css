@@ -229,3 +229,6 @@ select.cv option { background:var(--raised); color:var(--bright); }
   font-family:var(--mono); font-size:.64rem; color:var(--bright);
   background:var(--accent-lo); border-radius:3px; white-space:nowrap;
 }
+
+/* a pinned channel says so where you look for what the radio is doing */
+.bar .pin { color:var(--accent); font-weight:500; }

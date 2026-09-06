@@ -131,7 +131,10 @@ class App {
       `<span>${fmtHz(this.engine.root.out.centerHz)} MHz</span>` +
       `<span>${fmtRate(this.engine.root.out.sampleRate)}</span>` +
       `<span class="sp">${ch.op === 'core.source' ? ch.label : ch.letter + ' · ' + ch.label}` +
-      ` · ${fmtRate(ch.out.sampleRate)}${where}</span>`;
+      ` · ${fmtRate(ch.out.sampleRate)}` +
+      `${ch.params && ch.params.timeMode && ch.params.timeMode.value === 'pinned'
+          ? ` · <b class="pin">pinned ${ch.params.t0.value.toFixed(2)}–${ch.params.t1.value.toFixed(2)} s</b>` : ''}` +
+      `${where}</span>`;
   }
 
   renderCrumbs() {
@@ -168,6 +171,8 @@ class App {
 
   goChannel(id) {
     this.clearSelection();
+    this._pinKey = null;
+    this.trace.reset();
     this.channel = id;
     if (!this.tabs.has(id)) this.tabs.set(id, 'spectrum');
     this.setTab(this.tabKey());
@@ -326,12 +331,17 @@ class App {
         { key: 'centerHz', label: 'center', unit: 'MHz', type: 'ro', value: n.out.centerHz, fmt: fmtHz },
         { key: 'sampleRate', label: 'rate', unit: 'kS/s', type: 'ro', value: n.out.sampleRate, fmt: (v) => (v / 1e3).toFixed(0) });
     } else {
+      const live = !n.params.timeMode || n.params.timeMode.value === 'live';
       for (const [key, pr] of Object.entries(n.params)) {
+        if (live && (key === 't0' || key === 't1')) continue;
         const meta = {
           centerHz: { label: 'center', unit: 'MHz', fmt: fmtHz, step: 200, type: 'num' },
           widthHz: { label: 'width', unit: 'kHz', fmt: (v) => (v / 1e3).toFixed(1), step: 200, min: 1000, type: 'num' },
           decim: { label: 'decim', unit: '', fmt: (v) => String(v), step: 0.08, min: 1, max: 64, integer: true, type: 'num' },
           taps: { label: 'taps', unit: '', fmt: (v) => String(v), step: 0.4, min: 9, max: 255, integer: true, type: 'num' },
+          timeMode: { label: 'window', unit: '', type: 'enum', values: ['live', 'pinned'], fmt: String },
+          t0: { label: 'from', unit: 's', fmt: (v) => v.toFixed(3), step: 0.002, type: 'num' },
+          t1: { label: 'to', unit: 's', fmt: (v) => v.toFixed(3), step: 0.002, type: 'num' },
           threshold: { label: 'threshold', unit: '', fmt: (v) => v.toFixed(3), step: 0.0006, min: 0, type: 'num' },
           symbolUs: { label: 'symbol', unit: 'µs', fmt: (v) => String(Math.round(v)), step: 0.7, min: 20, integer: true, type: 'num' },
         }[key] || { label: key, unit: '', fmt: String, type: 'num', step: 1 };
@@ -435,10 +445,18 @@ class App {
     });
   }
 
+  /** Absolute time at a y pixel on the waterfall. */
+  timeAtY(yPx, wfRect) {
+    const p = this.vp(this.current);
+    const spanS = this.waterfall.rows / Math.max(1, p.speed);
+    const frac = Math.max(0, Math.min(1, (yPx - wfRect.top) / wfRect.height));
+    return this.engine.effectiveTime(this.channel) - frac * spanS;
+  }
+
   defaultSelection() {
     const n = this.node();
     const w = n.out.sampleRate / 8;
-    return { f0: n.out.centerHz - w / 2, f1: n.out.centerHz + w / 2, t0: this.engine.t - 0.05, t1: this.engine.t };
+    return { f0: n.out.centerHz - w / 2, f1: n.out.centerHz + w / 2 };
   }
 
   wire() {
@@ -460,39 +478,63 @@ class App {
       if (this.view() !== 'Spectrum') return;
       if (e.target.closest('#cbar-wrap') || e.target.closest('#markers')) return;
       const r = stage.getBoundingClientRect();
-      const x0 = e.clientX - r.left;
+      const wf = $('#wf').getBoundingClientRect();
       stage.setPointerCapture(e.pointerId);
-      this.drag = { x0, x1: x0, r };
+      // the spectrum trace has no time axis, so a box there is frequency-only;
+      // the waterfall has both, so a box there can pin a window too
+      this.drag = { x0: e.clientX - r.left, y0: e.clientY, x1: e.clientX - r.left, y1: e.clientY,
+                    r, wf, inWf: e.clientY >= wf.top };
       box.hidden = false;
+      box.style.top = '';
+      box.style.height = '';
       this.menu.close();
     });
 
     stage.addEventListener('pointermove', (e) => {
       if (!this.drag) return;
-      this.drag.x1 = e.clientX - this.drag.r.left;
-      const a = Math.min(this.drag.x0, this.drag.x1), b = Math.max(this.drag.x0, this.drag.x1);
+      const d = this.drag;
+      d.x1 = e.clientX - d.r.left;
+      d.y1 = e.clientY;
+      const a = Math.min(d.x0, d.x1), b = Math.max(d.x0, d.x1);
       box.style.left = a + 'px';
       box.style.width = Math.max(2, b - a) + 'px';
+      if (d.inWf && Math.abs(d.y1 - d.y0) > 8) {
+        const top = Math.max(d.wf.top, Math.min(d.y0, d.y1));
+        const bot = Math.min(d.wf.bottom, Math.max(d.y0, d.y1));
+        box.style.top = (top - d.r.top) + 'px';
+        box.style.height = Math.max(2, bot - top) + 'px';
+      } else {
+        box.style.top = '';
+        box.style.height = '';
+      }
     });
 
     stage.addEventListener('pointerup', (e) => {
       if (!this.drag) return;
-      const { x0, x1, r } = this.drag;
+      const d = this.drag;
       this.drag = null;
-      if (Math.abs(x1 - x0) < 6) { box.hidden = true; return; }
+      if (Math.abs(d.x1 - d.x0) < 6) { this.clearSelection(); return; }
 
       const n = this.node();
       const lo = n.out.centerHz - n.out.sampleRate / 2;
-      const toHz = (px) => lo + (px / r.width) * n.out.sampleRate;
-      const f0 = toHz(Math.min(x0, x1)), f1 = toHz(Math.max(x0, x1));
-      this.selection = { f0, f1, t0: this.engine.t - 0.05, t1: this.engine.t };
-      box.dataset.label = `${((f1 - f0) / 1e3).toFixed(1)} kHz`;
-      box.classList.add('armed');
-      this._menuAt = { x: e.clientX + 14, y: e.clientY + 14 };
+      const toHz = (px) => lo + (px / d.r.width) * n.out.sampleRate;
+      const f0 = toHz(Math.min(d.x0, d.x1)), f1 = toHz(Math.max(d.x0, d.x1));
 
-      // the gesture completes itself: the menu opens where the drag was released
+      let label = `${((f1 - f0) / 1e3).toFixed(1)} kHz`;
+      const sel = { f0, f1 };
+      if (d.inWf && Math.abs(d.y1 - d.y0) > 8) {
+        const t0 = this.timeAtY(Math.max(d.y0, d.y1), d.wf);
+        const t1 = this.timeAtY(Math.min(d.y0, d.y1), d.wf);
+        sel.t0 = t0;
+        sel.t1 = t1;
+        label += ` · ${((t1 - t0) * 1e3).toFixed(0)} ms`;
+      }
+      this.selection = sel;
+      box.dataset.label = label;
+      box.classList.add('armed');
+
       this.metrics.beginOp();
-      this.openMenu(this._menuAt.x, this._menuAt.y, this.selection);
+      this.openMenu(e.clientX + 14, e.clientY + 14, this.selection);
     });
 
     // colour bar: dragging the handles is where dB range lives (ADR-0019, tier A)
@@ -545,14 +587,35 @@ class App {
     const p = this.vp(this.current);
 
     if (v === 'Spectrum') {
-      const f = this.engine.frame(this.current, { bins: p.bins, window: p.window });
-      if (f.kind === 'spectrum') {
-        this.trace.push(f.data);
-        this._rowAcc += dt / 1000;
-        const interval = 1 / Math.max(1, p.speed);
-        if (this._rowAcc >= interval) { this._rowAcc = 0; this.waterfall.push(f.data); }
+      const pin = this.engine.isPinned(this.channel);
+      const pinKey = pin ? `${pin.id}:${pin.params.t0.value}:${pin.params.t1.value}:${p.bins}:${p.window}` : null;
+
+      if (pin) {
+        // a pinned window does not scroll — paint it once as a fixed spectrogram
+        if (this._pinKey !== pinKey) {
+          this._pinKey = pinKey;
+          const rows = this.waterfall.rows;
+          const t0 = pin.params.t0.value, t1 = pin.params.t1.value;
+          this.trace.reset();
+          for (let i = 0; i < rows; i++) {
+            const at = t0 + ((rows - 1 - i) / (rows - 1)) * (t1 - t0);
+            const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
+            if (f.kind === 'spectrum') { this.waterfall.push(f.data); this.trace.push(f.data); }
+          }
+        }
         this.trace.draw();
         this.waterfall.draw();
+      } else {
+        this._pinKey = null;
+        const f = this.engine.frame(this.current, { bins: p.bins, window: p.window });
+        if (f.kind === 'spectrum') {
+          this.trace.push(f.data);
+          this._rowAcc += dt / 1000;
+          const interval = 1 / Math.max(1, p.speed);
+          if (this._rowAcc >= interval) { this._rowAcc = 0; this.waterfall.push(f.data); }
+          this.trace.draw();
+          this.waterfall.draw();
+        }
       }
     } else if (v === 'Time') {
       // a triggered display is latched, so it is recomputed a few times a second

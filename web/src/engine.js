@@ -79,6 +79,30 @@ export class MockEngine {
 
   node(id) { return this.nodes.get(id); }
 
+  /**
+   * The moment a node is looking at. A channel pinned to a window fixes time for
+   * everything beneath it; otherwise time follows the playhead.
+   */
+  effectiveTime(id) {
+    let n = this.node(id);
+    while (n) {
+      const m = n.params && n.params.timeMode;
+      if (m && m.value === 'pinned') return n.params.t1.value;
+      n = n.parent ? this.node(n.parent) : null;
+    }
+    return this.t;
+  }
+
+  isPinned(id) {
+    let n = this.node(id);
+    while (n) {
+      const m = n.params && n.params.timeMode;
+      if (m && m.value === 'pinned') return n;
+      n = n.parent ? this.node(n.parent) : null;
+    }
+    return null;
+  }
+
   path(id) {
     const out = [];
     let n = this.node(id);
@@ -120,11 +144,16 @@ export class MockEngine {
       const decim = dsp.chooseDecimation(p.out.sampleRate, target);
       const rate = p.out.sampleRate / decim;
       const numTaps = 65;
+      const pinned = selection.t0 != null && selection.t1 != null;
       node.params = {
         centerHz: param(centerHz, 'auto', { from: 'selection centre' }),
         widthHz: param(widthHz, 'auto', { from: 'selection width' }),
         decim: param(decim, 'auto', { from: `${(p.out.sampleRate / 1e3).toFixed(0)} kS/s ÷ ${(target / 1e3).toFixed(1)} kHz` }),
         taps: param(numTaps, 'auto', { from: 'transition width' }),
+        // time is a property of the channel, not a node of its own (ADR-0023)
+        timeMode: param(pinned ? 'pinned' : 'live'),
+        t0: param(pinned ? selection.t0 : 0, 'auto', { from: 'selection start' }),
+        t1: param(pinned ? selection.t1 : 0, 'auto', { from: 'selection end' }),
       };
       node.out = { kind: 'iq', sampleRate: rate, centerHz };
       node.label = 'Tuner';
@@ -134,9 +163,12 @@ export class MockEngine {
     } else if (op === 'core.pwm_slicer') {
       // estimate from a real window of the parent's output — auto shows its work
       // estimate over a window wide enough to be sure it contains a burst — the
-      // train fires about once a second, so a shorter look can land on pure noise
-      const estSpan = 1.05;
-      const env = await this._readReal(p, this.t, Math.min(131072, Math.floor(p.out.sampleRate * estSpan)));
+      // train fires about once a second, so a shorter look can land on pure noise.
+      // A pinned parent already narrowed it to the box the user drew.
+      const pPin = this.isPinned(p.id);
+      const pSpan = pPin ? Math.max(1e-3, pPin.params.t1.value - pPin.params.t0.value) : Infinity;
+      const estSpan = Math.min(pSpan, 1.05);
+      const env = await this._readReal(p, this.effectiveTime(p.id), Math.min(131072, Math.floor(p.out.sampleRate * estSpan)));
       const otsu = dsp.otsuThreshold(env);
       const sym = dsp.estimateSymbolPeriod(env, otsu.value, p.out.sampleRate);
       node.params = {
@@ -231,10 +263,18 @@ export class MockEngine {
   frame(nodeId, opts) {
     const n = this.node(nodeId);
     if (n.stub) return { kind: 'stub' };
+    const now = opts.at != null ? opts.at : this.effectiveTime(nodeId);
+    // A pinned channel means these samples and no others, so every window that
+    // looks backwards is clamped to it — otherwise a view would quietly read
+    // outside the box the user drew.
+    const pin = this.isPinned(nodeId);
+    const maxSpan = pin && opts.at == null
+      ? Math.max(1e-3, pin.params.t1.value - pin.params.t0.value)
+      : Infinity;
 
     if (n.out.kind === 'iq') {
       const bins = opts.bins || 1024;
-      const iq = this._readIQ(n, this.t, bins);
+      const iq = this._readIQ(n, now, bins);
       return { kind: 'spectrum', data: dsp.spectrum(iq, bins, opts.window || 'Hann'), sampleRate: n.out.sampleRate, centerHz: n.out.centerHz };
     }
 
@@ -242,11 +282,11 @@ export class MockEngine {
       const fs = n.out.sampleRate;
       const p = this.node(n.parent);
       // look over a whole burst period so the trigger has something to find
-      const searchS = opts.trigger === 'free' ? (opts.spanS || 0.12) : 1.05;
+      const searchS = Math.min(maxSpan, opts.trigger === 'free' ? (opts.spanS || 0.12) : 1.05);
       const count = Math.min(131072, Math.max(256, Math.floor(fs * searchS)));
-      const iq = this._readIQ(p, this.t, count);
+      const iq = this._readIQ(p, now, count);
       const env = dsp.smooth(dsp.amEnvelope(iq, count), dsp.envelopeWindow(fs));
-      const windowEnd = this.t;                        // absolute time of the last sample
+      const windowEnd = now;                        // absolute time of the last sample
 
       if (opts.trigger === 'free') {
         return { kind: 'timeseries', data: env, sampleRate: fs,
@@ -271,12 +311,12 @@ export class MockEngine {
       // a couple of burst periods, so there is always a complete one to show; the
       // app recomputes this a few times a second rather than every frame
       const fs = p.out.sampleRate;
-      const span = opts.spanS || 2.0;
+      const span = Math.min(maxSpan, opts.spanS || 2.0);
       const count = Math.min(262144, Math.floor(fs * span));
       const gp = this.node(p.parent);
-      const env = dsp.smooth(dsp.amEnvelope(this._readIQ(gp, this.t, count), count), dsp.envelopeWindow(fs));
+      const env = dsp.smooth(dsp.amEnvelope(this._readIQ(gp, now, count), count), dsp.envelopeWindow(fs));
       const groups = dsp.pwmSlice(env, n.params.threshold.value, fs, n.params.symbolUs.value);
-      const windowStart = this.t - count / fs;
+      const windowStart = now - count / fs;
       return {
         kind: 'bits', env, sampleRate: fs,
         symbolUs: n.params.symbolUs.value,

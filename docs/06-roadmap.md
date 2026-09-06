@@ -39,7 +39,9 @@ explanation, and the full tune → AM envelope → PWM slicer chain recovering
 travel, frame rate and jitter run live.
 
 Also built since: channel markers on the parent spectrum, a burst-triggered time view
-with a real axis, a located bit table, and blocks as tabs within a channel.
+with a real axis, a located bit table, blocks as tabs within a channel, and the
+two-dimensional selection box — width sets frequency, height on the waterfall pins a
+time window (ADR-0023).
 
 **Still open:** drag-and-drop of a real SigMF file, scrubbing back through history and
 the time-window gesture that depends on it (ADR-0023), tearing tabs into tiles, and

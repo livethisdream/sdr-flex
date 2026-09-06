@@ -6,10 +6,14 @@
 
 A **Selection** is a rectangle in the time-frequency plane drawn over any stream.
 
-- Constrain **frequency** → the engine inserts a **Tuner** (mix down, filter, decimate)
-- Constrain **time** → the engine inserts a **Gate** (burst extraction, trigger)
-- Constrain both → both
-- Constrain neither → a pass-through tap you can hang views off
+- Constrain **frequency** (box width) → the channel's centre, bandwidth and rate
+- Constrain **time** (box height, on the waterfall) → the channel's window, pinned
+- Constrain both → one channel that is both narrowed and pinned
+- Constrain neither → a live channel following the playhead
+
+Frequency makes a channel; time is a property of one
+([ADR-0023](adr/0023-frequency-makes-a-channel.md)). The spectrum trace has no time
+axis, so a box there is frequency-only; the waterfall has both.
 
 Selections **nest**. A selection over a demodulator's output is a selection in the
 baseband plane. That nesting *is* the analysis tree.
