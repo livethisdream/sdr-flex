@@ -64,6 +64,10 @@ and the strip changes with the tab, which is correct.
 Device parameters are node parameters — select the source node and the strip shows
 gain, PPM, bias-T. No special case.
 
+Read-only outputs and settings with no auto counterpart are visually distinct from
+values the user pinned, so the accent keeps meaning *the user placed this*
+([UI principles](../08-ui-principles.md#the-strip-is-cells-not-a-text-run)).
+
 **The strip expands rather than scrolling into uselessness.** A node with fifteen
 parameters gets a chevron; clicking it grows the strip into a panel overlaying the
 lower third of the canvas. Transient, dismissable, and the *same object* growing —

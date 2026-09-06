@@ -25,17 +25,22 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 
 .app { display:flex; flex-direction:column; height:100%; }
 
-.bar {
-  display:flex; gap:.7rem; align-items:center; flex-wrap:wrap;
-  padding:.45rem .8rem; background:var(--raised);
-  border-bottom:1px solid var(--rule);
-  font-family:var(--mono); font-size:.72rem; color:var(--dim);
-}
-.bar .live { display:inline-flex; align-items:center; gap:.38rem; color:var(--ok); }
-.bar .live::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 7px var(--ok); }
-.bar .sp { margin-left:auto; }
 
-.crumbs { display:flex; flex-wrap:wrap; align-items:center; gap:.1rem; padding:.4rem .7rem; border-bottom:1px solid var(--rule-lo); }
+/* one row: what radio, and where in it */
+.topbar {
+  display:flex; flex-wrap:wrap; align-items:center; gap:.15rem;
+  padding:.35rem .7rem; border-bottom:1px solid var(--rule);
+  background:var(--raised);
+}
+.dev {
+  display:inline-flex; align-items:center; gap:.45rem;
+  padding:.2rem .5rem; border-radius:3px;
+  font-family:var(--mono); font-size:.72rem; color:var(--bright); white-space:nowrap;
+}
+.dev:hover { background:var(--panel); }
+.dev.cur { background:var(--accent-lo); }
+.dev .live { width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 7px var(--ok); flex:none; }
+.dev .devn { color:var(--dim); font-variant-numeric:tabular-nums; }
 .crumb { padding:.16rem .42rem; border-radius:3px; color:var(--body); font-size:.8rem; white-space:nowrap; }
 .crumb:hover { background:var(--raised); }
 .crumb.cur { background:var(--accent-lo); color:var(--bright); font-weight:600; }
@@ -106,6 +111,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .cell { background:var(--raised); border-radius:3px; border-left:2px solid var(--rule); padding:.24rem .45rem .26rem; min-width:74px; }
 .cell.au { border-left-color:var(--ok); }
 .cell.mn { border-left-color:var(--accent); }
+.cell.pl { border-left-color:var(--rule); }
 .cell.ro { background:transparent; border-left-color:transparent; }
 .cell.scrub { cursor:ew-resize; touch-action:none; }
 .cell:not(.ro) { transition:background .12s ease, border-color .12s ease; }
@@ -263,13 +269,6 @@ select.cv option { background:var(--raised); color:var(--bright); }
 /* siblings stay on screen at the current level, grouped so they read as a set */
 .sibs { display:inline-flex; gap:.1rem; padding:.1rem; border-radius:4px; background:var(--panel); }
 
-/* the channel names its tab bar once, at the left edge, rather than prefixing
-   every tab with information identical across the whole row (law 11) */
-.chchip {
-  align-self:center; margin-right:.55rem; padding:.14rem .45rem;
-  font-family:var(--mono); font-size:.64rem; color:var(--bright);
-  background:var(--accent-lo); border-radius:3px; white-space:nowrap;
-}
 
 /* a pinned channel says so where you look for what the radio is doing */
-.bar .pin { color:var(--accent); font-weight:500; }
+.crumb .pin { color:var(--accent); font-weight:600; font-style:normal; }

@@ -115,33 +115,20 @@ class App {
 
   // ── chrome ───────────────────────────────────────────────────────────────
   refresh() {
-    this.renderCrumbs();
+    this.renderTopbar();
     this.renderTabs();
     this.renderStrip();
     this.renderStage();
-    this.renderStatus();
   }
 
-  renderStatus() {
-    const ch = this.engine.node(this.channel);
-    const n = this.node();
-    const where = n.id === ch.id ? '' : ` › ${n.letter} · ${n.label}`;
-    $('#status').innerHTML =
-      `<span class="live">synthetic #0</span>` +
-      `<span>${fmtHz(this.engine.root.out.centerHz)} MHz</span>` +
-      `<span>${fmtRate(this.engine.root.out.sampleRate)}</span>` +
-      `<span class="sp">${ch.op === 'core.source' ? ch.label : ch.letter + ' · ' + ch.label}` +
-      ` · ${fmtRate(ch.out.sampleRate)}` +
-      `${ch.params && ch.params.timeMode && ch.params.timeMode.value === 'pinned'
-          ? ` · <b class="pin">pinned ${ch.params.t0.value.toFixed(2)}–${ch.params.t1.value.toFixed(2)} s</b>` : ''}` +
-      `${where}</span>`;
-  }
-
-  renderCrumbs() {
-    // Channels only — blocks are tabs, not destinations. Siblings stay on screen at
-    // the current level: a set of channels off one source is the normal case
-    // (UC-3 watches three at once), and losing them on selection makes the tool feel
-    // like it forgot what you built.
+  /**
+   * One row for "what radio, and where am I in it". The device *is* the root of the
+   * path, so its facts live on the root crumb rather than in a second bar: naming the
+   * source twice and the current channel three times was the top of the screen
+   * describing itself instead of the signal.
+   */
+  renderTopbar() {
+    const root = this.engine.root;
     const cur = this.engine.node(this.channel);
     const ancestors = this.engine.path(this.channel).filter((n) => this.isChannel(n)).slice(0, -1);
     const siblings = cur.parent
@@ -149,22 +136,32 @@ class App {
       : [cur];
     const kids = this.engine.children(this.channel).filter((k) => this.isChannel(k));
 
-    const name = (n) => (n.op === 'core.source' ? n.label : `${n.letter} · ${n.label}`);
-    const el = $('#crumbs');
-    let html = ancestors.map((n) =>
-      `<button class="crumb" data-id="${n.id}">${name(n)}</button><span class="sepc">›</span>`).join('');
+    const pin = (n) => (n.params && n.params.timeMode && n.params.timeMode.value === 'pinned'
+      ? ` <b class="pin" title="pinned ${n.params.t0.value.toFixed(2)}–${n.params.t1.value.toFixed(2)} s">⊓</b>` : '');
+    const crumb = (n, cls) =>
+      `<button class="crumb ${cls}" data-id="${n.id}">${n.letter} · ${n.label}${pin(n)}</button>`;
 
-    html += `<span class="sibs">` + siblings.map((n) =>
-      `<button class="crumb${n.id === this.channel ? ' cur' : ''}" data-id="${n.id}">${name(n)}</button>`
-    ).join('') + `</span>`;
+    let html =
+      `<button class="dev${this.channel === root.id ? ' cur' : ''}" data-id="${root.id}">` +
+      `<span class="live"></span>${root.label}` +
+      `<span class="devn">${fmtHz(root.out.centerHz)} MHz</span>` +
+      `<span class="devn">${fmtRate(root.out.sampleRate)}</span></button>`;
 
-    if (kids.length) {
-      html += '<span class="sepc">›</span>' + kids.map((k) =>
-        `<button class="crumb dim" data-id="${k.id}">${name(k)}</button>`).join('');
+    for (const n of ancestors) {
+      if (n.id === root.id) continue;
+      html += `<span class="sepc">›</span>` + crumb(n, '');
     }
-    el.innerHTML = html;
+    if (!(siblings.length === 1 && siblings[0].id === root.id)) {
+      html += `<span class="sepc">›</span><span class="sibs">` +
+        siblings.map((n) => crumb(n, n.id === this.channel ? 'cur' : '')).join('') + `</span>`;
+    }
+    if (kids.length) {
+      html += `<span class="sepc">›</span>` + kids.map((k) => crumb(k, 'dim')).join('');
+    }
 
-    for (const b of el.querySelectorAll('.crumb')) {
+    const el = $('#topbar');
+    el.innerHTML = html;
+    for (const b of el.querySelectorAll('[data-id]')) {
       b.addEventListener('click', () => { this.goChannel(b.dataset.id); });
     }
   }
@@ -188,11 +185,8 @@ class App {
       .concat(blocks.map((b) => ({ k: b.id, label: `${b.letter} · ${b.label}`, kind: b.out.kind, ext: OPS[b.op] && OPS[b.op].external })))
       .concat([{ k: 'flow', label: 'Flow' }]);
 
-    const ch = this.engine.node(this.channel);
-    const chip = `<span class="chchip">${ch.op === 'core.source' ? ch.label : ch.letter + ' · ' + ch.label}</span>`;
-
     const el = $('#tabs');
-    el.innerHTML = chip + items.map((it) =>
+    el.innerHTML = items.map((it) =>
       `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}" data-k="${it.k}">` +
       `${it.label}${it.kind ? `<span class="tk">${it.kind}</span>` : ''}</button>`).join('') +
       '<button class="tab plus" title="operations valid here">+</button>';

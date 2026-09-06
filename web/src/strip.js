@@ -23,8 +23,11 @@ export class Strip {
   }
 
   _cell(gk, c) {
-    const mode = c.mode || (c.type === 'ro' ? 'ro' : 'manual');
-    const cls = mode === 'auto' ? 'au' : mode === 'ro' ? 'ro' : 'mn';
+    // The edge encodes auto-versus-overridden. A parameter with no auto counterpart
+    // has nothing to override, so claiming "manual" for it is noise — it gets a
+    // neutral edge and the accent stays reserved for values the user actually pinned.
+    const mode = c.type === 'ro' ? 'ro' : (c.canAuto ? (c.mode || 'manual') : 'plain');
+    const cls = mode === 'auto' ? 'au' : mode === 'ro' ? 'ro' : mode === 'plain' ? 'pl' : 'mn';
     let value;
     if (c.type === 'enum') {
       value = `<select class="cv csel" data-g="${gk}" data-k="${c.key}">${
@@ -92,6 +95,8 @@ export class Strip {
     const mode = cell.dataset.mode;
     if (mode === 'ro') {
       this.tip.innerHTML = `<span class="tk">${spec.label} · derived</span>A consequence, not a control.`;
+    } else if (mode === 'plain') {
+      this.tip.innerHTML = `<span class="tk">${spec.label}</span>A display setting — nothing derives it.`;
     } else if (mode === 'auto') {
       this.tip.innerHTML = `<span class="tk">${spec.label} · auto</span>` +
         `<b>Re-derives</b> when anything upstream changes.` +

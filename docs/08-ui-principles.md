@@ -113,9 +113,15 @@ the node name and the view name.
 
 Three things do the organising work, and none of them is a text badge:
 
-- **A 2 px left edge carries the mode.** Green for `⟲ auto`, coral for `🔒 manual`.
-  Six repeated "auto" chips were noise; a coloured edge is scannable at a glance and
-  silent when you are not looking for it. Clicking the edge toggles the mode.
+- **A 2 px left edge carries the mode**, in four states: green `⟲ auto`, coral
+  `🔒 manual`, neutral for a setting with no auto counterpart, and none at all for a
+  read-only output. Six repeated "auto" chips were noise; a coloured edge is scannable
+  at a glance and silent when you are not looking for it. Clicking the edge toggles it.
+
+  The neutral state matters more than it sounds. The accent means *the user placed
+  this*, so a display setting nobody overrode must not wear it — the first version
+  painted every view parameter coral, and a strip where most cells shout drowns out
+  the two that should.
 - **Read-only outputs look read-only.** A derived output rate has no fill and no
   edge — it is a consequence, not a control, and should not invite a drag.
 - **Each cell is its own drag target.** Value cells scrub; enums cycle; the range
@@ -127,6 +133,21 @@ Three things do the organising work, and none of them is a text badge:
   explanation to hover; it never moves **interactivity** there. Scrubbable values
   carry faint drag chevrons at rest, enums show a caret, and read-only outputs have
   neither, so the three kinds are distinguishable without touching anything.
+
+### One row for "which radio, and where in it"
+
+The device is the root of the analysis path, so its facts — name, live indicator,
+centre frequency, sample rate — live **on the root crumb**, not in a status bar of
+their own. An earlier layout had both, and named the source twice, the current channel
+three times, and the sample rate twice: the top of the screen describing itself
+instead of the signal.
+
+The current channel's own rate belongs in the strip, as the derived `out` cell it
+already is. The tab bar needs no channel chip either, because the highlighted crumb
+sits directly above it.
+
+The rule generalises: **before adding a row, check what the rows you have already
+say.** Chrome accretes by addition and only ever shrinks deliberately.
 
 ### Naming tabs
 
