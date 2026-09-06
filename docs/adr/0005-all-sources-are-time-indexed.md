@@ -24,6 +24,14 @@ artifact of each tool's ingest model. Unifying it means:
 
 Every one of the workflow's best moments depends on it.
 
+And one of them is not merely better but *only possible* this way. Constraining time
+means drawing a box on a scrolling display, where the rows move under the pointer as
+you drag — so time selection needs the display frozen, and a frozen stream is a still
+image with no history behind it. A frozen **medium** keeps every past sample
+addressable. Without the ring, the time half of the selection primitive
+([ADR-0002](0002-selection-is-the-primitive.md)) simply does not function on a live
+source ([ADR-0023](0023-frequency-makes-a-channel.md)).
+
 ## Cost
 
 - **Disk bandwidth and space.** 2.4 MS/s cf32 is ~19 MB/s. Mitigations: default the

@@ -467,6 +467,13 @@ class App {
     };
   }
 
+  setPlaying(on) {
+    this.engine.playing = on;
+    const b = $('#play');
+    b.textContent = on ? '❚❚' : '▶';
+    b.classList.toggle('paused', !on);
+  }
+
   /** Absolute time at a y pixel on the waterfall. */
   timeAtY(yPx, wfRect) {
     const p = this.vp(this.current);
@@ -521,6 +528,11 @@ class App {
       box.style.left = a + 'px';
       box.style.width = Math.max(2, b - a) + 'px';
       if (d.inWf && Math.abs(d.y1 - d.y0) > 8) {
+        // Selecting time on a scrolling waterfall is not hard, it is incoherent: the
+        // rows move under the pointer while you drag, so the box lands on samples
+        // that were never inside it. The moment a drag acquires a time extent, the
+        // display freezes — no mode to learn, and the burst stops running away.
+        if (this.engine.playing) { this.setPlaying(false); d.froze = true; }
         const top = Math.max(d.wf.top, Math.min(d.y0, d.y1));
         const bot = Math.min(d.wf.bottom, Math.max(d.y0, d.y1));
         box.style.top = (top - d.r.top) + 'px';
@@ -602,8 +614,7 @@ class App {
     });
 
     $('#play').addEventListener('click', () => {
-      this.engine.playing = !this.engine.playing;
-      $('#play').textContent = this.engine.playing ? '❚❚' : '▶';
+      this.setPlaying(!this.engine.playing);
       this.metrics.interaction();
     });
 
@@ -661,6 +672,12 @@ class App {
             if (f.kind === 'spectrum') { this.waterfall.push(f.data); this.trace.push(f.data); }
           }
           if (pf.row >= pf.rows) this._prefill = null;
+          this.trace.draw();
+          this.waterfall.draw();
+        } else if (!this.engine.playing) {
+          // Paused means the display holds. Pushing rows while the clock is stopped
+          // scrolls the same spectrum over and over, which looks like motion and is
+          // the opposite of what pause promises.
           this.trace.draw();
           this.waterfall.draw();
         } else {

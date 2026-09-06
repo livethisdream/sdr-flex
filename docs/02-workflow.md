@@ -77,7 +77,7 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
   under the node name and the view name. The edge replaced a text chip because state
   earns a cheaper visual encoding than a word; hovering it explains the mode *and*
   what the other mode would have chosen
-  ([law 11](08-ui-principles.md#law-11-in-detail--because-the-naive-version-is-harmful)). Parameters of the selected node, then the
+  ([law 12](08-ui-principles.md#law-12-in-detail--because-the-naive-version-is-harmful)). Parameters of the selected node, then the
   *active view's* — which belong to the view, not the node, since Spectrum and
   Waterfall want different settings on the same node. Every derived value shows
   `⟲ auto` (re-derives when upstream changes) or `🔒 manual` (sticky) —

@@ -87,6 +87,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tbtn:hover { border-color:var(--dim); color:var(--bright); }
 .tbtn:active { background:var(--rule-lo); }
 .tbtn.play { min-width:52px; color:var(--bright); }
+.tbtn.play.paused { color:var(--accent); border-color:rgba(255,122,92,.45); }
 .tbtn.small { min-width:auto; min-height:26px; padding:0 .5rem; font-size:.64rem; color:var(--dim); background:transparent; }
 .tbtn.small.on { color:var(--accent); border-color:rgba(255,122,92,.45); }
 .clock { margin-left:.4rem; color:var(--body); font-variant-numeric:tabular-nums; }

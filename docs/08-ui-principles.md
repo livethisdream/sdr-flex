@@ -4,7 +4,7 @@ The premise of this project is that the *workflow* is the product. That makes GU
 friction a correctness property, not a polish item. This document is written as a
 contract we can be held to, with numbers.
 
-## Eleven laws
+## Twelve laws
 
 1. **Five seconds to spectrum.** Launch to a moving waterfall, no project dialog, no
    wizard, no sample-rate prompt. The app opens onto a single list: recent captures
@@ -26,19 +26,26 @@ contract we can be held to, with numbers.
    ([ADR-0010](adr/0010-hot-vs-cold-parameters.md)). If a value requires a rebuild,
    it does not get a drag handle. The user never discovers lag by feel.
 
-6. **Never blank the canvas.** During a rebuild, keep painting the last good frame
+6. **A gesture may create the condition it needs.** Dragging vertically on a live
+   waterfall freezes it, because time selection is meaningless while the rows move.
+   The tool does the obvious prerequisite rather than making the user discover a
+   "hold" button and learn when to press it. Pause, correspondingly, must actually
+   hold the display — a paused view that keeps scrolling identical frames looks like
+   motion and breaks the promise the button makes.
+
+7. **Never blank the canvas.** During a rebuild, keep painting the last good frame
    at reduced opacity with a thin progress hairline. A spinner over an empty box is
    the single most common way DSP tools feel broken.
 
-7. **Undo always works.** Cmd/Ctrl-Z, unbounded, including node deletion, parameter
+8. **Undo always works.** Cmd/Ctrl-Z, unbounded, including node deletion, parameter
    changes, and annotations. Free from the command log
    ([ADR-0009](adr/0009-command-log.md)).
 
-8. **Keyboard for everything repeated.** `/` searches the palette, `↑↓` walks the
+9. **Keyboard for everything repeated.** `/` searches the palette, `↑↓` walks the
    tree, `←→` steps bursts, `Space` play/pause, `Z` zoom to selection, `Esc` clears.
    A power user should be able to run UC-2 without the mouse leaving the waterfall.
 
-9. **Never ask what can be derived — and let the user hold it.** Decimation, filter
+10. **Never ask what can be derived — and let the user hold it.** Decimation, filter
    taps, FFT size, colormap range, symbol period, audio rate: all computed, all shown,
    none required. But derivation is a *mode*, not a one-time gift. Every derived value
    carries an explicit **auto** (`⟲`, re-derives when upstream changes) or **manual**
@@ -46,12 +53,12 @@ contract we can be held to, with numbers.
    ([ADR-0017](adr/0017-auto-manual-parameters.md)). Exploration is a sequence of held
    and varied quantities; the tool has to know which is which.
 
-10. **Chrome recedes; the signal is the hero.** No gradient buttons, no chrome
+11. **Chrome recedes; the signal is the hero.** No gradient buttons, no chrome
     borders, no decorative panels. The waterfall is the brightest thing on screen,
     it gets the full width of the window, and everything else is quiet until hovered.
     Operations come to the cursor rather than occupying a permanent rail.
 
-11. **Name it on screen; explain it on hover.** Visual simplicity is the goal, and
+12. **Name it on screen; explain it on hover.** Visual simplicity is the goal, and
     words are the most expensive thing on a dense screen. Labels and values stay
     visible — a thing you cannot read is a thing you cannot find. *Descriptions*,
     rationale, constraints and consequences go in tooltips. And state earns a
@@ -116,7 +123,7 @@ Three things do the organising work, and none of them is a text badge:
   than every parameter rendering identically.
 - **And it has to look it before the pointer arrives.** The first version rendered
   every cell as label-value-unit with no affordance, and it was read as a row of
-  metrics — someone asked what the readouts at the bottom were *for*. Law 11 moves
+  metrics — someone asked what the readouts at the bottom were *for*. Law 12 moves
   explanation to hover; it never moves **interactivity** there. Scrubbable values
   carry faint drag chevrons at rest, enums show a caret, and read-only outputs have
   neither, so the three kinds are distinguishable without touching anything.
@@ -166,7 +173,7 @@ The one hard case — clipping while four levels deep, with gain belonging to th
 source — is answered by the rig bar carrying live source health: the clip indicator
 is clickable and moves the breadcrumb to the source. One click, no permanent chrome.
 
-## Law 11 in detail — because the naive version is harmful
+## Law 12 in detail — because the naive version is harmful
 
 "Move text into tooltips" taken literally produces a wall of unlabelled controls: the
 SDRangel failure we [named as an anti-pattern](#named-anti-patterns). Three boundaries

@@ -63,6 +63,19 @@ The spectrum trace has no time axis, so a box drawn there is frequency-only and 
 channel stays `live`. The waterfall has both axes, so a box drawn there can pin. That
 distinction needs no explanation because it is just what the two panes *are*.
 
+**Time selection requires frozen time.** Selecting a burst on a scrolling waterfall is
+not merely fiddly, it is incoherent: the rows move under the pointer during the drag,
+so the box lands on samples that were never inside it, and the burst you were reaching
+for scrolls off while you reach. So the moment a drag acquires a vertical extent, the
+display freezes. No mode to learn, and nothing runs away — the gesture creates the
+condition it needs.
+
+This is the sharpest argument for [ADR-0005](0005-all-sources-are-time-indexed.md)
+that we have. Freezing a *stream* would leave you with a still image and no way to
+reach the burst that already passed; freezing a **medium** leaves the history intact
+and addressable. The ring recorder is not a convenience feature — the selection
+primitive does not work on a live source without it.
+
 **Pinned means these samples and no others.** Every view under a pinned channel clamps
 its window to the box — the time display, the slicer's estimator, the bit table. A view
 that quietly read outside the rectangle you drew would make the pin a lie.
