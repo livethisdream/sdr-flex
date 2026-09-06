@@ -89,3 +89,16 @@ to pin a value to `🔒 manual` and hover it to see what auto would have chosen.
 The engine is reached only through its async contract, so swapping `MockEngine` for an
 HTTP/WebSocket client at M1 should not touch the UI. If it does, ADR-0001 has been
 violated somewhere.
+
+## Tests
+
+```
+node web/test/detectors.test.mjs
+```
+
+No browser, no dependencies. It is the first piece of
+[ADR-0025](../docs/adr/0025-golden-capture-conformance.md)'s gate at the size M0 can
+carry it: the synthetic scene stands in for the golden capture, and every detector has
+to reach the right answer *through its estimator* rather than from parameters the test
+handed it — including the negative case, where an estimator pointed at empty spectrum
+has to decline instead of guessing.

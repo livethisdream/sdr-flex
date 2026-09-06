@@ -88,12 +88,12 @@ export class ContextMenu {
     }
 
     // Headings are for finding your way in a list too long to read, and this list is
-    // type-filtered before it is drawn — four items, each already saying what it does.
-    // A heading above two of them is a label on a label. They come back when the
-    // palette is long enough to scan rather than read, which is what M4's external
-    // decoders will make it. Searching still matches on group name either way, so
-    // "decode" finds the decoders whether or not the word is on screen.
-    const headed = shown.length > 7 && groups.length > 1;
+    // type-filtered before it is drawn. A heading above two items is a label on a
+    // label. Past about half a dozen the list stops being read and starts being
+    // scanned, and then the headings earn their space — as they do on an `iq` node
+    // now that the wave 1 detectors are in. Searching still matches on group name
+    // either way, so "decode" finds the decoders whether or not the word is shown.
+    const headed = shown.length > 5 && groups.length > 1;
     // A search box over four self-describing items is a control for a problem the
     // list does not have — and on a phone it is a keyboard covering half the screen
     // on the way to a menu. It appears with the headings, or the moment someone

@@ -204,6 +204,181 @@ export function amEnvelope(iq, count) {
 }
 
 /**
+ * FM: the instantaneous frequency, in hertz, as the phase advance per sample.
+ *
+ * The cross-product form — Im{x[n] · conj(x[n-1])} over |x|² — is the same quantity
+ * atan2 would give for small excursions, without an atan2 per sample. Narrowband FM
+ * never leaves the small-angle region, and the arctangent version's advantage
+ * (correctness near ±π) is only reachable when the deviation approaches half the
+ * channel rate, which would mean the tuner was set wrong.
+ */
+export function fmDiscriminate(iq, count, sampleRate) {
+  const out = new Float32Array(count);
+  const k = sampleRate / (2 * Math.PI);
+  let pr = iq[0], pi = iq[1];
+  for (let i = 1; i < count; i++) {
+    const re = iq[i * 2], im = iq[i * 2 + 1];
+    const cr = re * pr + im * pi;          // real part of x[n]·conj(x[n-1])
+    const ci = im * pr - re * pi;          // imaginary part
+    const mag = cr * cr + ci * ci;
+    out[i] = mag > 1e-20 ? k * Math.atan2(ci, cr) : 0;
+    pr = re; pi = im;
+  }
+  out[0] = out[1] || 0;
+  return out;
+}
+
+/**
+ * Hilbert transformer taps: odd length, antisymmetric, windowed. The companion
+ * path has to be delayed by (n-1)/2 to line up, which `ssbDemod` does.
+ */
+export function hilbertTaps(numTaps) {
+  const n = numTaps | 1;                    // must be odd for a centered delay
+  const mid = (n - 1) / 2;
+  const h = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const k = i - mid;
+    if (k === 0 || k % 2 === 0) { h[i] = 0; continue; }
+    // Hamming, so the passband ripple does not put a tilt across the audio
+    const w = 0.54 - 0.46 * Math.cos((2 * Math.PI * i) / (n - 1));
+    h[i] = (2 / (Math.PI * k)) * w;
+  }
+  return h;
+}
+
+/**
+ * SSB by the phasing method: audio = I ∓ H{Q}, minus for upper sideband and plus
+ * for lower. The tuner ahead of this passes both sides symmetrically, so choosing a
+ * sideband is a step of its own rather than something the filter already did.
+ *
+ * `bfoHz` shifts the passband before the decision, which is what the tuning knob on
+ * an SSB receiver actually does — get it wrong and voices sound like ducks.
+ */
+export function ssbDemod(iq, count, sampleRate, sideband = 'usb', bfoHz = 0, taps = null) {
+  const h = taps || hilbertTaps(65);
+  const n = h.length, mid = (n - 1) / 2;
+  const sign = sideband === 'lsb' ? 1 : -1;
+  const out = new Float32Array(count);
+
+  // mix first, so the Hilbert transformer always sees the band it was designed for
+  const dphi = (-2 * Math.PI * bfoHz) / sampleRate;
+  const rc = Math.cos(dphi), rs = Math.sin(dphi);
+  let pc = 1, ps = 0;
+  const I = new Float32Array(count), Q = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const re = iq[i * 2], im = iq[i * 2 + 1];
+    I[i] = re * pc - im * ps;
+    Q[i] = re * ps + im * pc;
+    const npc = pc * rc - ps * rs;
+    ps = pc * rs + ps * rc; pc = npc;
+    if ((i & 4095) === 4095) { const m = Math.hypot(pc, ps) || 1; pc /= m; ps /= m; }
+  }
+
+  for (let i = 0; i < count; i++) {
+    let hq = 0;
+    const base = i - n + 1;
+    if (base >= 0) for (let t = 0; t < n; t++) hq += Q[base + t] * h[n - 1 - t];
+    const di = i - mid;
+    out[i] = (di >= 0 ? I[di] : 0) + sign * hq;
+  }
+  return out;
+}
+
+/**
+ * CW: there is nothing to demodulate. A keyed carrier is inaudible on its own, so a
+ * receiver beats it against a local oscillator and you listen to the difference.
+ * `offsetHz` is where the carrier actually sits (rarely dead center); `pitchHz` is
+ * where you want to hear it, which is a preference, not a measurement.
+ */
+export function cwBeat(iq, count, sampleRate, offsetHz, pitchHz) {
+  const out = new Float32Array(count);
+  const dphi = (2 * Math.PI * (pitchHz - offsetHz)) / sampleRate;
+  const rc = Math.cos(dphi), rs = Math.sin(dphi);
+  let pc = 1, ps = 0;
+  for (let i = 0; i < count; i++) {
+    const re = iq[i * 2], im = iq[i * 2 + 1];
+    out[i] = re * pc - im * ps;              // real part of x · e^{jΔω n}
+    const npc = pc * rc - ps * rs;
+    ps = pc * rs + ps * rc; pc = npc;
+    if ((i & 4095) === 4095) { const m = Math.hypot(pc, ps) || 1; pc /= m; ps /= m; }
+  }
+  return out;
+}
+
+// ── Estimators for the detectors ───────────────────────────────────────────
+
+/**
+ * Peak deviation, straight off the discriminator rather than out of Carson's rule.
+ *
+ * Carson runs backwards from occupied bandwidth and needs the modulating frequency,
+ * which is the thing you do not know. The instantaneous frequency is already in
+ * hand; a high percentile of its magnitude is the deviation, and a percentile rather
+ * than the maximum because one noisy sample should not set the scale.
+ */
+export function estimateDeviation(iq, count, sampleRate) {
+  const f = fmDiscriminate(iq, count, sampleRate);
+  const mag = Array.from(f.subarray(1), Math.abs).sort((a, b) => a - b);
+  if (!mag.length) return { value: 3000, confident: false };
+  const p98 = mag[Math.min(mag.length - 1, Math.floor(mag.length * 0.98))];
+  const med = mag[mag.length >> 1];
+
+  // What separates a modulated carrier from noise is that its excursion is
+  // *bounded*: the instantaneous frequency stays in a narrow band, while noise
+  // sprays across the whole channel and drags a long tail behind it.
+  //
+  // The tempting test — peak well above the median — is exactly backwards. A single
+  // tone at full deviation gives a ratio of about 1/0.64, because the mean of |sin|
+  // is 2/π; noise gives a much larger one. Anything demanding a big ratio rejects
+  // the clean signals and accepts the noise.
+  const nyquist = sampleRate / 2;
+  return {
+    value: p98,
+    medianHz: med,
+    confident: p98 > 200 && p98 < nyquist * 0.4 && p98 < med * 4,
+  };
+}
+
+/**
+ * Which sideband a channel is carrying, by comparing the energy above and below its
+ * center. A sideband is not a setting you can derive from first principles — but an
+ * 8 dB asymmetry is not an accident either, and saying which way it leans and by how
+ * much is more useful than defaulting to USB and staying quiet about it.
+ */
+export function estimateSideband(iq, count, bins = 1024) {
+  const n = Math.min(count, bins);
+  const sp = spectrum(iq, n, 'Hann');
+  let lo = 0, hi = 0;
+  const half = n / 2;
+  const guard = Math.max(1, Math.round(n * 0.01));       // ignore DC and its skirt
+  for (let i = 0; i < half - guard; i++) lo += Math.pow(10, sp[i] / 10);
+  for (let i = half + guard; i < n; i++) hi += Math.pow(10, sp[i] / 10);
+  const ratioDb = 10 * Math.log10((hi + 1e-20) / (lo + 1e-20));
+  return { value: ratioDb >= 0 ? 'usb' : 'lsb', ratioDb, confident: Math.abs(ratioDb) > 3 };
+}
+
+/**
+ * How far the strongest thing in the channel sits from its center. For CW this is
+ * the carrier, and knowing it is what lets the beat note land on the pitch asked for
+ * instead of wherever the tuner happened to leave it.
+ */
+export function estimateCarrierOffset(iq, count, sampleRate, bins = 1024) {
+  const n = Math.min(count, bins);
+  const sp = spectrum(iq, n, 'Hann');
+  let best = -Infinity, at = n / 2;
+  for (let i = 0; i < n; i++) if (sp[i] > best) { best = sp[i]; at = i; }
+  // parabolic interpolation, so the answer is not quantized to a bin
+  const l = sp[Math.max(0, at - 1)], r = sp[Math.min(n - 1, at + 1)];
+  const denom = l - 2 * best + r;
+  const frac = denom !== 0 ? (0.5 * (l - r)) / denom : 0;
+  const offsetHz = ((at + frac) - n / 2) * (sampleRate / n);
+  // a carrier stands out; noise does not
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += Math.pow(10, sp[i] / 10);
+  const meanDb = 10 * Math.log10(sum / n + 1e-20);
+  return { value: offsetHz, confident: best - meanDb > 12, snrDb: best - meanDb };
+}
+
+/**
  * Post-detection low-pass — the filter every real AM demodulator has after the
  * rectifier. Without it the envelope rattles across the slice threshold and every
  * run-length measurement is noise.

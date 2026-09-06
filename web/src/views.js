@@ -106,10 +106,26 @@ export class TimeSeries {
     c.fillRect(0, 0, W, H);
     if (!data || !data.length) return;
 
-    let hi = 0;
-    for (let i = 0; i < data.length; i++) if (data[i] > hi) hi = data[i];
-    hi = Math.max(hi, 1e-6) * 1.15;
-    const y = (v) => H - 4 * dpr - (v / hi) * (H - 10 * dpr);
+    // An envelope has a floor at zero and belongs against it; a demodulated audio
+    // waveform swings both ways and belongs about its own zero line. Drawing the
+    // second against a zero baseline throws away half of it — which is what a
+    // detector's output looked like before the audio detectors arrived.
+    let hi = -Infinity, lo = Infinity;
+    for (let i = 0; i < data.length; i++) { const v = data[i]; if (v > hi) hi = v; if (v < lo) lo = v; }
+    const bipolar = lo < -Math.max(1e-9, hi * 0.02);
+    const pad = 5 * dpr;
+    let y;
+    if (bipolar) {
+      const amp = Math.max(Math.abs(lo), Math.abs(hi), 1e-6) * 1.1;
+      const mid = H / 2;
+      y = (v) => mid - (v / amp) * (H / 2 - pad);
+      c.strokeStyle = css('--rule-lo', '#1B2130');
+      c.lineWidth = 1 * dpr;
+      c.beginPath(); c.moveTo(0, mid); c.lineTo(W, mid); c.stroke();
+    } else {
+      const top = Math.max(hi, 1e-6) * 1.15;
+      y = (v) => H - 4 * dpr - (v / top) * (H - 10 * dpr);
+    }
 
     // min/max envelope per pixel column — how a long capture draws at 2000 px
     const per = data.length / W;

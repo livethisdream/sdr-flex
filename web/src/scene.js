@@ -15,6 +15,43 @@ export const PAYLOAD = [0xaa, 0xaa, 0x3c, 0x69];
 export const SYMBOL_US = 417;
 export const BURST_PERIOD_S = 0.9;
 
+/**
+ * What is in the band, and what each thing is there to be caught with. The
+ * detectors need targets, and a scene with only an OOK burst in it can only ever
+ * demonstrate one detector.
+ */
+export const SIGNALS = [
+  { offsetHz: -180_000, kind: 'cw',   label: 'keyed carrier' },
+  { offsetHz:  -90_000, kind: 'ssb',  label: 'USB, two tones' },
+  { offsetHz:  -25_000, kind: 'ook',  label: 'OOK burst train' },
+  { offsetHz:   60_000, kind: 'nbfm', label: 'NBFM, ±3 kHz' },
+  { offsetHz:  150_000, kind: 'wide', label: 'wideband hump' },
+];
+
+// NBFM: a 600 Hz tone at ±3 kHz deviation, with a slow warble so it is obviously
+// modulation rather than a stuck tone.
+const FM_OFF = 60_000, FM_TONE = 600, FM_DEV = 3_000, FM_WARBLE = 0.35;
+// USB: two audio tones above a suppressed carrier. Two, because one tone is
+// indistinguishable from a carrier and would prove nothing about sideband choice.
+const SSB_OFF = -90_000, SSB_TONES = [700, 1_150];
+// CW: the steady carrier, keyed on and off so there is something to listen to.
+const CW_OFF = -180_000, CW_DIT_S = 0.11;
+
+/** The CW carrier's on/off state at time t — a repeating "· — ·" so it sounds keyed. */
+export function cwKey(t) {
+  // dit dah dit, then a gap. A 0 is one dit of silence, so the period is counted
+  // the same way the loop below consumes it — not by summing the entries.
+  const pattern = [1, 0, 3, 0, 1, 0, 0, 0];
+  const total = pattern.reduce((a, b) => a + (b === 0 ? 1 : b), 0) * CW_DIT_S;
+  let phase = t - Math.floor(t / total) * total;
+  for (const p of pattern) {
+    const len = p === 0 ? CW_DIT_S : p * CW_DIT_S;
+    if (phase < len) return p === 0 ? 0 : 1;
+    phase -= len;
+  }
+  return 0;
+}
+
 function bitsOf(bytes) {
   const out = [];
   for (const b of bytes) for (let i = 7; i >= 0; i--) out.push((b >> i) & 1);
@@ -77,7 +114,6 @@ function fill(start, count) {
   const fs = SOURCE.sampleRate;
   const out = new Float32Array(count * 2);
 
-  const CW_OFF = -180_000;
   const OOK_OFF = -25_000;
   const rot = (hz) => { const w = (2 * Math.PI * hz) / fs; return { rc: Math.cos(w), rs: Math.sin(w) }; };
   const at = (hz, phase) => { const a = (2 * Math.PI * hz * start) / fs + phase; return { c: Math.cos(a), s: Math.sin(a) }; };
@@ -88,19 +124,44 @@ function fill(start, count) {
   const hP = HUMP.map((h) => at(h.f, h.p));
   const nh = HUMP.length;
 
+  // SSB is two ordinary tones offset from a suppressed carrier, so it costs two
+  // more phasors and nothing else.
+  const sR = SSB_TONES.map((f) => rot(SSB_OFF + f));
+  const sP = SSB_TONES.map((f, i) => at(SSB_OFF + f, hash(4400 + i) * Math.PI * 2));
+
+  // FM is the one signal a fixed-rate phasor cannot make: its rotation rate is the
+  // message. The modulating tone and the warble are still phasors — only the carrier
+  // pays for a cos and a sin per sample, which is two, not the thirty-six that were
+  // the problem before.
+  const mR = rot(FM_TONE), m = at(FM_TONE, 0);
+  const wR = rot(FM_WARBLE), w = at(FM_WARBLE, 0);
+  const fmBeta = FM_DEV / FM_TONE;              // modulation index
+  const fmW = (2 * Math.PI * FM_OFF) / fs;
+
   for (let i = 0; i < count; i++) {
     const n = start + i;
     let re = (hash(n * 2) + hash(n * 2 + 7919) - 1) * 0.030;
     let im = (hash(n * 2 + 1) + hash(n * 2 + 104729) - 1) * 0.030;
 
-    re += 0.26 * cw.c;
-    im += 0.26 * cw.s;
+    const key = cwKey(n / fs);
+    if (key) { re += 0.26 * cw.c; im += 0.26 * cw.s; }
 
     for (let h = 0; h < nh; h++) {
       const a = HUMP[h].a, ph = hP[h];
       re += a * ph.c;
       im += a * ph.s;
     }
+
+    for (let k = 0; k < sP.length; k++) {
+      re += 0.11 * sP[k].c;
+      im += 0.11 * sP[k].s;
+    }
+
+    // e^{j(w_c n + beta (0.65 + 0.35 warble) sin(w_m n))}
+    const depth = 0.65 + 0.35 * w.c;
+    const phi = fmW * n + fmBeta * depth * m.s;
+    re += 0.20 * Math.cos(phi);
+    im += 0.20 * Math.sin(phi);
 
     const env = burstEnvelope(n / fs);
     if (env > 0) { const g = 0.42 * env; re += g * ook.c; im += g * ook.s; }
@@ -117,9 +178,13 @@ function fill(start, count) {
       const c2 = ph.c * r.rc - ph.s * r.rs;
       ph.s = ph.c * r.rs + ph.s * r.rc; ph.c = c2;
     }
+    for (const [ph, r] of [[m, mR], [w, wR], [sP[0], sR[0]], [sP[1], sR[1]]]) {
+      const c2 = ph.c * r.rc - ph.s * r.rs;
+      ph.s = ph.c * r.rs + ph.s * r.rc; ph.c = c2;
+    }
     if ((i & 4095) === 4095) {
-      const norm = (v) => { const m = Math.hypot(v.c, v.s) || 1; v.c /= m; v.s /= m; };
-      norm(cw); norm(ook);
+      const norm = (v) => { const g = Math.hypot(v.c, v.s) || 1; v.c /= g; v.s /= g; };
+      norm(cw); norm(ook); norm(m); norm(w); norm(sP[0]); norm(sP[1]);
       for (let h = 0; h < nh; h++) norm(hP[h]);
     }
   }

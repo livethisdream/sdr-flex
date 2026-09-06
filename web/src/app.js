@@ -8,6 +8,7 @@ import { SpectrumTrace, TimeSeries, BitRaster } from './views.js';
 import { ContextMenu } from './menu.js';
 import { Strip } from './strip.js';
 import { Metrics } from './metrics.js';
+import { AudioSink, meterLevel } from './audio.js';
 import { COLORMAPS, cssGradient } from './colormap.js';
 import { WINDOWS } from './dsp.js';
 
@@ -47,6 +48,7 @@ class App {
     this.trace = new SpectrumTrace($('#sp'));
     this.timeSeries = new TimeSeries($('#ts'));
     this.bitRaster = new BitRaster($('#bits'));
+    this.audio = new AudioSink();
     this._rowAcc = 0;
     this._tmax = 0;                       // the furthest the session has played to
     this.split = 0.34;
@@ -68,7 +70,18 @@ class App {
   }
 
   vp(id) {
-    if (!this.viewParams.has(id)) this.viewParams.set(id, defaultViewParams());
+    if (!this.viewParams.has(id)) {
+      const p = defaultViewParams();
+      // A trigger latches onto an amplitude edge, which is what you want for a
+      // keyed signal and nonsense for continuous audio: an FM channel has no edges
+      // to find, so an armed trigger just shows a window that never settles.
+      const n = this.engine.node(id);
+      if (n && (n.op === 'core.fm_discriminator' || n.op === 'core.ssb' || n.op === 'core.cw')) {
+        p.trigger = 'free';
+        p.spanS = 0.04;
+      }
+      this.viewParams.set(id, p);
+    }
     return this.viewParams.get(id);
   }
 
@@ -117,6 +130,8 @@ class App {
   tabKey() { return this.tabs.get(this.channel) || 'spectrum'; }
 
   setTab(key) {
+    // the subscription is to one node's output, so leaving that node ends it
+    if (this.audio.on && key !== this.tabKey()) this.audio.stop();
     this.tabs.set(this.channel, key);
     this.current = (key === 'spectrum' || key === 'flow') ? this.channel : key;
   }
@@ -135,6 +150,7 @@ class App {
     this.renderTabs();
     this.renderStrip();
     this.renderStage();
+    this.renderListen();
   }
 
   /**
@@ -228,6 +244,7 @@ class App {
   }
 
   goChannel(id) {
+    if (this.audio.on) this.audio.stop();
     this.clearSelection();
     this.channel = id;
     this.resetSpectrum();
@@ -418,6 +435,12 @@ class App {
           t1: { label: 'to', unit: 's', fmt: (v) => v.toFixed(3), step: 0.002, type: 'num' },
           threshold: { label: 'threshold', unit: '', fmt: (v) => v.toFixed(3), step: 0.0006, min: 0, type: 'num' },
           symbolUs: { label: 'symbol', unit: 'µs', fmt: (v) => String(Math.round(v)), step: 0.7, min: 20, integer: true, type: 'num' },
+          deviationHz: { label: 'deviation', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 12, min: 100, integer: true, type: 'num' },
+          sideband: { label: 'sideband', unit: '', type: 'enum', values: ['usb', 'lsb'], fmt: String },
+          bfoHz: { label: 'bfo', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 1.5, min: -3000, max: 3000, integer: true, type: 'num' },
+          offsetHz: { label: 'offset', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2.5, integer: true, type: 'num' },
+          pitchHz: { label: 'pitch', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2, min: 200, max: 2000, integer: true, type: 'num' },
+          gain: { label: 'gain', unit: '×', fmt: (v) => (v < 10 ? v.toFixed(1) : String(Math.round(v))), step: 0.02, min: 0.1, max: 60, type: 'num' },
         }[key] || { label: key, unit: '', fmt: String, type: 'num', step: 1 };
         nodeCells.push({
           key, ...meta, value: pr.value, mode: pr.mode, canAuto: !!pr.auto,
@@ -457,12 +480,33 @@ class App {
       });
     }
 
+    // Listening is a subscription to this node, so its controls belong with the
+    // node's — but only while it is running. A volume slider on a silent tool is a
+    // control for something that is not happening.
+    if (this.audio.on) {
+      groups.push({
+        key: 'audio', title: 'listen',
+        cells: [
+          { key: 'gain', label: 'volume', unit: '', type: 'num', value: this.audio.gain,
+            fmt: (v) => (v * 100).toFixed(0) + '%', step: 0.004, min: 0, max: 1 },
+          { key: 'squelch', label: 'squelch', unit: '', type: 'num', value: this.audio.squelch,
+            fmt: (v) => (v > 0 ? v.toFixed(3) : 'off'), step: 0.0004, min: 0, max: 0.4 },
+        ],
+      });
+    }
+
     this.strip.render(groups);
     this.strip.onScrub = (g, k, v) => this.onParam(g, k, v);
     this.strip.onMode = (g, k, mode) => this.onMode(g, k, mode);
   }
 
   async onParam(group, key, value) {
+    if (group === 'audio') {
+      if (key === 'gain') this.audio.setGain(value);
+      else this.audio.squelch = value;
+      this.renderStrip();
+      return;
+    }
     if (group === 'view') {
       const p = this.vp(this.current);
       if (key === 'bins') { p.bins = parseInt(value, 10); this.resetSpectrum(); }
@@ -619,6 +663,28 @@ class App {
     const b = $('#play');
     b.textContent = on ? '❚❚' : '▶';
     b.classList.toggle('paused', !on);
+  }
+
+  /**
+   * The listen button exists when the current node has something to listen to, and
+   * says what it is doing while it does it: lit when on, dimmed while the squelch
+   * holds it closed, with a level bar so silence is distinguishable from failure.
+   */
+  renderListen() {
+    const el = $('#listen');
+    if (!el) return;
+    const n = this.node();
+    const can = !!(n && n.out && n.out.kind === 'real');
+    el.hidden = !can;
+    if (!can && this.audio.on) this.audio.stop();
+    el.classList.toggle('on', this.audio.on);
+    el.classList.toggle('sq', this.audio.muted);
+    el.title = this.audio.on ? 'stop listening' : 'listen';
+    const lvl = el.querySelector('.lvl');
+    if (lvl) {
+      const v = this.audio.on ? meterLevel(this.audio.level) : 0;
+      lvl.style.transform = `scaleX(${v.toFixed(3)})`;
+    }
   }
 
   /** The spectrum's share of the stage. The waterfall takes what is left. */
@@ -966,6 +1032,25 @@ class App {
       track.addEventListener('pointerup', up);
     });
 
+    // ── listen ─────────────────────────────────────────────────────────────
+    // A browser will only open an AudioContext from a gesture, so the button is the
+    // only place this can start — which is fine, because listening should be a
+    // decision anyway. A tool that starts making noise on its own is a tool people
+    // mute at the operating system and then wonder why it is silent.
+    const listen = $('#listen');
+    listen.addEventListener('click', async () => {
+      if (this.audio.on) { this.audio.stop(); }
+      else {
+        const n = this.node();
+        if (!n || n.out.kind !== 'real') return;
+        const ok = await this.audio.start(this.engine, n.id, this.engine.effectiveTime(n.id));
+        if (!ok) this.setStageBadge('this browser has no audio output');
+      }
+      this.renderListen();
+      this.renderStrip();
+      this.metrics.interaction();
+    });
+
     const step = (dt) => {
       this.engine.t = Math.max(0, this.engine.t + dt);
       this.resetSpectrum();
@@ -1120,6 +1205,12 @@ class App {
         const f = this.engine.frame(this.current, {});
         if (f.kind === 'bits') this.bitRaster.draw(f.groups, f.symbolUs);
       }
+    }
+
+    // The sink runs its own clock; this only tops the queue up and reports the level.
+    if (this.audio.on) {
+      if (this.engine.playing) this.audio.pump(this.engine, this.engine.effectiveTime(this.current));
+      this.renderListen();
     }
 
     if (this.engine.t > this._tmax) this._tmax = this.engine.t;

@@ -43,19 +43,37 @@ Five operations, one implementation family. Each takes `iq` from a channel and p
 `real`; the tuner ahead of it already did the filtering, so these are detectors, not
 "demodulators" in the SDRangel sense that bundles channelizer, AGC, squelch and audio.
 
-| Op | Estimator that has to ship with it | Evidence it shows |
+| Op | Estimator that ships with it | Evidence it shows |
 |---|---|---|
-| `core.am_envelope` | *(done in M0)* | — |
-| `core.fm_discriminator` | deviation from occupied bandwidth (Carson) | "±5 kHz from a 16 kHz occupied span" |
-| `core.ssb` | sideband from spectral asymmetry about the tuner center | "energy 8 dB higher above center" |
-| `core.cw` | tone offset from the strongest bin; sidetone pitch follows it | "carrier 640 Hz above center" |
-| `core.raw_iq_tap` | — | a passthrough so `real`-only nodes can be bypassed |
+| `core.am_envelope` | *(M0)* Otsu threshold, pulse-length symbol period | "two clean pulse-length clusters" |
+| `core.fm_discriminator` | *(M0)* 98th percentile of the instantaneous frequency | "the 98th percentile of the instantaneous frequency" |
+| `core.ssb` | *(M0)* sideband from spectral asymmetry about the center | "energy 38 dB higher above center" |
+| `core.cw` | *(M0)* carrier offset from the strongest bin, parabolically interpolated | "the strongest bin, 27 dB over the floor" |
+
+Deviation is measured off the discriminator rather than run backwards through Carson's
+rule, because Carson needs the modulating frequency and that is the thing you do not
+know. The confidence test is the one worth writing down: a modulated carrier's
+instantaneous frequency is *bounded* — it stays in a narrow band — while noise sprays
+across the whole channel. The tempting test, peak well above the median, is exactly
+backwards: a single tone at full deviation gives a ratio of about 1/0.64, because the
+mean of |sin| is 2/π, so anything demanding a large ratio rejects the clean signals and
+accepts the noise.
 
 Squelch, AGC and audio gain are **parameters of the audio sink**, not of the detector.
 Putting them on the detector is what makes SDRangel's demod panels twenty controls deep.
+The sink is not a node either: a detector produces a real-valued stream, and listening
+to one is a subscription to that stream the same way the spectrum view is. So the
+control is on the transport, where the other things that are true of *now* live, and it
+appears only where there is something to hear.
 
 **Done when:** dropping a box on an FM broadcast station and hitting play produces audio
 with no other interaction, and the deviation readout says where it got its number.
+
+**Status:** running in the M0 mock. The scene grew a target for each detector — a keyed
+carrier, a two-tone USB signal, and an NBFM tone at ±3 kHz with a slow warble so the
+deviation readout visibly moves — and the estimators are asserted against them, including
+the negative case: pointed at empty spectrum, FM reports "looks unmodulated" and SSB
+reports "both sides look alike — this is a guess" rather than a confident wrong answer.
 
 ---
 

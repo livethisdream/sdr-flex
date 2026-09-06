@@ -33,6 +33,19 @@ export const OPS = {
   'core.am_envelope': {
     name: 'AM envelope', group: 'Demodulate', in: 'iq', out: 'real',
   },
+  // These are detectors, not "demodulators" in the sense that bundles a
+  // channelizer, AGC, squelch and an audio chain into one panel. The tuner ahead of
+  // them already did the filtering; listening happens at the sink. That split is
+  // the whole reason these have two parameters each instead of twenty.
+  'core.fm_discriminator': {
+    name: 'FM discriminator', group: 'Demodulate', in: 'iq', out: 'real',
+  },
+  'core.ssb': {
+    name: 'SSB', group: 'Demodulate', in: 'iq', out: 'real',
+  },
+  'core.cw': {
+    name: 'CW', group: 'Demodulate', in: 'iq', out: 'real',
+  },
   'core.pwm_slicer': {
     name: 'PWM / OOK slicer', group: 'Decode', in: 'real', out: 'bits',
   },
@@ -43,6 +56,84 @@ export const OPS = {
   'core.burst_detector': {
     name: 'Burst detector', group: 'Analyze', in: 'iq', out: 'events',
     stub: true,
+  },
+};
+
+/**
+ * The detectors, as a table rather than a switch: each says how to derive its
+ * parameters from the signal, and how to turn IQ into a real-valued stream. Adding
+ * the fourth one should be a row here and a line in OPS, not an edit in five places.
+ */
+const DETECTORS = {
+  'core.fm_discriminator': {
+    label: 'FM',
+    derive(iq, count, fs) {
+      const d = dsp.estimateDeviation(iq, count, fs);
+      return {
+        deviationHz: param(Math.round(d.value) || 3000, 'auto', {
+          from: d.confident
+            ? 'the 98th percentile of the instantaneous frequency'
+            : 'instantaneous frequency (looks unmodulated)',
+          confident: d.confident,
+        }),
+        gain: param(1, 'manual'),
+      };
+    },
+    detect(iq, count, fs, params) {
+      const f = dsp.fmDiscriminate(iq, count, fs);
+      // scale so full deviation is full scale — the display and the audio sink then
+      // mean the same thing across signals of wildly different loudness
+      const k = (params.gain.value || 1) / Math.max(1, params.deviationHz.value);
+      const out = new Float32Array(count);
+      for (let i = 0; i < count; i++) out[i] = f[i] * k;
+      return out;
+    },
+  },
+  'core.ssb': {
+    label: 'SSB',
+    derive(iq, count, fs) {
+      const sb = dsp.estimateSideband(iq, count);
+      return {
+        sideband: param(sb.value, 'auto', {
+          from: sb.confident
+            ? `energy ${Math.abs(sb.ratioDb).toFixed(0)} dB higher ${sb.ratioDb > 0 ? 'above' : 'below'} center`
+            : 'both sides look alike — this is a guess',
+          confident: sb.confident,
+        }),
+        bfoHz: param(0, 'manual'),
+        gain: param(6, 'manual'),
+      };
+    },
+    detect(iq, count, fs, params) {
+      const a = dsp.ssbDemod(iq, count, fs, params.sideband.value, params.bfoHz.value);
+      const g = params.gain.value || 1;
+      for (let i = 0; i < count; i++) a[i] *= g;
+      return a;
+    },
+  },
+  'core.cw': {
+    label: 'CW',
+    derive(iq, count, fs) {
+      const off = dsp.estimateCarrierOffset(iq, count, fs);
+      return {
+        offsetHz: param(Math.round(off.value), 'auto', {
+          from: off.confident
+            ? `the strongest bin, ${off.snrDb.toFixed(0)} dB over the floor`
+            : 'the strongest bin (no clear carrier)',
+          confident: off.confident,
+        }),
+        // where you want to hear it. A preference, not a measurement, so it starts
+        // manual — marking it auto would claim evidence that does not exist.
+        pitchHz: param(700, 'manual'),
+        gain: param(4, 'manual'),
+      };
+    },
+    detect(iq, count, fs, params) {
+      const a = dsp.cwBeat(iq, count, fs, params.offsetHz.value, params.pitchHz.value);
+      const g = params.gain.value || 1;
+      for (let i = 0; i < count; i++) a[i] *= g;
+      return a;
+    },
   },
 };
 
@@ -189,6 +280,17 @@ export class MockEngine {
     } else if (op === 'core.am_envelope') {
       node.out = { kind: 'real', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'AM env';
+    } else if (DETECTORS[op]) {
+      // Every detector lands with its parameters already derived from the signal in
+      // front of it, and says what it derived them from (ADR-0017). A detector that
+      // arrives needing to be told the deviation is a detector for someone who
+      // already knew the answer.
+      const fs = p.out.sampleRate;
+      const iq = this._readIQ(p, this.effectiveTime(p.id), Math.min(65536, Math.floor(fs * 0.25)));
+      const count = iq.length / 2;
+      node.params = DETECTORS[op].derive(iq, count, fs);
+      node.out = { kind: 'real', sampleRate: fs, centerHz: p.out.centerHz };
+      node.label = DETECTORS[op].label;
     } else if (op === 'core.pwm_slicer') {
       // estimate from a real window of the parent's output — auto shows its work
       // estimate over a window wide enough to be sure it contains a burst — the
@@ -293,8 +395,36 @@ export class MockEngine {
   }
 
   async _readReal(node, tEnd, count) {
-    const iq = this._readIQ(node, tEnd, count);
-    return dsp.smooth(dsp.amEnvelope(iq, count), dsp.envelopeWindow(node.out.sampleRate));
+    return this._detect(node, tEnd, count);
+  }
+
+  /**
+   * Audio out of a detector node: `count` samples *starting* at `t0`.
+   *
+   * Every other read in this engine ends at a moment, because a display shows what
+   * just happened. Audio is the one consumer that runs forward — it needs the next
+   * chunk, contiguous with the last one — and asking for a backward window and
+   * reversing the reasoning at the call site is how gaps and overlaps get in.
+   */
+  async readAudio(nodeId, t0, count) {
+    const n = this.node(nodeId);
+    if (!n || n.out.kind !== 'real') return null;
+    const fs = n.out.sampleRate;
+    return { data: this._detect(n, t0 + count / fs, count), sampleRate: fs };
+  }
+
+  /**
+   * The real-valued output of a detector node, `count` samples ending at `tEnd`.
+   * `node` is the detector; its parent supplies the IQ.
+   */
+  _detect(node, tEnd, count) {
+    const p = this.node(node.parent);
+    const fs = node.out.sampleRate;
+    const iq = this._readIQ(p, tEnd, count);
+    const d = DETECTORS[node.op];
+    if (d) return d.detect(iq, count, fs, node.params);
+    // AM: the rectifier, then the post-detection low-pass every real receiver has
+    return dsp.smooth(dsp.amEnvelope(iq, count), dsp.envelopeWindow(fs));
   }
 
   /**
@@ -322,7 +452,6 @@ export class MockEngine {
 
     if (n.out.kind === 'real') {
       const fs = n.out.sampleRate;
-      const p = this.node(n.parent);
       const span = opts.spanS || 0.12;
       // The search window and the display window are different things. The trigger
       // has to look over a whole burst period to find an edge at all, but what it
@@ -330,8 +459,7 @@ export class MockEngine {
       // meant the span control moved nothing whenever the trigger was armed.
       const searchS = Math.min(maxSpan, opts.trigger === 'free' ? span : Math.max(1.05, span));
       const count = Math.min(131072, Math.max(256, Math.floor(fs * searchS)));
-      const iq = this._readIQ(p, now, count);
-      const env = dsp.smooth(dsp.amEnvelope(iq, count), dsp.envelopeWindow(fs));
+      const env = this._detect(n, now, count);
       const windowEnd = now;                        // absolute time of the last sample
 
       if (opts.trigger === 'free') {
@@ -358,8 +486,7 @@ export class MockEngine {
       const fs = p.out.sampleRate;
       const span = Math.min(maxSpan, opts.spanS || 2.0);
       const count = Math.min(262144, Math.floor(fs * span));
-      const gp = this.node(p.parent);
-      const env = dsp.smooth(dsp.amEnvelope(this._readIQ(gp, now, count), count), dsp.envelopeWindow(fs));
+      const env = this._detect(p, now, count);   // whatever detector feeds this slicer
       const groups = dsp.pwmSlice(env, n.params.threshold.value, fs, n.params.symbolUs.value);
       const windowStart = now - count / fs;
       return {

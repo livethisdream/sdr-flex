@@ -126,6 +126,19 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tbtn.small { min-width:auto; min-height:26px; padding:0 .5rem; font-size:.64rem; color:var(--dim); background:transparent; }
 .tbtn.small.on { color:var(--accent); border-color:rgba(255,122,92,.45); }
 .clock { margin-left:.4rem; color:var(--body); font-variant-numeric:tabular-nums; }
+
+/* Listening is a subscription to a detector's output, so it belongs on the transport
+   with the other things that are true of "now" — not as a control on the detector.
+   It appears only where there is something to hear. */
+.tbtn.listen { position:relative; min-width:30px; font-size:.8rem; color:var(--dim); }
+.tbtn.listen[hidden] { display:none; }
+.tbtn.listen.on { color:var(--accent); }
+.tbtn.listen .lvl {
+  position:absolute; left:4px; right:4px; bottom:3px; height:2px; border-radius:1px;
+  background:var(--accent); transform-origin:left; transform:scaleX(0);
+  transition:transform .08s linear;
+}
+.tbtn.listen.sq .spk { opacity:.4; }
 /* The rail is 2px but the target is the whole 22px button: a 2px hit area is a
    control you can see and not use. Every source is time-indexed (ADR-0005), so
    this scrubs for real — through the clip when a channel is pinned, through
