@@ -39,6 +39,7 @@ export class Waterfall {
     this.rows = rows;
     this.bins = 0;
     this.writeRow = 0;
+    this.filled = 0;          // rows of real history since the last clear
     this.dbMin = -74;
     this.dbMax = -18;
     this.viewLo = 0;
@@ -95,6 +96,7 @@ export class Waterfall {
     if (bins === this.bins) return;
     this.bins = bins;
     this.writeRow = 0;
+    this.filled = 0;
     if (this.gl) {
       const gl = this.gl;
       if (this.dataTex) gl.deleteTexture(this.dataTex);
@@ -147,6 +149,7 @@ export class Waterfall {
   /** Forget the history. Another channel's rows are not this channel's past. */
   clear() {
     this.writeRow = 0;
+    this.filled = 0;
     if (!this.bins) return;
     if (this.gl) {
       const gl = this.gl;
@@ -161,6 +164,7 @@ export class Waterfall {
 
   push(row) {
     this._ensure(row.length);
+    this.filled = Math.min(this.rows, this.filled + 1);
     if (this.gl) {
       const gl = this.gl;
       gl.activeTexture(gl.TEXTURE0);

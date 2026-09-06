@@ -63,6 +63,16 @@ The spectrum trace has no time axis, so a box drawn there is frequency-only and 
 channel stays `live`. The waterfall has both axes, so a box drawn there can pin. That
 distinction needs no explanation because it is just what the two panes *are*.
 
+**A time gesture has to be deliberate.** Hands wobble, and treating a few pixels of
+vertical drift as a time constraint turned ordinary frequency drags into pinned
+channels — which are static by design, so a perfectly good tuner looked broken. The
+vertical extent must be both absolutely large (>24 px) and a real fraction of the
+box's width, or the drag is frequency-only.
+
+**And it can only select history that exists.** The waterfall knows how many rows hold
+real samples; the box stops at that edge and says so rather than following the pointer
+into blank rows and silently dropping the request.
+
 **Time selection requires frozen time.** Selecting a burst on a scrolling waterfall is
 not merely fiddly, it is incoherent: the rows move under the pointer during the drag,
 so the box lands on samples that were never inside it, and the burst you were reaching

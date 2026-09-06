@@ -27,6 +27,7 @@ export class ContextMenu {
   open(x, y, ops, onPick) {
     this.ops = ops;
     this.onPick = onPick;
+    this._picked = false;
     this.filter = '';
     this.el.hidden = false;
     this._render();
@@ -48,7 +49,11 @@ export class ContextMenu {
     }
   }
 
-  close() { this.el.hidden = true; }
+  close() {
+    const wasOpen = !this.el.hidden;
+    this.el.hidden = true;
+    if (wasOpen && !this._picked && this.onClose) this.onClose();
+  }
 
   _wantsKeyboard() {
     try {
@@ -100,6 +105,7 @@ export class ContextMenu {
       b.addEventListener('click', () => {
         if (b.classList.contains('stub')) return;
         const op = b.dataset.op;
+        this._picked = true;
         this.close();
         this.onPick && this.onPick(op);
       });

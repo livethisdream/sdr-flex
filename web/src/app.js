@@ -75,7 +75,7 @@ class App {
     this.selection = null;
     const box = $('#selbox');
     box.hidden = true;
-    box.classList.remove('armed');
+    box.classList.remove('armed', 'clamped');
   }
   /**
    * A *channel* is a node that carries IQ — the source, a tuner, a gate. Everything
@@ -512,12 +512,44 @@ class App {
     this.renderStage();
   }
 
-  /** Absolute time at a y pixel on the waterfall. */
+  /**
+   * Does this drag mean to constrain time?
+   *
+   * A hand wobbles. Treating a few pixels of vertical drift as a time selection
+   * turned ordinary frequency drags into pinned channels — which are static by
+   * design, so the tuner looked broken. A time gesture has to be deliberate:
+   * clearly vertical in absolute terms, and a real fraction of the box's width.
+   */
+  /**
+   * The y below which the waterfall holds no samples yet. A time box must stop
+   * there: dragging into blank rows would ask to pin a window that never existed,
+   * and silently dropping the request is worse than not letting it be made.
+   */
+  historyEdgeY(wfRect) {
+    const frac = Math.min(1, this.waterfall.filled / this.waterfall.rows);
+    return wfRect.top + frac * wfRect.height;
+  }
+
+  wantsTime(d) {
+    if (!d.inWf) return false;
+    const dy = Math.abs(d.y1 - d.y0);
+    const dx = Math.abs(d.x1 - d.x0);
+    return dy > 24 && dy > dx * 0.25;
+  }
+
+  /**
+   * Absolute time at a y pixel on the waterfall, clamped to history that exists.
+   * Only the filled rows correspond to real samples; the rest is the colormap floor.
+   */
   timeAtY(yPx, wfRect) {
     const p = this.vp(this.current);
-    const spanS = this.waterfall.rows / Math.max(1, p.speed);
+    const rows = this.waterfall.rows;
+    const filled = Math.max(1, this.waterfall.filled);
+    const now = this.engine.effectiveTime(this.channel);
     const frac = Math.max(0, Math.min(1, (yPx - wfRect.top) / wfRect.height));
-    return this.engine.effectiveTime(this.channel) - frac * spanS;
+    const secsPerRow = 1 / Math.max(1, p.speed);
+    const back = Math.min(frac * rows, filled) * secsPerRow;
+    return Math.max(0, now - back);
   }
 
   defaultSelection() {
@@ -565,16 +597,18 @@ class App {
       const a = Math.min(d.x0, d.x1), b = Math.max(d.x0, d.x1);
       box.style.left = a + 'px';
       box.style.width = Math.max(2, b - a) + 'px';
-      if (d.inWf && Math.abs(d.y1 - d.y0) > 8) {
+      if (this.wantsTime(d)) {
         // Selecting time on a scrolling waterfall is not hard, it is incoherent: the
         // rows move under the pointer while you drag, so the box lands on samples
         // that were never inside it. The moment a drag acquires a time extent, the
         // display freezes — no mode to learn, and the burst stops running away.
         if (this.engine.playing) { this.setPlaying(false); this._frozeForDrag = true; }
+        const edge = this.historyEdgeY(d.wf);
         const top = Math.max(d.wf.top, Math.min(d.y0, d.y1));
-        const bot = Math.min(d.wf.bottom, Math.max(d.y0, d.y1));
+        const bot = Math.min(edge, Math.max(d.y0, d.y1));
         box.style.top = (top - d.r.top) + 'px';
         box.style.height = Math.max(2, bot - top) + 'px';
+        box.classList.toggle('clamped', Math.max(d.y0, d.y1) > edge + 2);
       } else {
         box.style.top = '';
         box.style.height = '';
@@ -593,12 +627,17 @@ class App {
 
       let label = `${((f1 - f0) / 1e3).toFixed(1)} kHz`;
       const sel = { f0, f1 };
-      if (d.inWf && Math.abs(d.y1 - d.y0) > 8) {
-        const t0 = this.timeAtY(Math.max(d.y0, d.y1), d.wf);
+      if (this.wantsTime(d)) {
+        const edge = this.historyEdgeY(d.wf);
+        const t0 = this.timeAtY(Math.min(edge, Math.max(d.y0, d.y1)), d.wf);
         const t1 = this.timeAtY(Math.min(d.y0, d.y1), d.wf);
-        sel.t0 = t0;
-        sel.t1 = t1;
-        label += ` · ${((t1 - t0) * 1e3).toFixed(0)} ms`;
+        // only pin over history that exists; a window before the capture began
+        // would pin the channel to nothing at all
+        if (t1 - t0 > 0.002) {
+          sel.t0 = t0;
+          sel.t1 = t1;
+          label += ` · ${((t1 - t0) * 1e3).toFixed(0)} ms`;
+        }
       }
       this.selection = sel;
       box.dataset.label = label;
@@ -607,6 +646,11 @@ class App {
       this.metrics.beginOp();
       this.openMenu(e.clientX + 14, e.clientY + 14, this.selection);
     });
+
+    // walking away from the menu should leave the app as it found it
+    this.menu.onClose = () => {
+      if (this._frozeForDrag) { this._frozeForDrag = false; this.setPlaying(true); }
+    };
 
     // ── zoom: a view transform on the axis, not a change to the signal ──────
     const MIN_SPAN = 1 / 512;                 // never past a couple of FFT bins

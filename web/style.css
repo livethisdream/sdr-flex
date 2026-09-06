@@ -259,6 +259,8 @@ select.cv option { background:var(--raised); color:var(--bright); }
 /* a drawn box that is waiting on a decision says so, and is clickable */
 .selbox { pointer-events:none; }
 .selbox.armed { pointer-events:auto; cursor:pointer; }
+/* the box stopped at the edge of recorded history rather than following the pointer */
+.selbox.clamped { border-bottom-style:dashed; border-bottom-color:var(--warn); }
 .selbox.armed::before {
   content:"▾ actions"; position:absolute; left:3px; bottom:3px;
   font-family:var(--mono); font-size:.58rem; color:#160906;
