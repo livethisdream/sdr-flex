@@ -28,3 +28,6 @@ why, what it costs, and what would make us change our minds.
 | [0021](0021-mock-engine-first.md) | The client is built first, against a mock engine | Accepted |
 | [0022](0022-conversational-control.md) | Language is a peer client, not a replacement for the GUI | Accepted |
 | [0023](0023-frequency-makes-a-channel.md) | Frequency makes a channel; time is a property of one | Accepted |
+| [0024](0024-composable-decode-chain.md) | The transparent decode path is composable single-purpose nodes | Accepted |
+| [0025](0025-golden-capture-conformance.md) | A demod or decoder ships with a golden capture, or it does not ship | Accepted |
+| [0026](0026-decoder-packs.md) | A decoder ships as a pack — manifest, fixtures and version pin | Proposed |

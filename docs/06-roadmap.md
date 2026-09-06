@@ -98,6 +98,8 @@ structural edits — the top technical risk in the design.
 
 ## M3 — Demodulate and listen *(now it's GQRX)*
 
+Wave 1 of the [demod and decoder plan](09-demods-and-decoders.md).
+
 - AM / NBFM / WBFM / USB / LSB / CW demodulators
 - `real` stream type, time-series view, audio subscription + mixer strip
 - Type-filtered menus (first real use of ADR-0006)
@@ -132,7 +134,10 @@ ahead of the rest of the plugin system, because it is small and the payoff is en
 - `process` kind: pipe management, supervision, format negotiation
 - Auto-derived convert + resample chain to whatever the program wants on stdin
 - `jsonl` parser, `events` stream type, event-table view, opaque-node UI treatment
-- Adapters: `rtl_433`, `multimon-ng`, `dump1090`
+- Adapters: `rtl_433`, `multimon-ng`, `dump1090` — ordered by the transport or
+  constraint each one forces, not by protocol count ([plan](09-demods-and-decoders.md#wave-3--the-adapter-layer-m45-then-m5))
+- The golden-capture conformance harness ([ADR-0025](adr/0025-golden-capture-conformance.md)),
+  which is what makes the fiftieth adapter as cheap as the fifth
 - **`Identify`** — every applicable decoder in parallel over the ring
 
 **Done when:** three interactions from launch to a named device, `Identify` returning
@@ -157,7 +162,8 @@ the codebase.
 
 ## M6 — Bits and meaning *(now it's URH-shaped)*
 
-- `symbols`, `bits`, `bytes`, `events` types; slicers, framing, CRC, real decoders
+- `symbols`, `bits`, `bytes`, `events` types; slicers, framing, CRC, real decoders —
+  wave 2, as composable single-purpose nodes ([ADR-0024](adr/0024-composable-decode-chain.md))
 - Bit raster, hex and event-table views, aligned under the waveform on shared time
   (ADR-0020)
 - Annotations anchored in source coordinates, propagating up the tree (ADR-0007)
