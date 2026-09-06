@@ -39,7 +39,8 @@ The setting is a property of a visible thing, so it is adjusted by manipulating 
 thing. No chrome whatsoever:
 
 - **dB range / contrast** → drag the ends of the colour bar
-- **frequency span** → scroll or pinch on the frequency axis
+- **frequency span** → wheel or pinch anywhere on the spectrum, anchored at the
+  pointer; shift-wheel or two-finger drag to pan; double-click to fit
 - **time span, waterfall speed** → scroll on the time axis
 - **selection bounds** → drag the box edges
 - **position in time** → drag the playhead

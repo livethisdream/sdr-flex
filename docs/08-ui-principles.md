@@ -171,6 +171,28 @@ that hides the others reads as though the tool forgot what you built.
 The prefix does become right in one place: a **torn-off tile** has no breadcrumb above
 it, so a floating pane is labelled with its full path, `B · Tuner › D · PWM`.
 
+### Zooming is not tuning
+
+Two operations narrow the frequency you are looking at, and confusing them would be
+expensive:
+
+- **Tuning** narrows the *signal*. It creates a channel, changes the sample rate, and
+  runs real DSP. It is a structural act, it appears in the breadcrumb, and it is undoable
+  as a node.
+- **Zooming** narrows the *view*. Same signal, same rate, more pixels per hertz. It
+  changes nothing downstream and belongs to the display, so it lives in the view
+  parameters and on the object itself.
+
+Both are reached from the same surface, which is why the distinction has to be legible.
+A drag creates a channel; a wheel, a pinch, or `+`/`-` zooms. Every coordinate mapping
+runs through the visible window rather than the channel span, so a box drawn while
+zoomed lands where it looks like it lands — and the axis labels, which always read
+absolute RF, are the honest indicator of where you are.
+
+**Gestures**: wheel or pinch to zoom about the pointer; shift-wheel or a two-finger
+drag to pan; `+`/`-` to zoom about the centre; `0` or double-click to fit the span. A
+`×` factor appears on the axis only when zoomed, so the default view says nothing.
+
 ### Instrumentation is not chrome
 
 The interaction, travel, frame-rate and jitter counters are a **development
@@ -189,7 +211,7 @@ things with four lifetimes, and one test assigns every one of them
 
 | Home | What lives there |
 |---|---|
-| **On the object** | dB range (drag the colour bar), span (scroll the axis), selection bounds, playhead. No chrome at all — the control belongs where its effect is. |
+| **On the object** | dB range (drag the colour bar), **zoom and pan** (wheel, pinch, `+`/`-`/`0`), selection bounds, playhead. No chrome at all — the control belongs where its effect is. |
 | **The strip** | Node parameters, then the *active view's*, as two labelled groups of cells. Device gain and PPM are node parameters of the source. A `⌄` expands the strip into a temporary panel when a node has many. |
 | **A view tab** | Flow, Plugins, Annotations, Project. Full canvas, zero chrome, reached like any other view. |
 | **A preferences overlay** | Theme, keybindings, plugin paths, disk budget, audio device. A modal is honest here — law 2 governs the analysis loop, and configuring the tool means deliberately stepping out of it. |

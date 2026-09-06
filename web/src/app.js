@@ -26,6 +26,7 @@ const defaultViewParams = () => ({
   bins: 1024, window: 'Hann', avg: 4,
   dbMin: -74, dbMax: -18, colormap: 'Viridis', speed: 60,
   trigger: 'auto', spanS: 0.12,
+  zoomLo: 0, zoomHi: 1,
 });
 
 class App {
@@ -222,6 +223,8 @@ class App {
       this.waterfall.setColormap(p.colormap);
       this.waterfall.setRange(p.dbMin, p.dbMax);
       this.trace.setRange(p.dbMin, p.dbMax);
+      this.waterfall.setViewRange(p.zoomLo, p.zoomHi);
+      this.trace.setViewRange(p.zoomLo, p.zoomHi);
       this.trace.avgN = p.avg;
       this.renderAxis();
       this.renderCbarLabels();
@@ -238,13 +241,14 @@ class App {
    */
   renderMarkers() {
     const n = this.node();
-    const lo = n.out.centerHz - n.out.sampleRate / 2;
+    const { lo, hi } = this.viewHz();
+    const span = hi - lo;
     const host = $('#markers');
     const kids = this.engine.children(n.id).filter((k) => k.params && k.params.centerHz && k.params.widthHz);
     host.innerHTML = kids.map((k) => {
       const w = k.params.widthHz.value;
-      const left = ((k.params.centerHz.value - w / 2 - lo) / n.out.sampleRate) * 100;
-      const width = (w / n.out.sampleRate) * 100;
+      const left = ((k.params.centerHz.value - w / 2 - lo) / span) * 100;
+      const width = (w / span) * 100;
       if (left > 100 || left + width < 0) return '';
       return `<button class="marker" data-id="${k.id}" style="left:${left}%;width:${width}%"
                 title="${k.letter} · ${k.label}"><span>${k.letter}</span></button>`;
@@ -255,14 +259,25 @@ class App {
     }
   }
 
-  renderAxis() {
+  /** The frequency window currently on screen, in Hz. */
+  viewHz() {
     const n = this.node();
+    const p = this.vp(this.current);
     const lo = n.out.centerHz - n.out.sampleRate / 2;
-    const hi = n.out.centerHz + n.out.sampleRate / 2;
+    return {
+      lo: lo + p.zoomLo * n.out.sampleRate,
+      hi: lo + p.zoomHi * n.out.sampleRate,
+    };
+  }
+
+  renderAxis() {
+    const { lo, hi } = this.viewHz();
+    const p = this.vp(this.current);
+    const z = 1 / Math.max(1e-6, p.zoomHi - p.zoomLo);
     $('#axis').innerHTML = [0, 0.25, 0.5, 0.75, 1].map((f) => {
       const hz = lo + (hi - lo) * f;
       return `<span>${fmtHz(hz)}${f === 0.5 ? ' MHz' : ''}</span>`;
-    }).join('');
+    }).join('') + (z > 1.02 ? `<span class="zoomtag">${z.toFixed(1)}×</span>` : '');
   }
 
   /** The Time pane gets a real axis in ms, and says whether it is latched. */
@@ -484,6 +499,19 @@ class App {
     b.classList.toggle('paused', !on);
   }
 
+  /** Keyboard zoom works about the centre, since there is no pointer to anchor to. */
+  zoomKey(factor) {
+    if (this.view() !== 'Spectrum') return;
+    const p = this.vp(this.current);
+    const width = p.zoomHi - p.zoomLo;
+    const centre = (p.zoomLo + p.zoomHi) / 2;
+    const w = Math.min(1, Math.max(1 / 512, width * factor));
+    let lo = Math.max(0, Math.min(1 - w, centre - w / 2));
+    p.zoomLo = lo;
+    p.zoomHi = lo + w;
+    this.renderStage();
+  }
+
   /** Absolute time at a y pixel on the waterfall. */
   timeAtY(yPx, wfRect) {
     const p = this.vp(this.current);
@@ -518,7 +546,7 @@ class App {
       if (e.target.closest('#cbar-wrap') || e.target.closest('#markers')) return;
       const r = stage.getBoundingClientRect();
       const wf = $('#wf').getBoundingClientRect();
-      stage.setPointerCapture(e.pointerId);
+      try { stage.setPointerCapture(e.pointerId); } catch (err) { /* not an active pointer */ }
       // the spectrum trace has no time axis, so a box there is frequency-only;
       // the waterfall has both, so a box there can pin a window too
       this.drag = { x0: e.clientX - r.left, y0: e.clientY, x1: e.clientX - r.left, y1: e.clientY,
@@ -530,7 +558,7 @@ class App {
     });
 
     stage.addEventListener('pointermove', (e) => {
-      if (!this.drag) return;
+      if (!this.drag || this.pinch) return;
       const d = this.drag;
       d.x1 = e.clientX - d.r.left;
       d.y1 = e.clientY;
@@ -554,14 +582,13 @@ class App {
     });
 
     stage.addEventListener('pointerup', (e) => {
-      if (!this.drag) return;
+      if (!this.drag || this.pinch) { this.drag = null; return; }
       const d = this.drag;
       this.drag = null;
       if (Math.abs(d.x1 - d.x0) < 6) { this.clearSelection(); return; }
 
-      const n = this.node();
-      const lo = n.out.centerHz - n.out.sampleRate / 2;
-      const toHz = (px) => lo + (px / d.r.width) * n.out.sampleRate;
+      const { lo, hi } = this.viewHz();
+      const toHz = (px) => lo + (px / d.r.width) * (hi - lo);
       const f0 = toHz(Math.min(d.x0, d.x1)), f1 = toHz(Math.max(d.x0, d.x1));
 
       let label = `${((f1 - f0) / 1e3).toFixed(1)} kHz`;
@@ -579,6 +606,84 @@ class App {
 
       this.metrics.beginOp();
       this.openMenu(e.clientX + 14, e.clientY + 14, this.selection);
+    });
+
+    // ── zoom: a view transform on the axis, not a change to the signal ──────
+    const MIN_SPAN = 1 / 512;                 // never past a couple of FFT bins
+
+    const applyZoom = (factor, anchorFrac) => {
+      const p = this.vp(this.current);
+      const width = p.zoomHi - p.zoomLo;
+      const anchor = p.zoomLo + anchorFrac * width;
+      let w = Math.min(1, Math.max(MIN_SPAN, width * factor));
+      let lo = anchor - anchorFrac * w;
+      lo = Math.max(0, Math.min(1 - w, lo));
+      p.zoomLo = lo;
+      p.zoomHi = lo + w;
+      this.renderStage();
+    };
+
+    const panBy = (fracOfWindow) => {
+      const p = this.vp(this.current);
+      const w = p.zoomHi - p.zoomLo;
+      let lo = Math.max(0, Math.min(1 - w, p.zoomLo + fracOfWindow * w));
+      p.zoomLo = lo;
+      p.zoomHi = lo + w;
+      this.renderStage();
+    };
+
+    const resetZoom = () => {
+      const p = this.vp(this.current);
+      p.zoomLo = 0; p.zoomHi = 1;
+      this.renderStage();
+    };
+    this.resetZoom = resetZoom;
+
+    stage.addEventListener('wheel', (e) => {
+      if (this.view() !== 'Spectrum') return;
+      e.preventDefault();
+      const r = stage.getBoundingClientRect();
+      const at = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+      if (e.shiftKey) panBy(e.deltaY * 0.0015);
+      else applyZoom(e.deltaY > 0 ? 1.18 : 1 / 1.18, at);
+    }, { passive: false });
+
+    stage.addEventListener('dblclick', () => { if (this.view() === 'Spectrum') resetZoom(); });
+
+    // pinch: two pointers set both the scale and where it is anchored
+    const pts = new Map();
+    const pinchState = () => {
+      const [a, b] = [...pts.values()];
+      const r = stage.getBoundingClientRect();
+      return {
+        dist: Math.abs(a.x - b.x) || 1,
+        mid: Math.max(0, Math.min(1, ((a.x + b.x) / 2 - r.left) / r.width)),
+      };
+    };
+    stage.addEventListener('pointerdown', (e) => {
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2) {
+        // a second finger means zoom, not selection — abandon any box in progress
+        this.drag = null;
+        $('#selbox').hidden = true;
+        this.pinch = pinchState();
+      }
+    });
+    const endPointer = (e) => {
+      pts.delete(e.pointerId);
+      if (pts.size < 2) this.pinch = null;
+    };
+    stage.addEventListener('pointerup', endPointer);
+    stage.addEventListener('pointercancel', endPointer);
+    stage.addEventListener('pointermove', (e) => {
+      if (!pts.has(e.pointerId)) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2 && this.pinch) {
+        const now = pinchState();
+        const factor = this.pinch.dist / now.dist;
+        if (isFinite(factor) && factor > 0) applyZoom(factor, now.mid);
+        this.pinch = now;
+      }
     });
 
     // colour bar: dragging the handles is where dB range lives (ADR-0019, tier A)
@@ -634,6 +739,9 @@ class App {
       if (e.key === 'ArrowLeft') { e.preventDefault(); $('#back').click(); }
       if (e.key === 'ArrowRight') { e.preventDefault(); $('#fwd').click(); }
       if (e.key === 'm' || e.key === 'M') { $('#budgets').click(); }
+      if (e.key === '=' || e.key === '+') { e.preventDefault(); this.zoomKey(1 / 1.4); }
+      if (e.key === '-' || e.key === '_') { e.preventDefault(); this.zoomKey(1.4); }
+      if (e.key === '0') { e.preventDefault(); this.resetZoom && this.resetZoom(); }
       if (e.key === '/') { e.preventDefault(); this.metrics.beginOp(); const r = $('#stage').getBoundingClientRect(); this.openMenu(r.left + r.width / 2, r.top + 60, this.selection); }
       if (e.key === 'Escape') { this.clearSelection(); this.menu.close(); }
     });

@@ -13,12 +13,14 @@ precision highp float;
 in vec2 uv; out vec4 frag;
 uniform sampler2D data;     // R32F, dB
 uniform sampler2D cmap;     // 256x1 RGB
-uniform float rows, writeRow, dbMin, dbMax;
+uniform float rows, writeRow, dbMin, dbMax, viewLo, viewHi;
 void main(){
   // uv.y == 1 at top of screen == newest row
   float back = (1.0 - uv.y) * rows;
   float r = mod(writeRow - back, rows);
-  float db = texture(data, vec2(uv.x, (r + 0.5) / rows)).r;
+  // zoom is a view transform: the same rows, a narrower slice of them
+  float x = viewLo + uv.x * (viewHi - viewLo);
+  float db = texture(data, vec2(x, (r + 0.5) / rows)).r;
   float t = clamp((db - dbMin) / max(dbMax - dbMin, 0.001), 0.0, 1.0);
   frag = vec4(texture(cmap, vec2(t, 0.5)).rgb, 1.0);
 }`;
@@ -39,6 +41,8 @@ export class Waterfall {
     this.writeRow = 0;
     this.dbMin = -74;
     this.dbMax = -18;
+    this.viewLo = 0;
+    this.viewHi = 1;
     this.gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
     if (this.gl) { try { this._initGL(); } catch (e) { this.gl = null; } }
     if (!this.gl) this._initFallback();
@@ -67,6 +71,8 @@ export class Waterfall {
       writeRow: gl.getUniformLocation(prog, 'writeRow'),
       dbMin: gl.getUniformLocation(prog, 'dbMin'),
       dbMax: gl.getUniformLocation(prog, 'dbMax'),
+      viewLo: gl.getUniformLocation(prog, 'viewLo'),
+      viewHi: gl.getUniformLocation(prog, 'viewHi'),
     };
     gl.uniform1i(gl.getUniformLocation(prog, 'data'), 0);
     gl.uniform1i(gl.getUniformLocation(prog, 'cmap'), 1);
@@ -81,6 +87,8 @@ export class Waterfall {
   _initFallback() {
     this.ctx = this.canvas.getContext('2d', { alpha: false });
     this.img = null;
+    this.off = document.createElement('canvas');
+    this.offCtx = this.off.getContext('2d', { alpha: false });
   }
 
   _ensure(bins) {
@@ -98,9 +106,9 @@ export class Waterfall {
       const blank = new Float32Array(bins * this.rows).fill(-160);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, bins, this.rows, 0, gl.RED, gl.FLOAT, blank);
     } else {
-      this.canvas.width = bins;
-      this.canvas.height = this.rows;
-      this.img = this.ctx.createImageData(bins, this.rows);
+      this.off.width = bins;
+      this.off.height = this.rows;
+      this.img = this.offCtx.createImageData(bins, this.rows);
       this._clearFallback();
     }
   }
@@ -132,6 +140,9 @@ export class Waterfall {
   }
 
   setRange(dbMin, dbMax) { this.dbMin = dbMin; this.dbMax = dbMax; }
+
+  /** Visible slice of the span, as fractions. Zooming re-reads stored rows. */
+  setViewRange(lo, hi) { this.viewLo = lo; this.viewHi = hi; }
 
   /** Forget the history. Another channel's rows are not this channel's past. */
   clear() {
@@ -184,9 +195,19 @@ export class Waterfall {
       gl.uniform1f(this.uni.writeRow, this.writeRow);
       gl.uniform1f(this.uni.dbMin, this.dbMin);
       gl.uniform1f(this.uni.dbMax, this.dbMax);
+      gl.uniform1f(this.uni.viewLo, this.viewLo);
+      gl.uniform1f(this.uni.viewHi, this.viewHi);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     } else {
-      this.ctx.putImageData(this.img, 0, 0);
+      const w = Math.max(1, this.canvas.clientWidth), h = Math.max(1, this.canvas.clientHeight);
+      if (this.canvas.width !== w || this.canvas.height !== h) {
+        this.canvas.width = w; this.canvas.height = h;
+      }
+      this.offCtx.putImageData(this.img, 0, 0);
+      const sx = this.viewLo * this.bins;
+      const sw = Math.max(1, (this.viewHi - this.viewLo) * this.bins);
+      this.ctx.imageSmoothingEnabled = false;
+      this.ctx.drawImage(this.off, sx, 0, sw, this.rows, 0, 0, w, h);
     }
   }
 }

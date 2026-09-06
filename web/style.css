@@ -76,6 +76,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .cb-l { position:absolute; right:16px; font-family:var(--mono); font-size:.56rem; color:var(--dim); white-space:nowrap; }
 #cb-hi { top:-2px; } #cb-lo { bottom:-2px; }
 
+.zoomtag { color:var(--accent); }
 .axis { display:flex; justify-content:space-between; padding:.28rem .6rem; border-top:1px solid var(--rule-lo); font-family:var(--mono); font-size:.62rem; color:var(--dim); font-variant-numeric:tabular-nums; }
 
 .transport {

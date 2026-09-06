@@ -25,9 +25,12 @@ export class SpectrumTrace {
     this.dbMax = -18;
     this.avgN = 4;
     this.showPeak = true;
+    this.viewLo = 0;
+    this.viewHi = 1;
   }
 
   setRange(a, b) { this.dbMin = a; this.dbMax = b; }
+  setViewRange(lo, hi) { this.viewLo = lo; this.viewHi = hi; }
   reset() { this.avg = null; this.peak = null; }
 
   push(row) {
@@ -53,7 +56,10 @@ export class SpectrumTrace {
 
     const span = Math.max(this.dbMax - this.dbMin, 0.001);
     const y = (db) => H - 3 * dpr - ((Math.min(Math.max(db, this.dbMin), this.dbMax) - this.dbMin) / span) * (H - 8 * dpr);
-    const n = this.avg.length;
+    const total = this.avg.length;
+    const i0 = Math.max(0, Math.floor(this.viewLo * total));
+    const i1 = Math.min(total, Math.ceil(this.viewHi * total));
+    const n = Math.max(2, i1 - i0);
     const sx = W / (n - 1);
 
     c.strokeStyle = 'rgba(110,121,140,.16)';
@@ -65,7 +71,10 @@ export class SpectrumTrace {
 
     const path = (arr) => {
       c.beginPath();
-      for (let i = 0; i < n; i++) { const px = i * sx, py = y(arr[i]); i ? c.lineTo(px, py) : c.moveTo(px, py); }
+      for (let i = 0; i < n; i++) {
+        const px = i * sx, py = y(arr[i0 + i]);
+        i ? c.lineTo(px, py) : c.moveTo(px, py);
+      }
     };
 
     if (this.showPeak) {
