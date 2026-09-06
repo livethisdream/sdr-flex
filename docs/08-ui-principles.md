@@ -136,14 +136,18 @@ Three things do the organising work, and none of them is a text badge:
 
 ### One row for "which radio, and where in it"
 
-The device is the root of the analysis path, so its facts — name, live indicator,
-centre frequency, sample rate — live **on the root crumb**, not in a status bar of
-their own. An earlier layout had both, and named the source twice, the current channel
-three times, and the sample rate twice: the top of the screen describing itself
-instead of the signal.
+The device is the root of the analysis path, so the top row carries only **which
+radio and where in it**: the source's name and live indicator, then the channel path.
+An earlier layout had a status bar as well, and named the source twice, the current
+channel three times, and the sample rate twice — the top of the screen describing
+itself instead of the signal.
 
-The current channel's own rate belongs in the strip, as the derived `out` cell it
-already is. The tab bar needs no channel chip either, because the highlighted crumb
+Numbers are not identity, so none live up there. The device's centre frequency and
+sample rate are its node's parameters and belong in the strip when the source is
+selected; the channel's own rate is the derived `out` cell it already was. Nothing is
+lost by moving them, because **the frequency axis under the spectrum shows absolute RF
+at all times** — the one number you need constantly is already drawn against the data
+it describes. The tab bar needs no channel chip either, since the highlighted crumb
 sits directly above it.
 
 The rule generalises: **before adding a row, check what the rows you have already

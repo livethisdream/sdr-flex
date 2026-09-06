@@ -141,11 +141,12 @@ class App {
     const crumb = (n, cls) =>
       `<button class="crumb ${cls}" data-id="${n.id}">${n.letter} · ${n.label}${pin(n)}</button>`;
 
+    // The device's centre and rate are its node's parameters, so they live in the
+    // strip when the source is selected. Repeating them here made the top row a
+    // second readout of something already on screen.
     let html =
       `<button class="dev${this.channel === root.id ? ' cur' : ''}" data-id="${root.id}">` +
-      `<span class="live"></span>${root.label}` +
-      `<span class="devn">${fmtHz(root.out.centerHz)} MHz</span>` +
-      `<span class="devn">${fmtRate(root.out.sampleRate)}</span></button>`;
+      `<span class="live"></span>${root.label}</button>`;
 
     for (const n of ancestors) {
       if (n.id === root.id) continue;

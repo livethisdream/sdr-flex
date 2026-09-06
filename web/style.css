@@ -40,7 +40,6 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .dev:hover { background:var(--panel); }
 .dev.cur { background:var(--accent-lo); }
 .dev .live { width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 7px var(--ok); flex:none; }
-.dev .devn { color:var(--dim); font-variant-numeric:tabular-nums; }
 .crumb { padding:.16rem .42rem; border-radius:3px; color:var(--body); font-size:.8rem; white-space:nowrap; }
 .crumb:hover { background:var(--raised); }
 .crumb.cur { background:var(--accent-lo); color:var(--bright); font-weight:600; }
