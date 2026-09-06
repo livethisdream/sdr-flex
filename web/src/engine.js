@@ -84,9 +84,18 @@ export class MockEngine {
    * Short bursts play slowed down, because an 80 ms window at 1× would loop a
    * dozen times a second and read as a strobe rather than a signal.
    */
-  clipRate(n) {
+  /** Derived so a window takes about four seconds to watch — overridable like anything else. */
+  autoClipRate(n) {
     const d = Math.max(1e-4, n.params.t1.value - n.params.t0.value);
-    return Math.min(1, d / 4);           // a window takes about 4 s to watch
+    return Math.min(1, d / 4);
+  }
+
+  clipRate(n) {
+    const p = n.params.rate;
+    if (p && p.mode === 'manual') return p.value;
+    const v = this.autoClipRate(n);
+    if (p) p.value = v;                  // keep the readout honest while auto
+    return v;
   }
 
   clipPos(n) {
@@ -167,6 +176,7 @@ export class MockEngine {
         taps: param(numTaps, 'auto', { from: 'transition width' }),
         // time is a property of the channel, not a node of its own (ADR-0023)
         timeMode: param(pinned ? 'pinned' : 'live'),
+        rate: param(1, 'auto', { from: 'window length — about four seconds to watch' }),
         t0: param(pinned ? selection.t0 : 0, 'auto', { from: 'selection start' }),
         t1: param(pinned ? selection.t1 : 0, 'auto', { from: 'selection end' }),
       };

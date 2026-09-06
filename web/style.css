@@ -101,49 +101,6 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .track { flex:1; height:2px; background:var(--rule-lo); border-radius:2px; position:relative; margin-inline:.5rem; }
 .track i { position:absolute; left:0; top:-3px; width:2px; height:8px; background:var(--accent); }
 
-/* ── inspector strip: cells, not a text run ── */
-.strip { display:flex; align-items:stretch; overflow-x:auto; background:var(--panel); }
-.sgroup { padding:.45rem .75rem; }
-.sgroup + .sgroup { border-left:1px solid var(--rule); }
-.sgroup.grow { margin-left:auto; display:flex; align-items:center; }
-.sg-h { font-family:var(--mono); font-size:.56rem; letter-spacing:.15em; text-transform:uppercase; color:var(--dim); margin-bottom:.35rem; white-space:nowrap; }
-.cells { display:flex; gap:.3rem; }
-.cell { background:var(--raised); border-radius:3px; border-left:2px solid var(--rule); padding:.24rem .45rem .26rem; min-width:74px; }
-.cell.au { border-left-color:var(--ok); }
-.cell.mn { border-left-color:var(--accent); }
-.cell.pl { border-left-color:var(--rule); }
-.cell.ro { background:transparent; border-left-color:transparent; }
-.cell.scrub { cursor:ew-resize; touch-action:none; }
-.cell:not(.ro) { transition:background .12s ease, border-color .12s ease; }
-.cell:not(.ro):hover { background:var(--rule-lo); }
-.cell.scrub:hover .cv { text-decoration:underline dotted var(--dim); text-underline-offset:2px; }
-/* drag handles appear on hover: a value you can pull should say so */
-.cell.scrub { position:relative; }
-/* faint at rest, bright on hover: a value you can pull has to say so before the
-   pointer arrives, or the whole strip reads as a row of readouts */
-.cell.scrub::before, .cell.scrub::after {
-  position:absolute; top:50%; transform:translateY(-50%); opacity:.32;
-  color:var(--dim); font-size:.6rem; transition:opacity .12s ease; pointer-events:none;
-}
-.cell.scrub::before { content:"‹"; left:3px; }
-.cell.scrub::after { content:"›"; right:3px; }
-.cell.scrub:hover::before, .cell.scrub:hover::after { opacity:1; color:var(--bright); }
-.cell .ck { font-family:var(--mono); font-size:.54rem; letter-spacing:.11em; text-transform:uppercase; color:var(--dim); display:block; }
-.cell .cv { font-family:var(--mono); font-size:.86rem; color:var(--bright); font-variant-numeric:tabular-nums; display:block; line-height:1.3; }
-.cell.ro .cv { color:var(--dim); }
-.cell .cu { font-family:var(--mono); font-size:.54rem; color:var(--dim); display:block; min-height:.8em; }
-select.cv {
-  background:transparent; border:0; padding:0 .8rem 0 0; cursor:pointer;
-  appearance:none; -webkit-appearance:none;
-  background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),
-                   linear-gradient(135deg,var(--dim) 50%,transparent 50%);
-  background-position:right 2px center, right 6px center;
-  background-size:4px 4px, 4px 4px; background-repeat:no-repeat;
-}
-.cell:hover select.cv { background-image:linear-gradient(45deg,transparent 50%,var(--bright) 50%),
-                                        linear-gradient(135deg,var(--bright) 50%,transparent 50%); }
-select.cv option { background:var(--raised); color:var(--bright); }
-.chev { color:var(--dim); font-family:var(--mono); padding:0 .6rem; }
 
 .metrics { display:flex; gap:1.1rem; flex-wrap:wrap; padding:.35rem .8rem; border-top:1px solid var(--rule); font-family:var(--mono); font-size:.66rem; color:var(--dim); background:var(--ground); }
 .metrics[hidden] { display:none; }
@@ -282,3 +239,93 @@ select.cv option { background:var(--raised); color:var(--bright); }
 
 /* a pinned channel says so where you look for what the radio is doing */
 .crumb .pin { color:var(--accent); font-weight:600; font-style:normal; }
+
+/* ── parameter bar: floating pills over the canvas ──────────────────────────
+   Docked full width, this pushed the waterfall up and read as a status line.
+   Floating keeps the signal the tallest thing on screen (law 11) and lets the
+   bar be only as wide as it needs to be. */
+.strip {
+  position:absolute; left:50%; bottom:12px; transform:translateX(-50%);
+  z-index:6; max-width:calc(100% - 24px);
+  display:flex; gap:.5rem; align-items:center;
+  padding:.35rem .45rem; border-radius:999px;
+  background:rgba(17,21,32,.86); border:1px solid var(--rule);
+  box-shadow:0 10px 30px -10px rgba(0,0,0,.9);
+  overflow-x:auto; scrollbar-width:none;
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+}
+.strip::-webkit-scrollbar { display:none; }
+.pgroup { display:flex; align-items:center; gap:.3rem; }
+.pgroup + .pgroup { border-left:1px solid var(--rule); padding-left:.5rem; }
+.ptitle {
+  font-family:var(--mono); font-size:.54rem; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--dim); white-space:nowrap; padding-right:.15rem;
+}
+.pill {
+  display:inline-flex; align-items:baseline; gap:.3rem; white-space:nowrap;
+  padding:.28rem .6rem; border-radius:999px;
+  background:var(--raised); border:1px solid transparent;
+  border-left:2px solid var(--rule);
+  font-family:var(--mono); min-height:30px;
+}
+.pill:hover { border-color:var(--dim); }
+.pill.open { border-color:var(--accent); background:var(--panel); }
+.pill.au { border-left-color:var(--ok); }
+.pill.mn { border-left-color:var(--accent); }
+.pill.pl { border-left-color:var(--rule); }
+.pill.ro { background:transparent; border-left-color:transparent; opacity:.75; }
+.pill.scrub { cursor:ew-resize; touch-action:none; }
+.pill .pk { font-size:.56rem; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); }
+.pill .pv { font-size:.8rem; color:var(--bright); font-variant-numeric:tabular-nums; }
+.pill .pu { font-size:.56rem; color:var(--dim); }
+
+/* ── popover: the control, shaped to the parameter ── */
+.pop {
+  position:fixed; z-index:60; min-width:190px; max-width:260px;
+  background:var(--raised); border:1px solid var(--rule); border-radius:8px;
+  box-shadow:0 18px 44px -12px rgba(0,0,0,.95); padding:.55rem .6rem;
+}
+.pop[hidden] { display:none; }
+.pophead {
+  display:flex; align-items:center; justify-content:space-between; gap:.6rem;
+  font-family:var(--mono); font-size:.6rem; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--dim); margin-bottom:.5rem;
+}
+.autobtn {
+  font-family:var(--mono); font-size:.6rem; padding:.14rem .4rem; border-radius:999px;
+  border:1px solid var(--rule); color:var(--dim); text-transform:none; letter-spacing:0;
+}
+.autobtn.on { color:var(--ok); border-color:rgba(74,222,155,.45); }
+.popopts { display:flex; flex-wrap:wrap; gap:.3rem; }
+.opt {
+  font-family:var(--mono); font-size:.72rem; padding:.3rem .55rem; border-radius:5px;
+  border:1px solid var(--rule); color:var(--body); min-height:30px;
+}
+.opt:hover { border-color:var(--dim); color:var(--bright); }
+.opt.on { background:var(--accent); border-color:var(--accent); color:#160906; font-weight:600; }
+.popnum { display:flex; align-items:center; gap:.4rem; }
+.popnum input[type=range] { flex:1; accent-color:var(--accent); }
+.nudge {
+  width:28px; height:28px; border-radius:6px; border:1px solid var(--rule);
+  color:var(--body); font-size:.9rem; display:inline-flex; align-items:center; justify-content:center;
+}
+.nudge:hover { border-color:var(--dim); color:var(--bright); }
+.popval {
+  margin-top:.4rem; font-family:var(--mono); font-size:.86rem; color:var(--bright);
+  font-variant-numeric:tabular-nums; text-align:center;
+}
+.popnote { margin-top:.45rem; font-size:.66rem; color:var(--dim); line-height:1.45; }
+
+.pill.more { border-left-color:var(--rule); color:var(--dim); gap:.25rem; padding:.28rem .5rem; }
+.pill.more:hover { color:var(--bright); }
+.morelist { display:flex; flex-direction:column; gap:.15rem; }
+.moreitem {
+  display:flex; justify-content:space-between; gap:1rem; align-items:baseline;
+  padding:.35rem .45rem; border-radius:5px; border-left:2px solid var(--rule);
+  background:var(--panel); min-height:30px;
+}
+.moreitem:hover { background:var(--ground); }
+.moreitem.au { border-left-color:var(--ok); }
+.moreitem.mn { border-left-color:var(--accent); }
+.moreitem .mk { font-family:var(--mono); font-size:.58rem; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); }
+.moreitem .mv { font-family:var(--mono); font-size:.76rem; color:var(--bright); font-variant-numeric:tabular-nums; }

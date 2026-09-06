@@ -45,13 +45,14 @@ contract we can be held to, with numbers.
    tree, `←→` steps bursts, `Space` play/pause, `Z` zoom to selection, `Esc` clears.
    A power user should be able to run UC-2 without the mouse leaving the waterfall.
 
-10. **Never ask what can be derived — and let the user hold it.** Decimation, filter
-   taps, FFT size, colormap range, symbol period, audio rate: all computed, all shown,
-   none required. But derivation is a *mode*, not a one-time gift. Every derived value
-   carries an explicit **auto** (`⟲`, re-derives when upstream changes) or **manual**
-   (`🔒`, sticky) state, and auto can always show the evidence it reasoned from
-   ([ADR-0017](adr/0017-auto-manual-parameters.md)). Exploration is a sequence of held
-   and varied quantities; the tool has to know which is which.
+10. **Never ask what can be derived — and let the user override all of it.** Every
+    derived value is a real parameter with an explicit **auto** (`⟲`, re-derives when
+    upstream changes) or **manual** (`🔒`, sticky) state — not a constant chosen once
+    in the source. Filter taps, decimation, FFT size, dB range, slice threshold,
+    symbol period, clip playback rate: if the engine computed it, the user can take
+    it, and auto can always show the evidence it reasoned from
+    ([ADR-0017](adr/0017-auto-manual-parameters.md)). Exploration is a sequence of
+    held and varied quantities; the tool has to know which is which.
 
 11. **Chrome recedes; the signal is the hero.** No gradient buttons, no chrome
     borders, no decorative panels. The waterfall is the brightest thing on screen,
@@ -103,6 +104,24 @@ A peak in the trace only means something once you can see whether it has been th
 for five seconds or five milliseconds — you read them together, always. The splitter
 between them is draggable and collapses either way, which is how "waterfall only"
 exists without being a mode.
+
+### The parameter bar floats, and a tap opens the control
+
+The bar is a row of **pills floating over the bottom of the canvas**, not a docked
+strip. Floating costs the waterfall no height, and lets the bar be only as wide as it
+needs to be rather than as wide as the window.
+
+**Tapping a pill opens a popover with a control shaped to the parameter** — a list for
+an enum, a slider with steppers for a number, and an `⟲ auto` switch wherever
+something can derive the value. Scrub-dragging a number pill still works, so the fast
+path survives for a mouse, but it is no longer the *only* path: dragging was hard to
+aim, and on a touch screen it fought the bar's own horizontal scroll.
+
+Each group keeps its three most-used controls inline and folds the rest behind one
+`⋯` pill. A bar that shows everything is the old strip with round corners.
+
+Read-only values stay on the bar as dimmed, inert pills. They are what the top row
+stopped repeating, so they have to live somewhere.
 
 ### The strip is cells, not a text run
 

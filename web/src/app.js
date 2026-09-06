@@ -344,13 +344,15 @@ class App {
     } else {
       const live = !n.params.timeMode || n.params.timeMode.value === 'live';
       for (const [key, pr] of Object.entries(n.params)) {
-        if (live && (key === 't0' || key === 't1')) continue;
+        if (live && (key === 't0' || key === 't1' || key === 'rate')) continue;
         const meta = {
           centerHz: { label: 'center', unit: 'MHz', fmt: fmtHz, step: 200, type: 'num' },
           widthHz: { label: 'width', unit: 'kHz', fmt: (v) => (v / 1e3).toFixed(1), step: 200, min: 1000, type: 'num' },
           decim: { label: 'decim', unit: '', fmt: (v) => String(v), step: 0.08, min: 1, max: 64, integer: true, type: 'num' },
           taps: { label: 'taps', unit: '', fmt: (v) => String(v), step: 0.4, min: 9, max: 255, integer: true, type: 'num' },
           timeMode: { label: 'window', unit: '', type: 'enum', values: ['live', 'pinned'], fmt: String },
+          rate: { label: 'rate', unit: '×', type: 'num', fmt: (v) => (v < 0.1 ? v.toFixed(3) : v.toFixed(2)),
+                  step: 0.0012, min: 0.001, max: 4, logish: true },
           t0: { label: 'from', unit: 's', fmt: (v) => v.toFixed(3), step: 0.002, type: 'num' },
           t1: { label: 'to', unit: 's', fmt: (v) => v.toFixed(3), step: 0.002, type: 'num' },
           threshold: { label: 'threshold', unit: '', fmt: (v) => v.toFixed(3), step: 0.0006, min: 0, type: 'num' },
@@ -364,11 +366,11 @@ class App {
       }
       nodeCells.push({ key: 'out', label: 'out', unit: 'kS/s', type: 'ro', value: n.out.sampleRate, fmt: (v) => (v / 1e3).toFixed(1) });
     }
-    groups.push({ key: 'node', title: n.op === 'core.source' ? 'Source' : `${n.letter} · ${n.label}`, cells: nodeCells });
+    groups.push({ key: 'node', title: n.op === 'core.source' ? 'src' : n.letter, cells: nodeCells });
 
     if (this.view() === 'Time') {
       groups.push({
-        key: 'view', title: 'Time',
+        key: 'view', title: 'view',
         cells: [
           { key: 'trigger', label: 'trigger', unit: '', type: 'enum', value: p.trigger, values: ['auto', 'free'] },
           { key: 'spanS', label: 'span', unit: 'ms', type: 'num', value: p.spanS,
@@ -379,17 +381,17 @@ class App {
 
     if (this.view() === 'Spectrum') {
       groups.push({
-        key: 'view', title: 'Spectrum + waterfall',
+        key: 'view', title: 'view',
         cells: [
           { key: 'bins', label: 'fft', unit: 'bins', type: 'enum', value: String(p.bins), values: ['256', '512', '1024', '2048', '4096'] },
-          { key: 'window', label: 'window', unit: '', type: 'enum', value: p.window, values: WINDOWS },
-          { key: 'avg', label: 'avg', unit: 'frames', type: 'num', value: p.avg, fmt: (v) => String(v), step: 0.06, min: 1, max: 40, integer: true },
+          { key: 'colormap', label: 'colormap', unit: '', type: 'enum', value: p.colormap, values: COLORMAPS },
+          { key: 'speed', label: 'speed', unit: 'rows/s', type: 'num', value: p.speed, fmt: (v) => String(Math.round(v)), step: 0.35, min: 2, max: 120, integer: true },
           { key: 'dbMin', label: 'min', unit: 'dBFS', type: 'num', value: p.dbMin, fmt: (v) => String(Math.round(v)), step: 0.35, min: -160, max: -10,
             canAuto: true, mode: p.dbAuto ? 'auto' : 'manual', autoNote: 'the tenth percentile of what is on screen' },
           { key: 'dbMax', label: 'max', unit: 'dBFS', type: 'num', value: p.dbMax, fmt: (v) => String(Math.round(v)), step: 0.35, min: -150, max: 20,
             canAuto: true, mode: p.dbAuto ? 'auto' : 'manual', autoNote: 'the strongest bin on screen' },
-          { key: 'colormap', label: 'colormap', unit: '', type: 'enum', value: p.colormap, values: COLORMAPS },
-          { key: 'speed', label: 'speed', unit: 'rows/s', type: 'num', value: p.speed, fmt: (v) => String(Math.round(v)), step: 0.35, min: 2, max: 120, integer: true },
+          { key: 'window', label: 'window', unit: '', type: 'enum', value: p.window, values: WINDOWS },
+          { key: 'avg', label: 'avg', unit: 'frames', type: 'num', value: p.avg, fmt: (v) => String(v), step: 0.06, min: 1, max: 40, integer: true },
         ],
       });
     }
