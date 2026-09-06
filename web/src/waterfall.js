@@ -133,6 +133,21 @@ export class Waterfall {
 
   setRange(dbMin, dbMax) { this.dbMin = dbMin; this.dbMax = dbMax; }
 
+  /** Forget the history. Another channel's rows are not this channel's past. */
+  clear() {
+    this.writeRow = 0;
+    if (!this.bins) return;
+    if (this.gl) {
+      const gl = this.gl;
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.dataTex);
+      const blank = new Float32Array(this.bins * this.rows).fill(-160);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, this.bins, this.rows, 0, gl.RED, gl.FLOAT, blank);
+    } else {
+      this._clearFallback();
+    }
+  }
+
   push(row) {
     this._ensure(row.length);
     if (this.gl) {

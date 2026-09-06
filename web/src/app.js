@@ -171,9 +171,8 @@ class App {
 
   goChannel(id) {
     this.clearSelection();
-    this._pinKey = null;
-    this.trace.reset();
     this.channel = id;
+    this.resetSpectrum();
     if (!this.tabs.has(id)) this.tabs.set(id, 'spectrum');
     this.setTab(this.tabKey());
     this.metrics.interaction();
@@ -311,7 +310,7 @@ class App {
         let ch = this.engine.node(n.parent);
         while (ch && !this.isChannel(ch)) ch = this.engine.node(ch.parent);
         this.clearSelection();
-        if (ch) this.channel = ch.id;
+        if (ch && ch.id !== this.channel) { this.channel = ch.id; this.resetSpectrum(); }
         this.setTab(n.id);
         this.metrics.interaction();
         this.refresh();
@@ -389,7 +388,7 @@ class App {
   async onParam(group, key, value) {
     if (group === 'view') {
       const p = this.vp(this.current);
-      if (key === 'bins') { p.bins = parseInt(value, 10); this.trace.reset(); }
+      if (key === 'bins') { p.bins = parseInt(value, 10); this.resetSpectrum(); }
       else if (key === 'window') p.window = value;
       else if (key === 'trigger') { p.trigger = value; this._tsCache = null; }
       else if (key === 'colormap') { p.colormap = value; this.waterfall.setColormap(value); $('#cbar').style.background = cssGradient(value); }
@@ -433,7 +432,7 @@ class App {
           this.channel = node.id;              // a new channel is a new workspace
           this.tabs.set(node.id, 'spectrum');
           this.current = node.id;
-          this.trace.reset();
+          this.resetSpectrum();
         } else {
           this.setTab(node.id);                // a block is a tab on the one you are in
         }
@@ -443,6 +442,29 @@ class App {
         this.refresh();
       });
     });
+  }
+
+  /**
+   * Wipe the spectrum display and refill it with *this* channel's past.
+   *
+   * Clearing alone would leave several seconds of empty waterfall after every
+   * switch. The history is not lost, though — a source is a time-indexed medium
+   * (ADR-0005), so the engine can be asked for any past moment. The rows are
+   * recomputed a few per frame so the switch stays responsive.
+   */
+  resetSpectrum() {
+    this._pinKey = null;
+    this.trace.reset();
+    this.waterfall.clear();
+    this._rowAcc = 0;
+    const p = this.vp(this.current);
+    const span = this.waterfall.rows / Math.max(1, p.speed);
+    this._prefill = {
+      row: 0,
+      rows: this.waterfall.rows,
+      t1: this.engine.effectiveTime(this.channel),
+      span,
+    };
   }
 
   /** Absolute time at a y pixel on the waterfall. */
@@ -607,14 +629,28 @@ class App {
         this.waterfall.draw();
       } else {
         this._pinKey = null;
-        const f = this.engine.frame(this.current, { bins: p.bins, window: p.window });
-        if (f.kind === 'spectrum') {
-          this.trace.push(f.data);
-          this._rowAcc += dt / 1000;
-          const interval = 1 / Math.max(1, p.speed);
-          if (this._rowAcc >= interval) { this._rowAcc = 0; this.waterfall.push(f.data); }
+        const pf = this._prefill;
+        if (pf) {
+          // oldest first, a slice per frame, so the history appears without a stall
+          const budget = 14;
+          for (let k = 0; k < budget && pf.row < pf.rows; k++, pf.row++) {
+            const at = pf.t1 - pf.span * (1 - pf.row / (pf.rows - 1));
+            const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
+            if (f.kind === 'spectrum') { this.waterfall.push(f.data); this.trace.push(f.data); }
+          }
+          if (pf.row >= pf.rows) this._prefill = null;
           this.trace.draw();
           this.waterfall.draw();
+        } else {
+          const f = this.engine.frame(this.current, { bins: p.bins, window: p.window });
+          if (f.kind === 'spectrum') {
+            this.trace.push(f.data);
+            this._rowAcc += dt / 1000;
+            const interval = 1 / Math.max(1, p.speed);
+            if (this._rowAcc >= interval) { this._rowAcc = 0; this.waterfall.push(f.data); }
+            this.trace.draw();
+            this.waterfall.draw();
+          }
         }
       }
     } else if (v === 'Time') {
