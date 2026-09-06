@@ -582,6 +582,25 @@ class App {
       cb.addEventListener('pointerup', up);
     });
 
+    const step = (dt) => {
+      this.engine.t = Math.max(0, this.engine.t + dt);
+      this.resetSpectrum();
+      this._tsCache = null;
+      this._bitsSeen = false;
+      this.metrics.interaction();
+    };
+    $('#back').addEventListener('click', () => step(-1));
+    $('#fwd').addEventListener('click', () => step(1));
+
+    const budgets = $('#budgets');
+    budgets.addEventListener('click', () => {
+      const on = $('#metrics').hidden;
+      $('#metrics').hidden = !on;
+      budgets.setAttribute('aria-pressed', String(on));
+      budgets.classList.toggle('on', on);
+      this.metrics.render();
+    });
+
     $('#play').addEventListener('click', () => {
       this.engine.playing = !this.engine.playing;
       $('#play').textContent = this.engine.playing ? '❚❚' : '▶';
@@ -591,6 +610,9 @@ class App {
     addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
       if (e.key === ' ') { e.preventDefault(); $('#play').click(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); $('#back').click(); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); $('#fwd').click(); }
+      if (e.key === 'm' || e.key === 'M') { $('#budgets').click(); }
       if (e.key === '/') { e.preventDefault(); this.metrics.beginOp(); const r = $('#stage').getBoundingClientRect(); this.openMenu(r.left + r.width / 2, r.top + 60, this.selection); }
       if (e.key === 'Escape') { this.clearSelection(); this.menu.close(); }
     });

@@ -114,6 +114,12 @@ Three things do the organising work, and none of them is a text badge:
 - **Each cell is its own drag target.** Value cells scrub; enums cycle; the range
   cell opens two handles. The control gets the affordance its *type* deserves rather
   than every parameter rendering identically.
+- **And it has to look it before the pointer arrives.** The first version rendered
+  every cell as label-value-unit with no affordance, and it was read as a row of
+  metrics — someone asked what the readouts at the bottom were *for*. Law 11 moves
+  explanation to hover; it never moves **interactivity** there. Scrubbable values
+  carry faint drag chevrons at rest, enums show a caret, and read-only outputs have
+  neither, so the three kinds are distinguishable without touching anything.
 
 ### Naming tabs
 
@@ -132,6 +138,13 @@ that hides the others reads as though the tool forgot what you built.
 
 The prefix does become right in one place: a **torn-off tile** has no breadcrumb above
 it, so a floating pane is labelled with its full path, `B · Tuner › D · PWM`.
+
+### Instrumentation is not chrome
+
+The interaction, travel, frame-rate and jitter counters are a **development
+instrument**, not part of the product. They live behind a `budgets` toggle (or `M`),
+off by default. Their job is to fail a build, not to occupy a permanent strip in a
+tool whose tenth law is that chrome recedes.
 
 ### Where settings live
 

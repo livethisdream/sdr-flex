@@ -74,10 +74,26 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 
 .axis { display:flex; justify-content:space-between; padding:.28rem .6rem; border-top:1px solid var(--rule-lo); font-family:var(--mono); font-size:.62rem; color:var(--dim); font-variant-numeric:tabular-nums; }
 
-.transport { display:flex; align-items:center; gap:.7rem; padding:.35rem .8rem; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); font-family:var(--mono); font-size:.72rem; color:var(--dim); }
-.tbtn { color:var(--body); font-size:.8rem; }
-.track { flex:1; height:3px; background:var(--rule); border-radius:2px; position:relative; }
-.track i { position:absolute; left:0; top:-3px; width:2px; height:9px; background:var(--accent); }
+.transport {
+  display:flex; align-items:center; gap:.45rem; padding:.4rem .7rem;
+  border-top:1px solid var(--rule); border-bottom:1px solid var(--rule);
+  font-family:var(--mono); font-size:.72rem; color:var(--dim);
+}
+.tbtn {
+  color:var(--body); font-size:.78rem; min-width:38px; min-height:34px;
+  border:1px solid var(--rule); border-radius:4px; background:var(--raised);
+  display:inline-flex; align-items:center; justify-content:center;
+}
+.tbtn:hover { border-color:var(--dim); color:var(--bright); }
+.tbtn:active { background:var(--rule-lo); }
+.tbtn.play { min-width:52px; color:var(--bright); }
+.tbtn.small { min-width:auto; min-height:26px; padding:0 .5rem; font-size:.64rem; color:var(--dim); background:transparent; }
+.tbtn.small.on { color:var(--accent); border-color:rgba(255,122,92,.45); }
+.clock { margin-left:.4rem; color:var(--body); font-variant-numeric:tabular-nums; }
+/* a passive position indicator — deliberately not styled as a control, since
+   dragging it needs the ring recorder (M4) and a fake affordance is worse than none */
+.track { flex:1; height:2px; background:var(--rule-lo); border-radius:2px; position:relative; margin-inline:.5rem; }
+.track i { position:absolute; left:0; top:-3px; width:2px; height:8px; background:var(--accent); }
 
 /* ── inspector strip: cells, not a text run ── */
 .strip { display:flex; align-items:stretch; overflow-x:auto; background:var(--panel); }
@@ -91,15 +107,39 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .cell.mn { border-left-color:var(--accent); }
 .cell.ro { background:transparent; border-left-color:transparent; }
 .cell.scrub { cursor:ew-resize; touch-action:none; }
+.cell:not(.ro) { transition:background .12s ease, border-color .12s ease; }
+.cell:not(.ro):hover { background:var(--rule-lo); }
+.cell.scrub:hover .cv { text-decoration:underline dotted var(--dim); text-underline-offset:2px; }
+/* drag handles appear on hover: a value you can pull should say so */
+.cell.scrub { position:relative; }
+/* faint at rest, bright on hover: a value you can pull has to say so before the
+   pointer arrives, or the whole strip reads as a row of readouts */
+.cell.scrub::before, .cell.scrub::after {
+  position:absolute; top:50%; transform:translateY(-50%); opacity:.32;
+  color:var(--dim); font-size:.6rem; transition:opacity .12s ease; pointer-events:none;
+}
+.cell.scrub::before { content:"‹"; left:3px; }
+.cell.scrub::after { content:"›"; right:3px; }
+.cell.scrub:hover::before, .cell.scrub:hover::after { opacity:1; color:var(--bright); }
 .cell .ck { font-family:var(--mono); font-size:.54rem; letter-spacing:.11em; text-transform:uppercase; color:var(--dim); display:block; }
 .cell .cv { font-family:var(--mono); font-size:.86rem; color:var(--bright); font-variant-numeric:tabular-nums; display:block; line-height:1.3; }
 .cell.ro .cv { color:var(--dim); }
 .cell .cu { font-family:var(--mono); font-size:.54rem; color:var(--dim); display:block; min-height:.8em; }
-select.cv { background:transparent; border:0; padding:0; cursor:pointer; }
+select.cv {
+  background:transparent; border:0; padding:0 .8rem 0 0; cursor:pointer;
+  appearance:none; -webkit-appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),
+                   linear-gradient(135deg,var(--dim) 50%,transparent 50%);
+  background-position:right 2px center, right 6px center;
+  background-size:4px 4px, 4px 4px; background-repeat:no-repeat;
+}
+.cell:hover select.cv { background-image:linear-gradient(45deg,transparent 50%,var(--bright) 50%),
+                                        linear-gradient(135deg,var(--bright) 50%,transparent 50%); }
 select.cv option { background:var(--raised); color:var(--bright); }
 .chev { color:var(--dim); font-family:var(--mono); padding:0 .6rem; }
 
 .metrics { display:flex; gap:1.1rem; flex-wrap:wrap; padding:.35rem .8rem; border-top:1px solid var(--rule); font-family:var(--mono); font-size:.66rem; color:var(--dim); background:var(--ground); }
+.metrics[hidden] { display:none; }
 .metrics b { color:var(--body); font-weight:500; }
 .metrics b.ok { color:var(--ok); }
 .metrics b.bad { color:var(--warn); }

@@ -44,13 +44,16 @@
   </div>
 
   <div class="transport">
-    <button id="play" class="tbtn" aria-label="play or pause">❚❚</button>
+    <button id="back" class="tbtn" aria-label="back one second" title="back 1 s">◀◀</button>
+    <button id="play" class="tbtn play" aria-label="play or pause">❚❚</button>
+    <button id="fwd" class="tbtn" aria-label="forward one second" title="forward 1 s">▶▶</button>
+    <span id="clock" class="mono clock">0.000 s</span>
     <span class="track"><i></i></span>
-    <span id="clock" class="mono">0.000 s</span>
+    <button id="budgets" class="tbtn small" aria-pressed="false">budgets</button>
   </div>
 
   <div class="strip" id="strip"></div>
-  <div class="metrics" id="metrics"></div>
+  <div class="metrics" id="metrics" hidden></div>
 </div>
 
 <div class="tip" id="tip" hidden></div>
