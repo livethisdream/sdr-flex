@@ -83,6 +83,16 @@ that quietly read outside the rectangle you drew would make the pin a lie.
 A pinned channel's waterfall is a **fixed spectrogram** painted once across the window,
 not a scrolling one. Scrolling implies time is passing; here it is not.
 
+Two things follow that are easy to get wrong. The window must be painted **oldest
+first**, because each row lands on top and scrolls the rest down — painting newest
+first leaves time running backwards down the pane. And a frozen pane has to **say it
+is frozen**: a static waterfall with no explanation is indistinguishable from a broken
+one, so the stage carries a badge naming the pinned window.
+
+The freeze that the gesture introduced also ends with the gesture. Auto-pausing to make
+a time drag coherent is not a reason for the session to stay paused afterwards — a
+pinned channel is independent of the clock, and the live siblings are not.
+
 ## Status in M0
 
 Built. `core.gate` is gone; the window is a channel parameter (`live` / `pinned` with

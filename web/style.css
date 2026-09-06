@@ -232,6 +232,14 @@ select.cv option { background:var(--raised); color:var(--bright); }
    selection share the hue and differ in weight: the marker is quiet and
    permanent, the selection is bright and transient. */
 .markers { position:absolute; inset:0; pointer-events:none; }
+.stagebadge {
+  position:absolute; top:8px; left:10px; z-index:3;
+  font-family:var(--mono); font-size:.62rem; color:var(--dim);
+  background:rgba(10,12,17,.8); padding:.12rem .4rem; border-radius:2px;
+  pointer-events:none;
+}
+.stagebadge[hidden] { display:none; }
+.stagebadge.pin { color:var(--accent); }
 .marker {
   position:absolute; top:0; bottom:0; padding:0;
   background:rgba(255,122,92,.055);

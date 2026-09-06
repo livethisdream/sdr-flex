@@ -69,6 +69,8 @@ class App {
    * describe — so navigation always clears it.
    */
   clearSelection() {
+    // the freeze existed so the drag could mean something; it should not outlive it
+    if (this._frozeForDrag) { this._frozeForDrag = false; this.setPlaying(true); }
     this.selection = null;
     const box = $('#selbox');
     box.hidden = true;
@@ -462,6 +464,19 @@ class App {
     };
   }
 
+  /**
+   * Says what the stage is doing when it is not doing the obvious thing. A pinned
+   * window and a paused clock both look identical to a broken display otherwise —
+   * a static waterfall with no explanation reads as "nothing is playing".
+   */
+  setStageBadge(text) {
+    const el = $('#stagebadge');
+    if (!el) return;
+    el.textContent = text;
+    el.hidden = !text;
+    el.classList.toggle('pin', text.startsWith('⊓'));
+  }
+
   setPlaying(on) {
     this.engine.playing = on;
     const b = $('#play');
@@ -527,7 +542,7 @@ class App {
         // rows move under the pointer while you drag, so the box lands on samples
         // that were never inside it. The moment a drag acquires a time extent, the
         // display freezes — no mode to learn, and the burst stops running away.
-        if (this.engine.playing) { this.setPlaying(false); d.froze = true; }
+        if (this.engine.playing) { this.setPlaying(false); this._frozeForDrag = true; }
         const top = Math.max(d.wf.top, Math.min(d.y0, d.y1));
         const bot = Math.min(d.wf.bottom, Math.max(d.y0, d.y1));
         box.style.top = (top - d.r.top) + 'px';
@@ -647,16 +662,20 @@ class App {
           const rows = this.waterfall.rows;
           const t0 = pin.params.t0.value, t1 = pin.params.t1.value;
           this.trace.reset();
+          // oldest pushed first: each push lands on top and scrolls the rest down,
+          // so pushing newest-first would leave the window running backwards
           for (let i = 0; i < rows; i++) {
-            const at = t0 + ((rows - 1 - i) / (rows - 1)) * (t1 - t0);
+            const at = t0 + (i / (rows - 1)) * (t1 - t0);
             const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
             if (f.kind === 'spectrum') { this.waterfall.push(f.data); this.trace.push(f.data); }
           }
         }
         this.trace.draw();
         this.waterfall.draw();
+        this.setStageBadge(`⊓ pinned ${pin.params.t0.value.toFixed(3)}–${pin.params.t1.value.toFixed(3)} s`);
       } else {
         this._pinKey = null;
+        this.setStageBadge(this.engine.playing ? '' : '▶ paused');
         const pf = this._prefill;
         if (pf) {
           // oldest first, a slice per frame, so the history appears without a stall
