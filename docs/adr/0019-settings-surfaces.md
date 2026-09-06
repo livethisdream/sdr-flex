@@ -38,7 +38,7 @@ mostly don't need to be persistent, and it would take back the width
 The setting is a property of a visible thing, so it is adjusted by manipulating that
 thing. No chrome whatsoever:
 
-- **dB range / contrast** → drag the ends of the colour bar
+- **dB range / contrast** → drag the ends of the color bar
 - **frequency span** → wheel or pinch anywhere on the spectrum, anchored at the
   pointer; shift-wheel or two-finger drag to pan; double-click to fit
 - **time span, waterfall speed** → scroll on the time axis
@@ -83,7 +83,7 @@ canvas: **Flow**, **Plugins** (what loaded, what didn't, why), **Annotations**,
 ### D · A preferences overlay — rare, deliberate, outside the loop
 
 Theme, keybindings, plugin paths, ring disk budget, audio output device, default
-colormap. A large centred overlay is right here, and it does **not** violate
+colormap. A large centered overlay is right here, and it does **not** violate
 [law 2](../08-ui-principles.md#ten-laws): that law forbids modals *in the analysis
 loop*, and configuring the tool is the act of deliberately stepping out of it.
 
@@ -103,14 +103,14 @@ case that arises a few times a session.
 ## Cost
 
 - Four homes is more to learn than one. Mitigated by the discriminator being
-  *behavioural* rather than categorical: things you tune while watching are always
+  *behavioral* rather than categorical: things you tune while watching are always
   within reach of what you are watching, and everything else is a tab away. Users
   never have to know the taxonomy, only that reflex.
 - View settings living in the strip means the strip's contents change when you switch
   tabs, which could feel unstable. Mitigated by the node segment staying put — only
   the segment after the divider changes.
 - Direct manipulation (tier A) is undiscoverable without hover affordances. The
-  colour bar, axes and playhead all get a cursor change and a hover highlight; they
+  color bar, axes and playhead all get a cursor change and a hover highlight; they
   are also all listed in the preferences overlay's keyboard reference.
 
 ## Would change our mind

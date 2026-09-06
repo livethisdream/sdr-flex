@@ -71,7 +71,7 @@ Watch the metrics row at the bottom — interaction count and pointer travel aga
 their budgets, plus frame rate and jitter.
 
 Other things worth poking: FFT size, window, averaging, colormap and scroll speed in
-the strip; drag the colour bar to set the dB range; click a cell's coloured left edge
+the strip; drag the color bar to set the dB range; click a cell's colored left edge
 to pin a value to `🔒 manual` and hover it to see what auto would have chosen.
 
 ## Layout

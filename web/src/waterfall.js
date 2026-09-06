@@ -1,4 +1,4 @@
-// WebGL2 waterfall: a ring-buffer texture of dB values, coloured in the shader so
+// WebGL2 waterfall: a ring-buffer texture of dB values, colored in the shader so
 // the dB range and colormap are free to change every frame. Falls back to a 2D
 // canvas so the page is never blank.
 

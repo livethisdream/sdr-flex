@@ -34,10 +34,10 @@ function hash(n) {
 // wideband hump: a fixed comb of tones, tapered — cheap and deterministic
 const HUMP = [];
 {
-  const n = 16, centre = 150_000, width = 34_000;
+  const n = 16, center = 150_000, width = 34_000;
   for (let i = 0; i < n; i++) {
-    const f = centre + ((i / (n - 1)) - 0.5) * 2 * width;
-    const t = (f - centre) / width;
+    const f = center + ((i / (n - 1)) - 0.5) * 2 * width;
+    const t = (f - center) / width;
     HUMP.push({ f, a: 0.09 * Math.exp(-1.6 * t * t), p: hash(9000 + i) * Math.PI * 2 });
   }
 }

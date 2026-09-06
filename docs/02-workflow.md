@@ -6,7 +6,7 @@
 
 A **Selection** is a rectangle in the time-frequency plane drawn over any stream.
 
-- Constrain **frequency** (box width) → the channel's centre, bandwidth and rate
+- Constrain **frequency** (box width) → the channel's center, bandwidth and rate
 - Constrain **time** (box height, on the waterfall) → the channel's window, pinned
 - Constrain both → one channel that is both narrowed and pinned
 - Constrain neither → a live channel following the playhead
@@ -41,7 +41,7 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 │  ╱╲╱  ╲──╱╲──╱  ╲───╲                                       ▓    │ hold traces
 ├────────────────── draggable splitter ───────────────────────▒────┤
 │ ░░░▒▓█▓▒░░    ░▒▓░                                          ░    │ waterfall
-│ ░░░▒▓█▓▒░░    ░▒▓░        ← drag a box, release, menu opens       │ + colour bar
+│ ░░░▒▓█▓▒░░    ░▒▓░        ← drag a box, release, menu opens       │ + color bar
 ├──────────────────────────────────────────────────────────────────┤
 │ 433.720    433.820    433.920 MHz    434.020    434.120          │ ONE axis
 ├──────────────────────────────────────────────────────────────────┤
@@ -85,7 +85,7 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
   temporary panel for parameter-heavy nodes.
 
 There is **no settings pane.** Anything you tune while watching the signal is on the
-object itself (drag the colour bar for dB range, scroll an axis for span) or in the
+object itself (drag the color bar for dB range, scroll an axis for span) or in the
 strip; everything else is a view tab or the preferences overlay
 ([ADR-0019](adr/0019-settings-surfaces.md)).
 

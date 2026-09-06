@@ -160,7 +160,7 @@ class App {
         ? `<i class="x" data-del="${n.id}" role="button" tabindex="0" title="remove ${this.tag(n)} and everything under it">✕</i>` : '') +
       `</button>`;
 
-    // The device's centre and rate are its node's parameters, so they live in the
+    // The device's center and rate are its node's parameters, so they live in the
     // strip when the source is selected. Repeating them here made the top row a
     // second readout of something already on screen.
     let html =
@@ -296,7 +296,7 @@ class App {
   }
 
   /**
-   * Every child tuner is a band on this node's spectrum, labelled and clickable.
+   * Every child tuner is a band on this node's spectrum, labeled and clickable.
    * The analysis tree ought to be visible on the signal it describes, not only in
    * the breadcrumb — and it answers "what did that box I drew become?".
    */
@@ -656,14 +656,14 @@ class App {
     $('#track i').style.left = (frac * 100).toFixed(2) + '%';
   }
 
-  /** Keyboard zoom works about the centre, since there is no pointer to anchor to. */
+  /** Keyboard zoom works about the center, since there is no pointer to anchor to. */
   zoomKey(factor) {
     if (this.view() !== 'Spectrum') return;
     const p = this.vp(this.current);
     const width = p.zoomHi - p.zoomLo;
-    const centre = (p.zoomLo + p.zoomHi) / 2;
+    const center = (p.zoomLo + p.zoomHi) / 2;
     const w = Math.min(1, Math.max(1 / 512, width * factor));
-    let lo = Math.max(0, Math.min(1 - w, centre - w / 2));
+    let lo = Math.max(0, Math.min(1 - w, center - w / 2));
     p.zoomLo = lo;
     p.zoomHi = lo + w;
     this.renderStage();
@@ -887,7 +887,7 @@ class App {
       }
     });
 
-    // colour bar: dragging the handles is where dB range lives (ADR-0019, tier A)
+    // color bar: dragging the handles is where dB range lives (ADR-0019, tier A)
     const cb = $('#cbar-wrap');
     cb.addEventListener('pointerdown', (e) => {
       e.stopPropagation();

@@ -20,28 +20,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms + (Math.random() - 0.5
 let nextId = 0;
 const nid = (p) => `${p}${++nextId}`;
 
-// ── operation catalogue ────────────────────────────────────────────────────
+// ── operation catalog ────────────────────────────────────────────────────
 // `in`/`out` are semantic stream kinds (ADR-0006); the palette filters on them.
 export const OPS = {
   'core.tuner': {
-    name: 'Tune here', group: 'Narrow', in: 'iq', out: 'iq', letter: 'A',
+    name: 'Tune here', group: 'Narrow', in: 'iq', out: 'iq',
     fromSelection: true,
   },
-  // A time window is a property of a channel, not a node of its own
-  // (ADR-0023) — and the time-drag gesture it needs does not exist until
-  // scrubbing does, so nothing here offers one yet.
+  // A time window is a property of a channel, not a node of its own (ADR-0023),
+  // so there is no gate operation here: dragging the box down the waterfall pins
+  // the tuner this menu creates.
   'core.am_envelope': {
-    name: 'AM envelope', group: 'Demodulate', in: 'iq', out: 'real', letter: 'C',
+    name: 'AM envelope', group: 'Demodulate', in: 'iq', out: 'real',
   },
   'core.pwm_slicer': {
-    name: 'PWM / OOK slicer', group: 'Decode', in: 'real', out: 'bits', letter: 'D',
+    name: 'PWM / OOK slicer', group: 'Decode', in: 'real', out: 'bits',
   },
   'ext.rtl433': {
-    name: 'rtl_433', group: 'Decode', in: 'iq', out: 'events', letter: 'E',
+    name: 'rtl_433', group: 'Decode', in: 'iq', out: 'events',
     external: true, stub: true,
   },
   'core.burst_detector': {
-    name: 'Burst detector', group: 'Analyse', in: 'iq', out: 'events', letter: 'B',
+    name: 'Burst detector', group: 'Analyze', in: 'iq', out: 'events',
     stub: true,
   },
 };
@@ -174,7 +174,7 @@ export class MockEngine {
       const numTaps = 65;
       const pinned = selection.t0 != null && selection.t1 != null;
       node.params = {
-        centerHz: param(centerHz, 'auto', { from: 'selection centre' }),
+        centerHz: param(centerHz, 'auto', { from: 'selection center' }),
         widthHz: param(widthHz, 'auto', { from: 'selection width' }),
         decim: param(decim, 'auto', { from: `${(p.out.sampleRate / 1e3).toFixed(0)} kS/s ÷ ${(target / 1e3).toFixed(1)} kHz` }),
         taps: param(numTaps, 'auto', { from: 'transition width' }),

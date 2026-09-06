@@ -14,7 +14,8 @@ contract we can be held to, with numbers.
    Sceptre bury their capability. Parameters live in the inspector, always visible.
    Confirmation is undo, not a prompt.
 
-3. **Menu depth ≤ 1.** One flat, searchable list of operations, grouped by headers.
+3. **Menu depth ≤ 1.** One flat, searchable list of operations, grouped by headers
+   once it is long enough to need them.
    Anything that wants to be a submenu becomes a filtered search instead. This law is
    what makes contextual menus safe ([ADR-0018](adr/0018-contextual-menus-and-view-tabs.md));
    a nested context menu would be worse than the sidebar it replaced.
@@ -64,7 +65,7 @@ contract we can be held to, with numbers.
     visible — a thing you cannot read is a thing you cannot find. *Descriptions*,
     rationale, constraints and consequences go in tooltips. And state earns a
     **cheaper visual encoding** rather than a word: the auto/manual mode is a 2 px
-    coloured edge, not a chip reading "auto".
+    colored edge, not a chip reading "auto".
 
 ## Layout
 
@@ -81,7 +82,7 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 │  ╱╲╱  ╲──╱╲──╱  ╲───╲                                       ▓    │ hold traces
 ├────────────────── draggable splitter ───────────────────────▒────┤
 │ ░░░▒▓█▓▒░░    ░▒▓░                                          ░    │ waterfall
-│ ░░░▒▓█▓▒░░    ░▒▓░        ← drag a box, release, menu opens       │ + colour bar
+│ ░░░▒▓█▓▒░░    ░▒▓░        ← drag a box, release, menu opens       │ + color bar
 ├──────────────────────────────────────────────────────────────────┤
 │ 433.720    433.820    433.920 MHz    434.020    434.120          │ ONE axis
 ├──────────────────────────────────────────────────────────────────┤
@@ -114,7 +115,7 @@ container is the only edge, and the controls inside earn a background on hover.
 
 Three things taken from it directly:
 
-- **A control is labelled with its current value**, not its own name. There, the page
+- **A control is labeled with its current value**, not its own name. There, the page
   counter *is* the contents button, because "12/25" already says what it opens. Here
   a pill reads `1024 bins` or `Viridis`; the parameter's name lives in the popover it
   opens and in its tooltip, rather than being spent on the bar. That alone took the
@@ -153,7 +154,7 @@ Three things do the organising work, and none of them is a text badge:
 
 - **A 2 px left edge carries the mode**, in four states: green `⟲ auto`, coral
   `🔒 manual`, neutral for a setting with no auto counterpart, and none at all for a
-  read-only output. Six repeated "auto" chips were noise; a coloured edge is scannable
+  read-only output. Six repeated "auto" chips were noise; a colored edge is scannable
   at a glance and silent when you are not looking for it. Clicking the edge toggles it.
 
   The neutral state matters more than it sounds. The accent means *the user placed
@@ -180,7 +181,7 @@ An earlier layout had a status bar as well, and named the source twice, the curr
 channel three times, and the sample rate twice — the top of the screen describing
 itself instead of the signal.
 
-Numbers are not identity, so none live up there. The device's centre frequency and
+Numbers are not identity, so none live up there. The device's center frequency and
 sample rate are its node's parameters and belong in the strip when the source is
 selected; the channel's own rate is the derived `out` cell it already was. Nothing is
 lost by moving them, because **the frequency axis under the spectrum shows absolute RF
@@ -211,7 +212,7 @@ selected one — a set of channels off one source is the normal case, and a brea
 that hides the others reads as though the tool forgot what you built.
 
 The prefix does become right in one place: a **torn-off tile** has no breadcrumb above
-it, so a floating pane is labelled with its full path, `B · Tuner › PWM`.
+it, so a floating pane is labeled with its full path, `B · Tuner › PWM`.
 
 ### Removal lives on the thing being removed
 
@@ -232,7 +233,7 @@ stopped, and was reported as one.
 Measured on the synthetic scene: the source spans −83…−12 dB, a 50 kHz tuner off it
 spans −103…−64, a 10 kHz tuner −100…−70. No fixed default straddles those. So the
 range is `⟲ auto` per channel, fitted to the tenth percentile and the strongest bin,
-snapping on arrival and easing while live — and pinned the instant you drag the colour
+snapping on arrival and easing while live — and pinned the instant you drag the color
 bar or scrub the cells.
 
 The general lesson is broader than dB: **a derived default computed once for the root
@@ -259,7 +260,7 @@ zoomed lands where it looks like it lands — and the axis labels, which always 
 absolute RF, are the honest indicator of where you are.
 
 **Gestures**: wheel or pinch to zoom about the pointer; shift-wheel or a two-finger
-drag to pan; `+`/`-` to zoom about the centre; `0` or double-click to fit the span. A
+drag to pan; `+`/`-` to zoom about the center; `0` or double-click to fit the span. A
 `×` factor appears on the axis only when zoomed, so the default view says nothing.
 
 ### Chrome sits beside the signal, not on it
@@ -288,8 +289,8 @@ things with four lifetimes, and one test assigns every one of them
 
 | Home | What lives there |
 |---|---|
-| **On the object** | dB range (`⟲ auto` by default; drag the colour bar to pin it), **zoom and pan** (wheel, pinch, `+`/`-`/`0`), selection bounds, playhead. No chrome at all — the control belongs where its effect is. |
-| **The strip** | Node parameters, then the *active view's*, as two labelled groups of cells. Device gain and PPM are node parameters of the source. A `⌄` expands the strip into a temporary panel when a node has many. |
+| **On the object** | dB range (`⟲ auto` by default; drag the color bar to pin it), **zoom and pan** (wheel, pinch, `+`/`-`/`0`), selection bounds, playhead. No chrome at all — the control belongs where its effect is. |
+| **The strip** | Node parameters, then the *active view's*, as two labeled groups of cells. Device gain and PPM are node parameters of the source. A `⌄` expands the strip into a temporary panel when a node has many. |
 | **A view tab** | Flow, Plugins, Annotations, Project. Full canvas, zero chrome, reached like any other view. |
 | **A preferences overlay** | Theme, keybindings, plugin paths, disk budget, audio device. A modal is honest here — law 2 governs the analysis loop, and configuring the tool means deliberately stepping out of it. |
 
@@ -299,7 +300,7 @@ is clickable and moves the breadcrumb to the source. One click, no permanent chr
 
 ## Law 12 in detail — because the naive version is harmful
 
-"Move text into tooltips" taken literally produces a wall of unlabelled controls: the
+"Move text into tooltips" taken literally produces a wall of unlabeled controls: the
 SDRangel failure we [named as an anti-pattern](#named-anti-patterns). Three boundaries
 keep it honest.
 
@@ -308,7 +309,7 @@ keep it honest.
 | Always visible | On hover |
 |---|---|
 | `CENTER` · `433.8950` · `MHz` | why 433.8950 — the estimator and its evidence |
-| The coloured mode edge | "Manual, pinned 12:04. Auto would suggest 47.5 kHz." |
+| The colored mode edge | "Manual, pinned 12:04. Auto would suggest 47.5 kHz." |
 | `AM envelope` in the menu | what it does, what it outputs, its rate constraint |
 | `rtl_433` and its `ext` mark | "External process — opaque, no drill-down past this node" |
 | `ring 41.2 s` | retention policy, disk budget, where the ring is written |
@@ -439,7 +440,7 @@ palette. UI chrome is neutral grey. **The accent marks what the user placed** �
 selection box, the playhead, a parameter pinned to manual. Nothing else takes it.
 (Errors use the semantic critical red, not the accent; a failure is not something the
 user placed.) That single rule is easier to hold than a list of allowed locations,
-and it is why a pinned parameter and a selection box share a colour: both are the
+and it is why a pinned parameter and a selection box share a color: both are the
 user's mark on the instrument.
 
 **Typography.** One sans family for UI, one mono for numbers. Every frequency,

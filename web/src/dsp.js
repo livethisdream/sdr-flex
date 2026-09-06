@@ -81,7 +81,7 @@ export function windowFn(name, n) {
 }
 
 /**
- * Power spectrum in dBFS, DC-centred, of interleaved IQ.
+ * Power spectrum in dBFS, DC-centered, of interleaved IQ.
  * Returns Float32Array(bins).
  */
 export function spectrum(iq, bins, windowName, out) {
@@ -112,7 +112,7 @@ export function spectrum(iq, bins, windowName, out) {
 export function lowPassTaps(numTaps, cutoffHz, fs) {
   if (numTaps % 2 === 0) numTaps += 1;
   const taps = new Float32Array(numTaps);
-  const fc = cutoffHz / fs;              // normalised, cycles/sample
+  const fc = cutoffHz / fs;              // normalized, cycles/sample
   const mid = (numTaps - 1) / 2;
   const w = windowFn('Hann', numTaps);
   let sum = 0;
@@ -155,7 +155,7 @@ export function xlateFilterDecimate(iq, taps, offsetHz, fs, decim, count, startP
     ps = pc * rs + ps * rc;
     pc = npc;
     if ((i & 4095) === 4095) {
-      const m = Math.hypot(pc, ps) || 1;    // renormalise away accumulated drift
+      const m = Math.hypot(pc, ps) || 1;    // renormalize away accumulated drift
       pc /= m; ps /= m;
     }
   }

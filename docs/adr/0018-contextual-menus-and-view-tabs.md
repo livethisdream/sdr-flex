@@ -12,7 +12,7 @@
 - The **analysis tree is a breadcrumb** across the top, listing *channels only*, each
   segment a menu of its siblings. The full tree/flowgraph is available as a view tab,
   not a permanent rail.
-- **Each channel's blocks are tabs** in the centre pane. A *channel* is a node that
+- **Each channel's blocks are tabs** in the center pane. A *channel* is a node that
   carries IQ — the source, a tuner, a gate; everything downstream of one until the
   next channel is a *block*. Blocks are tabs, not destinations: a channel is a
   workspace you stay in while you flip between the results of what you applied to it.
@@ -73,7 +73,8 @@ Four mitigations, all load-bearing:
 1. **Releasing a drag opens the menu automatically.** You never have to *know* to
    right-click; completing the one gesture the tool teaches you opens it. This is the
    on-ramp, and it is why the decision is safe.
-2. **The menu is flat, grouped by headers, with a search field at the top** (`/`
+2. **The menu is flat, grouped by headers once the list is long enough to need
+   scanning rather than reading, with a search field at the top** (`/`
    focuses it). No submenus — [law 3](../08-ui-principles.md#ten-laws) survives intact,
    and it would not survive a nested context menu.
 3. **A persistent `+` on the tab bar opens the same menu.** There is always one

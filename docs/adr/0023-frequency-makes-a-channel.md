@@ -20,7 +20,7 @@ make both produce nodes of the same kind. That was the original design and it wa
 wrong for three reasons:
 
 1. **They are not the same kind of thing.** A tuner produces a *different signal*: new
-   centre frequency, new sample rate, new bandwidth. A time window produces the *same
+   center frequency, new sample rate, new bandwidth. A time window produces the *same
    signal*, looked at over a different interval. One changes what the samples are; the
    other changes which samples you are looking at.
 2. **It made them indistinguishable in the UI.** A gate and a tuner appeared as

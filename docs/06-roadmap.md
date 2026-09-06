@@ -33,7 +33,7 @@ and the interaction and travel budgets are being measured automatically.
 **Built so far:** the shell (breadcrumb, view tabs, contextual menu on drag-release,
 cell strip), stacked spectrum + waterfall on one shared axis with a WebGL2 renderer
 and a 2D fallback, working FFT size / window / averaging / dB range / colormap /
-scroll speed, a draggable colour bar, auto/manual with real estimators and hover
+scroll speed, a draggable color bar, auto/manual with real estimators and hover
 explanation, and the full tune → AM envelope → PWM slicer chain recovering
 `aa aa 3c 69` out of the synthetic scene. Metrics for interaction count, pointer
 travel, frame rate and jitter run live.

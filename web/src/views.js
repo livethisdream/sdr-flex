@@ -1,5 +1,5 @@
 // 2D canvas views: the spectrum trace that sits above the waterfall, plus the
-// time-series and bit raster. All read their colours from CSS custom properties
+// time-series and bit raster. All read their colors from CSS custom properties
 // so there is one palette.
 
 function css(name, fallback) {

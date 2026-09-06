@@ -1,4 +1,4 @@
-// Perceptually uniform colormaps. Jet is included but labelled legacy: it invents
+// Perceptually uniform colormaps. Jet is included but labeled legacy: it invents
 // false edges at cyan and yellow and hides real structure in the green.
 
 const STOPS = {

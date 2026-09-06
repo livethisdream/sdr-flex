@@ -51,7 +51,7 @@ as the real thing will — no faster.
 ## Cost, and the discipline
 
 - **The mock can grow into a second implementation.** The rule: it may only implement
-  behaviour the real engine will have, and it is never the place a feature ships
+  behavior the real engine will have, and it is never the place a feature ships
   first. A capability that exists only in the mock is a bug.
 - **It cannot validate what it fakes** — real jitter, real throughput, DSP
   correctness, or anything at scale. M1 exists for that, and the roadmap says so.

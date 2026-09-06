@@ -17,7 +17,7 @@ one pane with that axis shared — not in two tabs.*
 ├─────────────────────────────────────────────────────────┤
 │      ╱╲        ╱╲                                       │  live trace
 │  ╱╲╱  ╲──╱╲──╱  ╲───╲                                   │  + peak hold
-│ ─────────────────────────────────────────────────  ▓    │  + colour bar →
+│ ─────────────────────────────────────────────────  ▓    │  + color bar →
 ├───────────────── draggable splitter ──────────────  ▓ ──┤
 │ ░░░▒▓█▓▒░░    ░▒▓░                                 ▒    │
 │ ░░░▒▓█▓▒░░    ░▒▓░                                 ░    │  waterfall
@@ -51,7 +51,7 @@ Splitting them across tabs would have been a real regression:
   span lives ([ADR-0019](0019-settings-surfaces.md), tier A).
 - **The splitter is draggable, and collapses.** "Waterfall only" and "spectrum only"
   are the splitter at its extremes, not separate tabs — fewer tabs, no modes.
-- **The colour bar sits at the right edge of the waterfall**, its two handles setting
+- **The color bar sits at the right edge of the waterfall**, its two handles setting
   the dB range for both panes.
 - The spectrum pane carries three traces — live, averaged, and peak-hold — because
   peak-hold is what makes a waterfall's history legible in the instantaneous view.

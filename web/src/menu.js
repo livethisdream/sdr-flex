@@ -73,16 +73,25 @@ export class ContextMenu {
       g.items.push(o);
     }
 
+    // Headings are for finding your way in a list too long to read, and this list is
+    // type-filtered before it is drawn — four items, each already saying what it does.
+    // A heading above two of them is a label on a label. They come back when the
+    // palette is long enough to scan rather than read, which is what M4's external
+    // decoders will make it. Searching still matches on group name either way, so
+    // "decode" finds the decoders whether or not the word is on screen.
+    const headed = shown.length > 7 && groups.length > 1;
+    // a hairline still separates the runs — the grouping was worth keeping, the
+    // words above it were not
+    const item = (o, i, gi) =>
+      `<button class="ctx-i${o.stub ? ' stub' : ''}${!headed && gi > 0 && i === 0 ? ' gsep' : ''}" data-op="${o.id}">${o.name}` +
+      `${o.external ? '<span class="ext">ext</span>' : ''}` +
+      `${o.stub ? '<span class="soon">M4</span>' : ''}</button>`;
+
     this.el.innerHTML =
       `<div class="ctx-search"><input type="text" placeholder="search…" value="${this.filter}" aria-label="Search operations"></div>` +
       (groups.length
-        ? groups.map((g) =>
-            `<div class="ctx-grp">${g.name}</div>` +
-            g.items.map((o) =>
-              `<button class="ctx-i${o.stub ? ' stub' : ''}" data-op="${o.id}">${o.name}` +
-              `${o.external ? '<span class="ext">ext</span>' : ''}` +
-              `${o.stub ? '<span class="soon">M4</span>' : ''}</button>`).join('')
-          ).join('')
+        ? groups.map((g, gi) => (headed ? `<div class="ctx-grp">${g.name}</div>` : '') +
+                                g.items.map((o, i) => item(o, i, gi)).join('')).join('')
         : '<div class="ctx-none">nothing valid here</div>');
 
     const input = this.el.querySelector('input');

@@ -70,7 +70,7 @@ export class Strip {
   }
 
   /**
-   * A control is labelled with its current value, not with its own name — the
+   * A control is labeled with its current value, not with its own name — the
    * ece444 HUD's rule, where the page counter *is* the contents button because
    * "12/25" already says what it opens. `1024 bins` and `Viridis` identify
    * themselves; the parameter's name belongs in the popover it opens and in its
