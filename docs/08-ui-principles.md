@@ -107,8 +107,27 @@ exists without being a mode.
 
 ### The parameter bar floats, and a tap opens the control
 
-The bar is a row of **pills floating over the bottom of the canvas**, not a docked
-strip. Floating costs the waterfall no height, and lets the bar be only as wide as it
+**One pill holding runs of bare controls**, floating over the bottom of the canvas —
+the shape of the HUD in `livethisdream/ece444` (`book/_static/shell.css`), which
+solves the same problem well. Bordering every control makes nine boxes in a box; the
+container is the only edge, and the controls inside earn a background on hover.
+
+Three things taken from it directly:
+
+- **A control is labelled with its current value**, not its own name. There, the page
+  counter *is* the contents button, because "12/25" already says what it opens. Here
+  a pill reads `1024 bins` or `Viridis`; the parameter's name lives in the popover it
+  opens and in its tooltip, rather than being spent on the bar. That alone took the
+  bar from 962 px to 504.
+- **`width: max-content`** with a viewport cap. A fixed element given `left` and no
+  `right` shrink-fits against half the window and wraps onto two rows at phone widths
+  while its contents would have fitted.
+- **Fold controls into popovers rather than hiding them when space runs short.**
+  Their note is the reason: the presenter tools were hidden below 46 rem to stop the
+  bar overflowing a phone, which dropped exactly the wrong things. Everything stays
+  available at every width.
+
+Floating also costs the waterfall no height, and lets the bar be only as wide as it
 needs to be rather than as wide as the window.
 
 **Tapping a pill opens a popover with a control shaped to the parameter** — a list for

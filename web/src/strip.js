@@ -58,13 +58,22 @@ export class Strip {
     return c.canAuto ? (c.mode || 'manual') : 'plain';
   }
 
+  /**
+   * A control is labelled with its current value, not with its own name — the
+   * ece444 HUD's rule, where the page counter *is* the contents button because
+   * "12/25" already says what it opens. `1024 bins` and `Viridis` identify
+   * themselves; the parameter's name belongs in the popover it opens and in its
+   * tooltip, not spent on the bar. The auto/manual state survives the loss of the
+   * border as a leading dot.
+   */
   _pill(gk, c) {
     const mode = this._mode(c);
     const cls = mode === 'auto' ? 'au' : mode === 'ro' ? 'ro' : mode === 'plain' ? 'pl' : 'mn';
     const val = c.fmt ? c.fmt(c.value) : c.value;
+    const dot = (mode === 'auto' || mode === 'manual') ? '<i class="dot"></i>' : '';
     return `<button class="pill ${cls}${c.type === 'num' ? ' scrub' : ''}" data-g="${gk}" data-k="${c.key}"
-              ${c.type === 'ro' ? 'disabled' : ''}>
-      <span class="pk">${c.label}</span><span class="pv">${val}</span>${c.unit ? `<span class="pu">${c.unit}</span>` : ''}
+              title="${c.label}${c.unit ? ' · ' + c.unit : ''}" ${c.type === 'ro' ? 'disabled' : ''}>
+      ${dot}<span class="pv">${val}</span>${c.unit ? `<span class="pu">${c.unit}</span>` : ''}
     </button>`;
   }
 

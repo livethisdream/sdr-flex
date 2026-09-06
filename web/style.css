@@ -240,44 +240,54 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 /* a pinned channel says so where you look for what the radio is doing */
 .crumb .pin { color:var(--accent); font-weight:600; font-style:normal; }
 
-/* ── parameter bar: floating pills over the canvas ──────────────────────────
-   Docked full width, this pushed the waterfall up and read as a status line.
-   Floating keeps the signal the tallest thing on screen (law 11) and lets the
-   bar be only as wide as it needs to be. */
+/* ── parameter bar ─────────────────────────────────────────────────────────
+   One pill holding runs of bare controls, after the ece444 HUD. Bordering every
+   control made nine boxes in a box; the container is the only edge, and the
+   controls inside earn a background only on hover.
+
+   `max-content` is load-bearing: a fixed element with `left` and no `right`
+   shrink-fits against what is left of the window — half of it — so the bar
+   wrapped onto two rows at phone widths while its contents fitted easily. */
 .strip {
-  position:absolute; left:50%; bottom:12px; transform:translateX(-50%);
-  z-index:6; max-width:calc(100% - 24px);
-  display:flex; gap:.5rem; align-items:center;
-  padding:.35rem .45rem; border-radius:999px;
-  background:rgba(17,21,32,.86); border:1px solid var(--rule);
+  position:absolute; left:50%; transform:translateX(-50%);
+  bottom:clamp(.6rem, 2vh, 1.1rem); z-index:6;
+  width:max-content; max-width:calc(100% - 1.4rem);
+  display:flex; align-items:center; gap:.5rem;
+  padding:.3rem .7rem; border-radius:999px;
+  background:rgba(17,21,32,.88); border:1px solid var(--rule);
   box-shadow:0 10px 30px -10px rgba(0,0,0,.9);
+  font-family:var(--mono); font-size:.74rem;
   overflow-x:auto; scrollbar-width:none;
-  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
 }
 .strip::-webkit-scrollbar { display:none; }
-.pgroup { display:flex; align-items:center; gap:.3rem; }
-.pgroup + .pgroup { border-left:1px solid var(--rule); padding-left:.5rem; }
+.pgroup { display:flex; align-items:center; gap:.35rem; min-width:0; }
+/* the rule belongs to the run that follows, so it cannot drift or outlive it */
+.pgroup + .pgroup::before {
+  content:""; flex:none; width:1px; height:1em; margin-right:.2rem;
+  background:var(--rule);
+}
 .ptitle {
-  font-family:var(--mono); font-size:.54rem; letter-spacing:.13em;
-  text-transform:uppercase; color:var(--dim); white-space:nowrap; padding-right:.15rem;
+  font-size:.54rem; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--dim); white-space:nowrap;
 }
 .pill {
-  display:inline-flex; align-items:baseline; gap:.3rem; white-space:nowrap;
-  padding:.28rem .6rem; border-radius:999px;
-  background:var(--raised); border:1px solid transparent;
-  border-left:2px solid var(--rule);
-  font-family:var(--mono); min-height:30px;
+  display:inline-flex; align-items:baseline; gap:.28rem; white-space:nowrap;
+  font:inherit; color:var(--body); background:none; border:none;
+  padding:.18rem .42rem; border-radius:6px; min-height:26px;
 }
-.pill:hover { border-color:var(--dim); }
-.pill.open { border-color:var(--accent); background:var(--panel); }
-.pill.au { border-left-color:var(--ok); }
-.pill.mn { border-left-color:var(--accent); }
-.pill.pl { border-left-color:var(--rule); }
-.pill.ro { background:transparent; border-left-color:transparent; opacity:.75; }
+.pill:hover { color:var(--bright); background:var(--raised); }
+.pill.open { color:var(--bright); background:var(--raised); box-shadow:inset 0 0 0 1px var(--accent); }
+.pill:disabled { color:var(--dim); cursor:default; }
+.pill:disabled:hover { background:none; }
 .pill.scrub { cursor:ew-resize; touch-action:none; }
-.pill .pk { font-size:.56rem; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); }
-.pill .pv { font-size:.8rem; color:var(--bright); font-variant-numeric:tabular-nums; }
-.pill .pu { font-size:.56rem; color:var(--dim); }
+.pill .dot { width:5px; height:5px; border-radius:50%; flex:none; align-self:center; }
+.pill.au .dot { background:var(--ok); }
+.pill.mn .dot { background:var(--accent); }
+.pill .pv { color:inherit; font-variant-numeric:tabular-nums; }
+.pill .pu { font-size:.58rem; color:var(--dim); }
+.pill.more { color:var(--dim); gap:.2rem; }
+.pill.more:hover { color:var(--bright); }
 
 /* ── popover: the control, shaped to the parameter ── */
 .pop {
