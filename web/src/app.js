@@ -48,6 +48,9 @@ class App {
     this.timeSeries = new TimeSeries($('#ts'));
     this.bitRaster = new BitRaster($('#bits'));
     this._rowAcc = 0;
+    this._tmax = 0;                       // the furthest the session has played to
+    this.split = 0.34;
+    try { const v = parseFloat(localStorage.getItem('sdrflex.split')); if (v > 0) this.split = v; } catch (_) { /* private mode */ }
     this._specAcc = 0;
     this._specData = null;
     this._lastFrame = performance.now();
@@ -94,6 +97,9 @@ class App {
    * the unit of navigation and the unit of execution are the same thing.
    */
   isChannel(n) { return !!(n && n.out && n.out.kind === 'iq'); }
+
+  /** How a node is written down. Only channels carry a letter (engine.addNode). */
+  tag(n) { return n.letter ? `${n.letter} · ${n.label}` : n.label; }
 
   blocksOf(channelId) {
     const out = [];
@@ -149,7 +155,10 @@ class App {
     const pin = (n) => (n.params && n.params.timeMode && n.params.timeMode.value === 'pinned'
       ? ` <b class="pin" title="pinned ${n.params.t0.value.toFixed(2)}–${n.params.t1.value.toFixed(2)} s">⊓</b>` : '');
     const crumb = (n, cls) =>
-      `<button class="crumb ${cls}" data-id="${n.id}">${n.letter} · ${n.label}${pin(n)}</button>`;
+      `<button class="crumb ${cls}" data-id="${n.id}">${this.tag(n)}${pin(n)}` +
+      (cls === 'cur' && n.id !== root.id
+        ? `<i class="x" data-del="${n.id}" role="button" tabindex="0" title="remove ${this.tag(n)} and everything under it">✕</i>` : '') +
+      `</button>`;
 
     // The device's centre and rate are its node's parameters, so they live in the
     // strip when the source is selected. Repeating them here made the top row a
@@ -175,6 +184,47 @@ class App {
     for (const b of el.querySelectorAll('[data-id]')) {
       b.addEventListener('click', () => { this.goChannel(b.dataset.id); });
     }
+    this.wireRemove(el);
+  }
+
+  /**
+   * Removal lives on the thing being removed, and only while it is the current one.
+   * An ✕ on every crumb and every tab is a row of ways to lose work; an ✕ on the
+   * one you are looking at is the answer to "how do I get rid of this?" in the
+   * place the question is asked.
+   */
+  wireRemove(el) {
+    for (const x of el.querySelectorAll('[data-del]')) {
+      x.addEventListener('click', (e) => { e.stopPropagation(); this.removeNode(x.dataset.del); });
+      x.addEventListener('pointerdown', (e) => e.stopPropagation());
+      x.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); this.removeNode(x.dataset.del); }
+      });
+    }
+  }
+
+  /**
+   * Take a node and everything downstream of it out of the graph, then land
+   * somewhere that still exists: the parent channel, on its own spectrum.
+   */
+  async removeNode(id) {
+    const n = this.engine.node(id);
+    if (!n || n.id === this.engine.root.id) return;
+    const parent = n.parent;
+    this.metrics.beginOp();
+    this.clearSelection();
+    this.strip.closePop();
+    await this.engine.removeNode(id);
+    let ch = this.engine.node(parent);
+    while (ch && !this.isChannel(ch)) ch = this.engine.node(ch.parent);
+    this.channel = (ch || this.engine.root).id;
+    this.tabs.delete(id);
+    this.setTab('spectrum');
+    this.resetSpectrum();
+    this._tsCache = null;
+    this._bitsSeen = false;
+    this.metrics.endOp();
+    this.refresh();
   }
 
   goChannel(id) {
@@ -193,15 +243,19 @@ class App {
     if (key !== 'spectrum' && key !== 'flow' && !blocks.some((b) => b.id === key)) this.setTab('spectrum');
 
     const items = [{ k: 'spectrum', label: 'Spectrum' }]
-      .concat(blocks.map((b) => ({ k: b.id, label: `${b.letter} · ${b.label}`, kind: b.out.kind, ext: OPS[b.op] && OPS[b.op].external })))
+      .concat(blocks.map((b) => ({ k: b.id, label: this.tag(b), kind: b.out.kind, del: b.id, ext: OPS[b.op] && OPS[b.op].external })))
       .concat([{ k: 'flow', label: 'Flow' }]);
 
     const el = $('#tabs');
     el.innerHTML = items.map((it) =>
       `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}" data-k="${it.k}">` +
-      `${it.label}${it.kind ? `<span class="tk">${it.kind}</span>` : ''}</button>`).join('') +
+      `${it.label}${it.kind ? `<span class="tk">${it.kind}</span>` : ''}` +
+      (it.del && it.k === this.tabKey()
+        ? `<i class="x" data-del="${it.del}" role="button" tabindex="0" title="remove ${it.label} and everything after it">✕</i>` : '') +
+      `</button>`).join('') +
       '<button class="tab plus" title="operations valid here">+</button>';
 
+    this.wireRemove(el);
     for (const b of el.querySelectorAll('.tab[data-k]')) {
       b.addEventListener('click', () => {
         this.clearSelection();
@@ -258,7 +312,7 @@ class App {
       const width = (w / span) * 100;
       if (left > 100 || left + width < 0) return '';
       return `<button class="marker" data-id="${k.id}" style="left:${left}%;width:${width}%"
-                title="${k.letter} · ${k.label}"><span>${k.letter}</span></button>`;
+                title="${this.tag(k)}"><span>${k.letter}</span></button>`;
     }).join('');
     for (const m of host.querySelectorAll('.marker')) {
       m.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -315,7 +369,7 @@ class App {
       const spec = OPS[n.op];
       const kids = this.engine.children(id);
       return `<div class="fnode${id === this.current ? ' cur' : ''}${spec && spec.external ? ' ext' : ''}" style="margin-left:${depth * 22}px" data-id="${id}">
-          <span class="fn">${n.op === 'core.source' ? n.label : `${n.letter} · ${n.label}`}</span>
+          <span class="fn">${this.tag(n)}</span>
           <span class="fk">${n.out.kind}</span>
           <span class="fr">${fmtRate(n.out.sampleRate)}</span>
         </div>` + kids.map((k) => walk(k.id, depth + 1)).join('');
@@ -373,7 +427,7 @@ class App {
       }
       nodeCells.push({ key: 'out', label: 'out', unit: 'kS/s', type: 'ro', value: n.out.sampleRate, fmt: (v) => (v / 1e3).toFixed(1) });
     }
-    groups.push({ key: 'node', title: n.op === 'core.source' ? 'src' : n.letter, cells: nodeCells });
+    groups.push({ key: 'node', title: n.op === 'core.source' ? 'src' : (n.letter || n.label), cells: nodeCells });
 
     if (this.view() === 'Time') {
       groups.push({
@@ -414,6 +468,7 @@ class App {
       if (key === 'bins') { p.bins = parseInt(value, 10); this.resetSpectrum(); }
       else if (key === 'window') p.window = value;
       else if (key === 'trigger') { p.trigger = value; this._tsCache = null; }
+      else if (key === 'spanS') { p.spanS = value; this._tsCache = null; }
       else if (key === 'colormap') { p.colormap = value; this.waterfall.setColormap(value); $('#cbar').style.background = cssGradient(value); }
       else p[key] = value;
       if (key === 'dbMin' || key === 'dbMax') p.dbAuto = false;
@@ -564,6 +619,41 @@ class App {
     const b = $('#play');
     b.textContent = on ? '❚❚' : '▶';
     b.classList.toggle('paused', !on);
+  }
+
+  /** The spectrum's share of the stage. The waterfall takes what is left. */
+  setSplit(frac) {
+    this.split = Math.max(0.1, Math.min(0.85, frac));
+    $('#stage').style.setProperty('--split', (this.split * 100).toFixed(1) + '%');
+  }
+
+  /**
+   * Where the scrubber's handle sits, and what moving it means.
+   *
+   * A pinned channel is a clip, so the rail is the clip: end to end is the box the
+   * user drew. Everything else runs from the start of the session to the furthest
+   * it has reached — the source is time-indexed (ADR-0005), so the past is not a
+   * recording that had to be kept, it is simply an argument.
+   */
+  scrubSpan() {
+    const pin = this.engine.isPinned(this.channel);
+    if (pin) return { t0: pin.params.t0.value, t1: pin.params.t1.value, pin };
+    return { t0: 0, t1: Math.max(0.001, this._tmax), pin: null };
+  }
+
+  scrubFrac() {
+    const { t0, t1, pin } = this.scrubSpan();
+    const at = pin ? this.engine.clipPos(pin) : this.engine.t;
+    return Math.max(0, Math.min(1, (at - t0) / Math.max(1e-6, t1 - t0)));
+  }
+
+  scrubTo(frac) {
+    const { t0, t1, pin } = this.scrubSpan();
+    const at = t0 + (t1 - t0) * frac;
+    if (pin) pin._t = at;
+    else this.engine.t = Math.max(0, at);
+    $('#clock').textContent = at.toFixed(3) + ' s';
+    $('#track i').style.left = (frac * 100).toFixed(2) + '%';
   }
 
   /** Keyboard zoom works about the centre, since there is no pointer to anchor to. */
@@ -821,6 +911,61 @@ class App {
       cb.addEventListener('pointerup', up);
     });
 
+    // ── splitter ───────────────────────────────────────────────────────────
+    // How much room the spectrum gets against the waterfall is a matter of what you
+    // are doing — reading a modulation shape wants the trace, watching for a burst
+    // wants the history — so it is a layout preference, kept per browser (ADR-0019),
+    // not a signal parameter.
+    const split = $('#splitter');
+    this.setSplit(this.split);
+    split.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      split.setPointerCapture(e.pointerId);
+      split.classList.add('drag');
+      const stageEl = $('#stage');
+      const move = (ev) => {
+        const r = stageEl.getBoundingClientRect();
+        this.setSplit((ev.clientY - r.top) / r.height);
+      };
+      const up = () => {
+        split.classList.remove('drag');
+        split.removeEventListener('pointermove', move);
+        split.removeEventListener('pointerup', up);
+        try { localStorage.setItem('sdrflex.split', String(this.split)); } catch (_) { /* private mode */ }
+        this.metrics.interaction();
+      };
+      split.addEventListener('pointermove', move);
+      split.addEventListener('pointerup', up);
+    });
+
+    // ── scrubber ───────────────────────────────────────────────────────────
+    const track = $('#track');
+    track.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      track.setPointerCapture(e.pointerId);
+      track.classList.add('drag');
+      // scrubbing is looking, not playing: the clock stops and stays stopped
+      this.setPlaying(false);
+      const at = (ev) => {
+        const r = track.getBoundingClientRect();
+        this.scrubTo(Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)));
+      };
+      at(e);
+      const up = () => {
+        track.classList.remove('drag');
+        track.removeEventListener('pointermove', at);
+        track.removeEventListener('pointerup', up);
+        // one refill at the end, not one per pixel
+        this.resetSpectrum();
+        this._tsCache = null;
+        this._bitsSeen = false;
+        this.metrics.interaction();
+      };
+      track.addEventListener('pointermove', at);
+      track.addEventListener('pointerup', up);
+    });
+
     const step = (dt) => {
       this.engine.t = Math.max(0, this.engine.t + dt);
       this.resetSpectrum();
@@ -855,7 +1000,7 @@ class App {
       if (e.key === 'Escape') { this.clearSelection(); this.menu.close(); }
     });
 
-    addEventListener('resize', () => this.renderStage());
+    addEventListener('resize', () => { this.renderStage(); this.renderStrip(); });
   }
 
   // ── loop ─────────────────────────────────────────────────────────────────
@@ -973,8 +1118,10 @@ class App {
       }
     }
 
+    if (this.engine.t > this._tmax) this._tmax = this.engine.t;
     const cp = this.engine.isPinned(this.channel);
     $('#clock').textContent = (cp ? this.engine.clipPos(cp) : this.engine.t).toFixed(3) + ' s';
+    $('#track i').style.left = (this.scrubFrac() * 100).toFixed(2) + '%';
   }
 }
 

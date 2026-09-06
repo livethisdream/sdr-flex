@@ -54,7 +54,7 @@ export class MockEngine {
   constructor() {
     this.nodes = new Map();
     this.root = null;
-    this.letters = 0;      // nodes are named in creation order, not by op
+    this.letters = 0;      // channels are named in creation order, not by op
     this.t = 0;            // playhead, seconds since scene start
     this.playing = true;
     this._last = performance.now();
@@ -158,7 +158,11 @@ export class MockEngine {
     const spec = OPS[op];
     const node = {
       id: nid('n'), parent, op, label: '', params: {}, out: null, stub: !!spec.stub,
-      letter: String.fromCharCode(65 + (this.letters++ % 26)),
+      // Only channels are lettered. A letter is a handle for "which signal am I
+      // looking at" — spending them on the blocks inside one channel gave every
+      // demodulator a name that meant nothing and made A · Tuner › C · AM env read
+      // as two peers. Blocks are known by what they do.
+      letter: op === 'core.tuner' ? String.fromCharCode(65 + (this.letters++ % 26)) : null,
     };
 
     if (op === 'core.tuner') {
@@ -319,8 +323,12 @@ export class MockEngine {
     if (n.out.kind === 'real') {
       const fs = n.out.sampleRate;
       const p = this.node(n.parent);
-      // look over a whole burst period so the trigger has something to find
-      const searchS = Math.min(maxSpan, opts.trigger === 'free' ? (opts.spanS || 0.12) : 1.05);
+      const span = opts.spanS || 0.12;
+      // The search window and the display window are different things. The trigger
+      // has to look over a whole burst period to find an edge at all, but what it
+      // shows afterwards is the span the user asked for — tying the two together
+      // meant the span control moved nothing whenever the trigger was armed.
+      const searchS = Math.min(maxSpan, opts.trigger === 'free' ? span : Math.max(1.05, span));
       const count = Math.min(131072, Math.max(256, Math.floor(fs * searchS)));
       const iq = this._readIQ(p, now, count);
       const env = dsp.smooth(dsp.amEnvelope(iq, count), dsp.envelopeWindow(fs));
@@ -331,16 +339,15 @@ export class MockEngine {
                  spanS: count / fs, t0: windowEnd - count / fs, triggered: false };
       }
 
+      const win = Math.max(64, Math.min(env.length, Math.round(fs * span)));
       const b = dsp.findLastBurst(env, fs);
-      if (!b) return { kind: 'timeseries', data: env, sampleRate: fs,
-                       spanS: count / fs, t0: windowEnd - count / fs, triggered: false };
-
-      const pad = Math.round(fs * 0.004);
-      const s = Math.max(0, b.start - pad);
-      const e = Math.min(env.length, b.end + pad);
+      // nothing to latch onto: show the most recent `span`, not the whole search
+      const pre = b ? Math.round(win * 0.12) : 0;  // a little room before the edge
+      const e = b ? Math.min(env.length, Math.max(win, b.start - pre + win)) : env.length;
+      const s = Math.max(0, e - win);
       return {
         kind: 'timeseries', data: env.subarray(s, e), sampleRate: fs,
-        spanS: (e - s) / fs, t0: windowEnd - (count - s) / fs, triggered: true,
+        spanS: (e - s) / fs, t0: windowEnd - (count - s) / fs, triggered: !!b,
       };
     }
 

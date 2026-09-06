@@ -45,9 +45,14 @@ time window (ADR-0023). Switching channels repaints the waterfall from that chan
 own past rather than clearing to empty, which is the ADR-0005 promise showing up early:
 a source is a time-indexed medium, so any past moment can simply be asked for.
 
-**Still open:** drag-and-drop of a real SigMF file, scrubbing back through history and
-the time-window gesture that depends on it (ADR-0023), tearing tabs into tiles, and
-the newcomer test that ADR-0018 asks for.
+Also built since: removal on the current crumb and the current tab, a working
+transport scrubber — the clip end-to-end when a channel is pinned, the whole session
+otherwise — a draggable splitter between spectrum and waterfall kept per browser, and
+a parameter bar that measures itself and folds until it fits the window.
+
+**Still open:** drag-and-drop of a real SigMF file, more than one source at a time and
+the picker on the device chip that goes with it, tearing tabs into tiles, and the
+newcomer test that ADR-0018 asks for.
 
 **Validates:** ADR-0002 (the premise), ADR-0018 (the biggest UX bet, including its one
 real risk: whether a newcomer finds the contextual menu), ADR-0017, ADR-0020, and the

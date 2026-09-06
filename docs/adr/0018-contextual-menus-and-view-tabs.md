@@ -28,9 +28,9 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ rtl-sdr #0 ▾ › A · Tuner ▾ › B · Gate ▾ › C · AM ▾ › D · PWM ▾   │ breadcrumb
+│ rtl-sdr #0 › A · Tuner ⊓ ✕ › B · Tuner                           │ breadcrumb
 ├──────────────────────────────────────────────────────────────────┤
-│ Spectrum │ C · AM env │ D · PWM │ Flow │ +                       │ block tabs
+│ Spectrum │ AM env ✕ │ PWM │ Flow │                             + │ block tabs
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │                  CANVAS — full width                             │

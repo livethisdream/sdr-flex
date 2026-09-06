@@ -73,9 +73,9 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ rtl-sdr #0 ▾ › A · Tuner ▾ › B · Gate ▾ › C · AM ▾ › D · PWM ▾   │ breadcrumb
+│ rtl-sdr #0 › A · Tuner ⊓ ✕ › B · Tuner                           │ breadcrumb
 ├──────────────────────────────────────────────────────────────────┤
-│ Spectrum │ C · AM env │ D · PWM │ Flow │ +                      │ block tabs
+│ Spectrum │ AM env ✕ │ PWM │ Flow │                            + │ block tabs
 ├──────────────────────────────────────────────────────────────────┤
 │      ╱╲        ╱╲                                           ▓    │ live + peak
 │  ╱╲╱  ╲──╱╲──╱  ╲───╲                                       ▓    │ hold traces
@@ -193,21 +193,34 @@ say.** Chrome accretes by addition and only ever shrinks deliberately.
 
 ### Naming tabs
 
-A block tab is named for the node whose result it shows — `C · AM env` — and the
-channel is named **once**, as a chip at the left edge of the tab bar, rather than
-prefixed onto every tab.
+A block tab is named for the node whose result it shows — `AM env` — and the channel
+is named **once**, in the breadcrumb, rather than prefixed onto every tab.
 
 Prefixing (`A: Spectrum`, `A: Time`, `A: Flow`) repeats information that is identical
 across the entire row, in the most horizontally constrained strip in the layout, which
-is the word budget's exact failure mode. It also collides: a block already carries its
-own letter, so `B: C · AM env` puts two letters side by side meaning different things.
+is the word budget's exact failure mode.
+
+**Only channels are lettered.** A letter answers "which signal am I looking at", and
+there is one of those per breadcrumb entry. Spending letters on the blocks inside a
+channel — `A · Tuner` › `C · AM env` › `D · PWM` — gave every demodulator a name that
+carried no information, and made a chain of blocks read as a row of peers. Blocks are
+known by what they do, which is shorter and already unique within a channel.
 
 Siblings stay visible at the current breadcrumb level rather than collapsing to the
 selected one — a set of channels off one source is the normal case, and a breadcrumb
 that hides the others reads as though the tool forgot what you built.
 
 The prefix does become right in one place: a **torn-off tile** has no breadcrumb above
-it, so a floating pane is labelled with its full path, `B · Tuner › D · PWM`.
+it, so a floating pane is labelled with its full path, `B · Tuner › PWM`.
+
+### Removal lives on the thing being removed
+
+An `✕` appears on the current breadcrumb entry and on the current block tab, and
+nowhere else. Putting one on every crumb and every tab turns the two most-used
+navigation rows into a row of ways to lose work — and on a phone, into a row of
+mistargets. Putting it on the one you are looking at answers "how do I get rid of
+this?" in the place the question gets asked, and it is never the thing your thumb
+lands on by accident.
 
 ### The display range has to follow the data
 

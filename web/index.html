@@ -20,7 +20,7 @@
     <div class="pane" id="pane-spectrum">
       <div class="stage" id="stage">
         <canvas id="sp" class="sp"></canvas>
-        <div class="splitter"></div>
+        <div class="splitter" id="splitter" title="drag to resize the spectrum"></div>
         <canvas id="wf" class="wf"></canvas>
         <div class="markers" id="markers"></div>
         <span class="stagebadge" id="stagebadge" hidden></span>
@@ -49,7 +49,7 @@
       <button id="play" class="tbtn play" aria-label="play or pause">❚❚</button>
       <button id="fwd" class="tbtn" aria-label="forward one second" title="forward 1 s">▶▶</button>
       <span id="clock" class="mono clock">0.000 s</span>
-      <span class="track"><i></i></span>
+      <button id="track" class="track" aria-label="scrub through time"><i></i></button>
     </div>
     <div class="strip" id="strip"></div>
   </div>

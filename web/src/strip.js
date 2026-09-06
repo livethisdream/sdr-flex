@@ -35,22 +35,33 @@ export class Strip {
     const wasOpen = this._openKey;
     // A bar that shows everything is the old strip with round corners. Each group
     // keeps its most-used controls inline and folds the rest behind one pill.
-    const INLINE = 3;
-    this.el.innerHTML = groups.map((g) => {
-      // read-only values stay on the bar — they are what the top row stopped
-      // repeating — they simply do not open anything
+    //
+    // How many fit is a question about the window, not about the parameter, so the
+    // bar measures itself and folds until it fits. A constant was comfortable on a
+    // laptop and pushed the fold pill itself off the edge of a phone — the one
+    // control that says there is more.
+    for (let inline = 3; inline >= 1; inline--) {
+      this._inline = inline;
+      this.el.innerHTML = this._layout(groups, inline);
+      if (this.el.scrollWidth <= this.el.clientWidth + 1) break;
+    }
+    this._wire();
+    // scrolling with no edge to see is a bar that looks complete and is not
+    this.el.classList.toggle('more-right', this.el.scrollWidth > this.el.clientWidth + 1);
+    if (wasOpen && !this.pop.hidden) this._reopen(wasOpen);
+  }
+
+  _layout(groups, inline) {
+    return groups.map((g) => {
       const shown = g.cells;
       if (!shown.length) return '';
-      const inline = shown.slice(0, INLINE);
-      const rest = shown.slice(INLINE).filter((c) => c.type !== 'ro');
+      const rest = shown.slice(inline);
       return `<div class="pgroup" data-g="${g.key}">
         <span class="ptitle">${g.title}</span>
-        ${inline.map((c) => this._pill(g.key, c)).join('')}
+        ${shown.slice(0, inline).map((c) => this._pill(g.key, c)).join('')}
         ${rest.length ? `<button class="pill more" data-g="${g.key}">⋯<span class="pu">${rest.length}</span></button>` : ''}
       </div>`;
     }).join('');
-    this._wire();
-    if (wasOpen && !this.pop.hidden) this._reopen(wasOpen);
   }
 
   _mode(c) {
@@ -123,7 +134,7 @@ export class Strip {
   openMore(gk, anchor) {
     const g = this.groups.find((x) => x.key === gk);
     if (!g) return;
-    const rest = g.cells.slice(3).filter((c) => c.type !== 'ro');
+    const rest = g.cells.slice(this._inline);
     this._openKey = null;
     if (this._openPill) this._openPill.classList.remove('open');
     this._openPill = anchor;
@@ -133,9 +144,11 @@ export class Strip {
       `<div class="morelist">${rest.map((c) => {
         const mode = this._mode(c);
         const dot = mode === 'auto' ? 'au' : mode === 'manual' ? 'mn' : 'pl';
+        const val = `<span class="mv">${c.fmt ? c.fmt(c.value) : c.value}${c.unit ? ' ' + c.unit : ''}</span>`;
+        // a read-only fact is still worth reading — it just does not open anything
+        if (c.type === 'ro') return `<div class="moreitem ro"><span class="mk">${c.label}</span>${val}</div>`;
         return `<button class="moreitem ${dot}" data-k="${c.key}">
-          <span class="mk">${c.label}</span>
-          <span class="mv">${c.fmt ? c.fmt(c.value) : c.value}${c.unit ? ' ' + c.unit : ''}</span>
+          <span class="mk">${c.label}</span>${val}
         </button>`;
       }).join('')}</div>`;
     this.pop.hidden = false;
