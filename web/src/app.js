@@ -24,7 +24,7 @@ const VIEWS = {
 
 const defaultViewParams = () => ({
   bins: 1024, window: 'Hann', avg: 4,
-  dbMin: -74, dbMax: -18, colormap: 'Viridis', speed: 60,
+  dbMin: -74, dbMax: -18, dbAuto: true, colormap: 'Viridis', speed: 60,
   trigger: 'auto', spanS: 0.12,
   zoomLo: 0, zoomHi: 1,
 });
@@ -384,8 +384,10 @@ class App {
           { key: 'bins', label: 'fft', unit: 'bins', type: 'enum', value: String(p.bins), values: ['256', '512', '1024', '2048', '4096'] },
           { key: 'window', label: 'window', unit: '', type: 'enum', value: p.window, values: WINDOWS },
           { key: 'avg', label: 'avg', unit: 'frames', type: 'num', value: p.avg, fmt: (v) => String(v), step: 0.06, min: 1, max: 40, integer: true },
-          { key: 'dbMin', label: 'min', unit: 'dBFS', type: 'num', value: p.dbMin, fmt: (v) => String(Math.round(v)), step: 0.35, min: -160, max: -10 },
-          { key: 'dbMax', label: 'max', unit: 'dBFS', type: 'num', value: p.dbMax, fmt: (v) => String(Math.round(v)), step: 0.35, min: -150, max: 20 },
+          { key: 'dbMin', label: 'min', unit: 'dBFS', type: 'num', value: p.dbMin, fmt: (v) => String(Math.round(v)), step: 0.35, min: -160, max: -10,
+            canAuto: true, mode: p.dbAuto ? 'auto' : 'manual', autoNote: 'the tenth percentile of what is on screen' },
+          { key: 'dbMax', label: 'max', unit: 'dBFS', type: 'num', value: p.dbMax, fmt: (v) => String(Math.round(v)), step: 0.35, min: -150, max: 20,
+            canAuto: true, mode: p.dbAuto ? 'auto' : 'manual', autoNote: 'the strongest bin on screen' },
           { key: 'colormap', label: 'colormap', unit: '', type: 'enum', value: p.colormap, values: COLORMAPS },
           { key: 'speed', label: 'speed', unit: 'rows/s', type: 'num', value: p.speed, fmt: (v) => String(Math.round(v)), step: 0.35, min: 2, max: 120, integer: true },
         ],
@@ -405,6 +407,7 @@ class App {
       else if (key === 'trigger') { p.trigger = value; this._tsCache = null; }
       else if (key === 'colormap') { p.colormap = value; this.waterfall.setColormap(value); $('#cbar').style.background = cssGradient(value); }
       else p[key] = value;
+      if (key === 'dbMin' || key === 'dbMax') p.dbAuto = false;
       if (key === 'dbMin' && p.dbMin > p.dbMax - 5) p.dbMin = p.dbMax - 5;
       if (key === 'dbMax' && p.dbMax < p.dbMin + 5) p.dbMax = p.dbMin + 5;
       this.waterfall.setRange(p.dbMin, p.dbMax);
@@ -425,7 +428,13 @@ class App {
   }
 
   async onMode(group, key, mode) {
-    if (group === 'view') return;
+    if (group === 'view') {
+      if (key === 'dbMin' || key === 'dbMax') {
+        this.vp(this.current).dbAuto = mode === 'auto';
+        this.renderStrip();
+      }
+      return;
+    }
     await this.engine.setMode(this.current, key, mode);
     this.metrics.interaction();
     this.renderStrip();
@@ -484,6 +493,37 @@ class App {
    * window and a paused clock both look identical to a broken display otherwise —
    * a static waterfall with no explanation reads as "nothing is playing".
    */
+  /**
+   * A sensible dB window for this data.
+   *
+   * Narrowing a channel narrows its FFT bins, so its noise floor sits ten or more
+   * dB below the source's. A range inherited from the parent leaves a tuner
+   * rendering entirely under the colormap floor — indistinguishable from a display
+   * that has stopped. So the range is derived per channel, like everything else
+   * that can be (ADR-0017), and pinned the moment the user touches it.
+   */
+  fitRange(data) {
+    const s = Float32Array.from(data).sort();
+    const n = s.length;
+    const floor = s[(n * 0.10) | 0];
+    const peak = s[n - 1];
+    const lo = floor - 4;
+    const hi = Math.max(peak + 6, lo + 25);
+    return { lo, hi };
+  }
+
+  applyAutoRange(data, snap) {
+    const p = this.vp(this.current);
+    if (!p.dbAuto || !data) return;
+    const { lo, hi } = this.fitRange(data);
+    const k = snap ? 1 : 0.12;
+    p.dbMin += (lo - p.dbMin) * k;
+    p.dbMax += (hi - p.dbMax) * k;
+    this.waterfall.setRange(p.dbMin, p.dbMax);
+    this.trace.setRange(p.dbMin, p.dbMax);
+    this.renderCbarLabels();
+  }
+
   setStageBadge(text) {
     const el = $('#stagebadge');
     if (!el) return;
@@ -742,6 +782,7 @@ class App {
       const move = (ev) => {
         const f = Math.max(0, Math.min(1, 1 - (ev.clientY - r.top) / r.height));
         const v = -160 + f * 180;
+        p.dbAuto = false;
         p[which] = which === 'dbMax' ? Math.max(v, p.dbMin + 5) : Math.min(v, p.dbMax - 5);
         this.waterfall.setRange(p.dbMin, p.dbMax);
         this.trace.setRange(p.dbMin, p.dbMax);
@@ -819,7 +860,11 @@ class App {
           for (let i = 0; i < rows; i++) {
             const at = t0 + (i / (rows - 1)) * (t1 - t0);
             const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
-            if (f.kind === 'spectrum') { this.waterfall.push(f.data); this.trace.push(f.data); }
+            if (f.kind === 'spectrum') {
+              if (i === 0) this.applyAutoRange(f.data, true);
+              this.waterfall.push(f.data);
+              this.trace.push(f.data);
+            }
           }
         }
         this.trace.draw();
@@ -835,7 +880,11 @@ class App {
           for (let k = 0; k < budget && pf.row < pf.rows; k++, pf.row++) {
             const at = pf.t1 - pf.span * (1 - pf.row / (pf.rows - 1));
             const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
-            if (f.kind === 'spectrum') { this.waterfall.push(f.data); this.trace.push(f.data); }
+            if (f.kind === 'spectrum') {
+              if (pf.row === 0) this.applyAutoRange(f.data, true);
+              this.waterfall.push(f.data);
+              this.trace.push(f.data);
+            }
           }
           if (pf.row >= pf.rows) this._prefill = null;
           this.trace.draw();
@@ -849,6 +898,8 @@ class App {
         } else {
           const f = this.engine.frame(this.current, { bins: p.bins, window: p.window });
           if (f.kind === 'spectrum') {
+            this._autoAcc = (this._autoAcc || 0) + 1;
+            if (this._autoAcc > 20) { this._autoAcc = 0; this.applyAutoRange(f.data, false); }
             this.trace.push(f.data);
             this._rowAcc += dt / 1000;
             const interval = 1 / Math.max(1, p.speed);

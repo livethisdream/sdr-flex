@@ -171,6 +171,24 @@ that hides the others reads as though the tool forgot what you built.
 The prefix does become right in one place: a **torn-off tile** has no breadcrumb above
 it, so a floating pane is labelled with its full path, `B · Tuner › D · PWM`.
 
+### The display range has to follow the data
+
+Narrowing a channel narrows its FFT bins, so its noise floor sits ten to twenty dB
+below its parent's. A dB range inherited from the parent leaves a tuner rendering
+*entirely beneath the colormap floor* — which looks exactly like a display that has
+stopped, and was reported as one.
+
+Measured on the synthetic scene: the source spans −83…−12 dB, a 50 kHz tuner off it
+spans −103…−64, a 10 kHz tuner −100…−70. No fixed default straddles those. So the
+range is `⟲ auto` per channel, fitted to the tenth percentile and the strongest bin,
+snapping on arrival and easing while live — and pinned the instant you drag the colour
+bar or scrub the cells.
+
+The general lesson is broader than dB: **a derived default computed once for the root
+is not a default, it is an assumption about every child.** Anything that scales with
+sample rate, bin width or bandwidth has to be re-derived per node or it will be wrong
+everywhere except where it was chosen.
+
 ### Zooming is not tuning
 
 Two operations narrow the frequency you are looking at, and confusing them would be
@@ -211,7 +229,7 @@ things with four lifetimes, and one test assigns every one of them
 
 | Home | What lives there |
 |---|---|
-| **On the object** | dB range (drag the colour bar), **zoom and pan** (wheel, pinch, `+`/`-`/`0`), selection bounds, playhead. No chrome at all — the control belongs where its effect is. |
+| **On the object** | dB range (`⟲ auto` by default; drag the colour bar to pin it), **zoom and pan** (wheel, pinch, `+`/`-`/`0`), selection bounds, playhead. No chrome at all — the control belongs where its effect is. |
 | **The strip** | Node parameters, then the *active view's*, as two labelled groups of cells. Device gain and PPM are node parameters of the source. A `⌄` expands the strip into a temporary panel when a node has many. |
 | **A view tab** | Flow, Plugins, Annotations, Project. Full canvas, zero chrome, reached like any other view. |
 | **A preferences overlay** | Theme, keybindings, plugin paths, disk budget, audio device. A modal is honest here — law 2 governs the analysis loop, and configuring the tool means deliberately stepping out of it. |
