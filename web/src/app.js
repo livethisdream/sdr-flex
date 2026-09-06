@@ -15,6 +15,11 @@ const $ = (s, r = document) => r.querySelector(s);
 const fmtHz = (hz) => (hz / 1e6).toFixed(4);
 const fmtRate = (r) => (r >= 1e6 ? (r / 1e6).toFixed(3) + ' MS/s' : (r / 1e3).toFixed(1) + ' kS/s');
 
+// The spectrum trace is redrawn every animation frame, but it does not need a
+// freshly computed spectrum every time: 25 a second reads as continuous and
+// costs a third of what 60 does. Waterfall rows keep their own clock on top.
+const SPEC_PERIOD = 1 / 25;
+
 const VIEWS = {
   iq: ['Spectrum', 'Flow'],
   real: ['Time', 'Flow'],
@@ -43,6 +48,8 @@ class App {
     this.timeSeries = new TimeSeries($('#ts'));
     this.bitRaster = new BitRaster($('#bits'));
     this._rowAcc = 0;
+    this._specAcc = 0;
+    this._specData = null;
     this._lastFrame = performance.now();
   }
 
@@ -479,6 +486,8 @@ class App {
     this.trace.reset();
     this.waterfall.clear();
     this._rowAcc = 0;
+    this._specAcc = 0;
+    this._specData = null;
     const p = this.vp(this.current);
     const span = this.waterfall.rows / Math.max(1, p.speed);
     this._prefill = {
@@ -487,6 +496,23 @@ class App {
       t1: this.engine.effectiveTime(this.channel),
       span,
     };
+  }
+
+  /**
+   * The moment one prefill row should show. Rows go in oldest first, so row 0 is
+   * the far end of the history and the last row is the present.
+   *
+   * A pinned channel has no history outside the box the user drew, so the fill
+   * walks backwards through the clip and wraps at its edges — the same samples
+   * the clip is about to replay, in the order it will replay them.
+   */
+  prefillTime(pf, pin) {
+    const frac = pf.rows > 1 ? pf.row / (pf.rows - 1) : 1;
+    if (!pin) return Math.max(0, pf.t1 - pf.span * (1 - frac));
+    const t0 = pin.params.t0.value;
+    const d = Math.max(1e-4, pin.params.t1.value - t0);
+    const back = pf.span * this.engine.clipRate(pin) * (1 - frac);
+    return t0 + (((pf.t1 - back - t0) % d) + d) % d;
   }
 
   /**
@@ -868,13 +894,12 @@ class App {
 
       const pf = this._prefill;
       if (pf) {
-        // oldest first, a slice per frame. The slice is sized by the work each row
-        // costs — bins × decimation input samples — so a heavily decimated channel
-        // fills more slowly rather than freezing the page.
-        const perRow = p.bins * (this.node().params && this.node().params.decim
-          ? this.node().params.decim.value : 1);
-        const budget = Math.max(1, Math.min(14, Math.floor(120000 / Math.max(1, perRow))));
-        for (let k = 0; k < budget && pf.row < pf.rows; k++, pf.row++) {
+        // Oldest first, as many rows as fit in a slice of the frame. Timing the work
+        // beats predicting it: the cost per row varies with decimation, cache state
+        // and machine, and a formula tuned to one of those is wrong for the others.
+        const deadline = performance.now() + 6;
+        for (let k = 0; pf.row < pf.rows; k++, pf.row++) {
+          if (k > 0 && performance.now() > deadline) break;
           const at = this.prefillTime(pf, pin);
           const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
           if (f.kind === 'spectrum') {
@@ -893,14 +918,24 @@ class App {
         this.trace.draw();
         this.waterfall.draw();
       } else {
-        const f = this.engine.frame(this.current, { bins: p.bins, window: p.window });
-        if (f.kind === 'spectrum') {
+        // One spectrum feeds both views, and neither wants 60 a second: the
+        // waterfall takes `speed` rows, the trace only has to look alive. A
+        // frame per animation frame spent most of the budget computing data
+        // nobody ever saw — on a narrow channel that alone was the stall.
+        this._rowAcc += dt / 1000;
+        this._specAcc += dt / 1000;
+        const interval = 1 / Math.max(1, p.speed);
+        const rowDue = this._rowAcc >= interval;
+        if (rowDue || this._specAcc >= SPEC_PERIOD || this._specData?.length !== p.bins) {
+          this._specAcc = 0;
+          const f = this.engine.frame(this.current, { bins: p.bins, window: p.window });
+          if (f.kind === 'spectrum') this._specData = f.data;
+        }
+        if (this._specData) {
           this._autoAcc = (this._autoAcc || 0) + 1;
-          if (this._autoAcc > 20) { this._autoAcc = 0; this.applyAutoRange(f.data, false); }
-          this.trace.push(f.data);
-          this._rowAcc += dt / 1000;
-          const interval = 1 / Math.max(1, p.speed);
-          if (this._rowAcc >= interval) { this._rowAcc = 0; this.waterfall.push(f.data); }
+          if (this._autoAcc > 20) { this._autoAcc = 0; this.applyAutoRange(this._specData, false); }
+          this.trace.push(this._specData);
+          if (rowDue) { this._rowAcc = 0; this.waterfall.push(this._specData); }
           this.trace.draw();
           this.waterfall.draw();
         }
@@ -943,7 +978,10 @@ class App {
   }
 }
 
-new App().start().catch((e) => {
+const app = new App();
+// a handle for the console and for tests; nothing in the app reads it back
+window.sdrflex = app;
+app.start().catch((e) => {
   document.body.innerHTML = `<pre class="fatal">${e && e.stack ? e.stack : e}</pre>`;
 });
 
