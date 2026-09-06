@@ -249,11 +249,19 @@ absolute RF, are the honest indicator of where you are.
 drag to pan; `+`/`-` to zoom about the centre; `0` or double-click to fit the span. A
 `×` factor appears on the axis only when zoomed, so the default view says nothing.
 
+### Chrome sits beside the signal, not on it
+
+The parameter bar floated over the waterfall and covered the frequency axis — the
+labels it could least afford to hide. Both bars now sit **below the axis**: the
+transport pill, then the options pill. Floating buys nothing if what it floats over is
+the thing you were reading.
+
 ### Instrumentation is not chrome
 
 The interaction, travel, frame-rate and jitter counters are a **development
-instrument**, not part of the product. They live behind a `budgets` toggle (or `M`),
-off by default. Their job is to fail a build, not to occupy a permanent strip in a
+instrument**, not part of the product. They live behind the `M` key, off by
+default, with no button — a control for a development instrument was still a control
+on the bar. Their job is to fail a build, not to occupy a permanent strip in a
 tool whose tenth law is that chrome recedes.
 
 ### Where settings live

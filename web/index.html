@@ -16,7 +16,6 @@
   <div class="tabs" id="tabs"></div>
 
   <div class="panes">
-    <div class="strip" id="strip"></div>
     <!-- Spectrum + waterfall: one tab, one shared frequency axis (ADR-0020) -->
     <div class="pane" id="pane-spectrum">
       <div class="stage" id="stage">
@@ -44,13 +43,15 @@
     <div class="pane scrolly" id="pane-events" hidden></div>
   </div>
 
-  <div class="transport">
-    <button id="back" class="tbtn" aria-label="back one second" title="back 1 s">◀◀</button>
-    <button id="play" class="tbtn play" aria-label="play or pause">❚❚</button>
-    <button id="fwd" class="tbtn" aria-label="forward one second" title="forward 1 s">▶▶</button>
-    <span id="clock" class="mono clock">0.000 s</span>
-    <span class="track"><i></i></span>
-    <button id="budgets" class="tbtn small" aria-pressed="false">budgets</button>
+  <div class="dock">
+    <div class="transport">
+      <button id="back" class="tbtn" aria-label="back one second" title="back 1 s">◀◀</button>
+      <button id="play" class="tbtn play" aria-label="play or pause">❚❚</button>
+      <button id="fwd" class="tbtn" aria-label="forward one second" title="forward 1 s">▶▶</button>
+      <span id="clock" class="mono clock">0.000 s</span>
+      <span class="track"><i></i></span>
+    </div>
+    <div class="strip" id="strip"></div>
   </div>
 
   <div class="metrics" id="metrics" hidden></div>

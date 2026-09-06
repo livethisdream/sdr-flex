@@ -805,14 +805,11 @@ class App {
     $('#back').addEventListener('click', () => step(-1));
     $('#fwd').addEventListener('click', () => step(1));
 
-    const budgets = $('#budgets');
-    budgets.addEventListener('click', () => {
-      const on = $('#metrics').hidden;
-      $('#metrics').hidden = !on;
-      budgets.setAttribute('aria-pressed', String(on));
-      budgets.classList.toggle('on', on);
+    // the budgets readout is a development instrument, reachable by key alone
+    this.toggleBudgets = () => {
+      $('#metrics').hidden = !$('#metrics').hidden;
       this.metrics.render();
-    });
+    };
 
     $('#play').addEventListener('click', () => {
       this.setPlaying(!this.engine.playing);
@@ -824,7 +821,7 @@ class App {
       if (e.key === ' ') { e.preventDefault(); $('#play').click(); }
       if (e.key === 'ArrowLeft') { e.preventDefault(); $('#back').click(); }
       if (e.key === 'ArrowRight') { e.preventDefault(); $('#fwd').click(); }
-      if (e.key === 'm' || e.key === 'M') { $('#budgets').click(); }
+      if (e.key === 'm' || e.key === 'M') { this.toggleBudgets(); }
       if (e.key === '=' || e.key === '+') { e.preventDefault(); this.zoomKey(1 / 1.4); }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); this.zoomKey(1.4); }
       if (e.key === '0') { e.preventDefault(); this.resetZoom && this.resetZoom(); }
@@ -837,6 +834,17 @@ class App {
 
   // ── loop ─────────────────────────────────────────────────────────────────
   loop(ts) {
+    try {
+      this._frame(ts);
+    } catch (err) {
+      // One bad frame should cost a frame, not the session. Before this, a throw
+      // stopped the loop re-arming and only a reload brought anything back.
+      if (!this._errShown) { this._errShown = true; console.error(err); this.setStageBadge('⚠ render error — see console'); }
+    }
+    requestAnimationFrame((t) => this.loop(t));
+  }
+
+  _frame(ts) {
     const dt = ts - this._lastFrame;
     this._lastFrame = ts;
     this.metrics.frame(dt);
@@ -860,8 +868,12 @@ class App {
 
       const pf = this._prefill;
       if (pf) {
-        // oldest first, a slice per frame, so the history appears without a stall
-        const budget = 14;
+        // oldest first, a slice per frame. The slice is sized by the work each row
+        // costs — bins × decimation input samples — so a heavily decimated channel
+        // fills more slowly rather than freezing the page.
+        const perRow = p.bins * (this.node().params && this.node().params.decim
+          ? this.node().params.decim.value : 1);
+        const budget = Math.max(1, Math.min(14, Math.floor(120000 / Math.max(1, perRow))));
         for (let k = 0; k < budget && pf.row < pf.rows; k++, pf.row++) {
           const at = this.prefillTime(pf, pin);
           const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
@@ -928,7 +940,6 @@ class App {
 
     const cp = this.engine.isPinned(this.channel);
     $('#clock').textContent = (cp ? this.engine.clipPos(cp) : this.engine.t).toFixed(3) + ' s';
-    requestAnimationFrame((t) => this.loop(t));
   }
 }
 

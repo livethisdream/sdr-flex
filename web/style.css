@@ -79,26 +79,37 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .zoomtag { color:var(--accent); }
 .axis { display:flex; justify-content:space-between; padding:.28rem .6rem; border-top:1px solid var(--rule-lo); font-family:var(--mono); font-size:.62rem; color:var(--dim); font-variant-numeric:tabular-nums; }
 
-.transport {
-  display:flex; align-items:center; gap:.45rem; padding:.4rem .7rem;
-  border-top:1px solid var(--rule); border-bottom:1px solid var(--rule);
-  font-family:var(--mono); font-size:.72rem; color:var(--dim);
+/* Both bars sit under the frequency axis rather than over the waterfall: the
+   options pill covering the labels was the thing it most needed not to cover. */
+.dock {
+  display:flex; flex-direction:column; align-items:center; gap:.4rem;
+  padding:.55rem .7rem .7rem; background:var(--ground);
 }
+.transport {
+  display:flex; align-items:center; gap:.4rem;
+  width:max-content; max-width:calc(100% - 1.4rem);
+  padding:.3rem .55rem; border-radius:999px;
+  background:rgba(17,21,32,.88); border:1px solid var(--rule);
+  box-shadow:0 10px 30px -12px rgba(0,0,0,.9);
+  font-family:var(--mono); font-size:.72rem; color:var(--dim);
+  backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+}
+.transport .track { width:clamp(120px, 26vw, 320px); flex:none; }
 .tbtn {
-  color:var(--body); font-size:.78rem; min-width:38px; min-height:34px;
-  border:1px solid var(--rule); border-radius:4px; background:var(--raised);
+  color:var(--body); font-size:.76rem; min-width:34px; min-height:28px;
+  border:none; border-radius:6px; background:none;
   display:inline-flex; align-items:center; justify-content:center;
 }
-.tbtn:hover { border-color:var(--dim); color:var(--bright); }
+.tbtn:hover { background:var(--raised); color:var(--bright); }
 .tbtn:active { background:var(--rule-lo); }
-.tbtn.play { min-width:52px; color:var(--bright); }
+.tbtn.play { min-width:44px; color:var(--bright); }
 .tbtn.play.paused { color:var(--accent); border-color:rgba(255,122,92,.45); }
 .tbtn.small { min-width:auto; min-height:26px; padding:0 .5rem; font-size:.64rem; color:var(--dim); background:transparent; }
 .tbtn.small.on { color:var(--accent); border-color:rgba(255,122,92,.45); }
 .clock { margin-left:.4rem; color:var(--body); font-variant-numeric:tabular-nums; }
 /* a passive position indicator — deliberately not styled as a control, since
    dragging it needs the ring recorder (M4) and a fake affordance is worse than none */
-.track { flex:1; height:2px; background:var(--rule-lo); border-radius:2px; position:relative; margin-inline:.5rem; }
+.track { height:2px; background:var(--rule-lo); border-radius:2px; position:relative; margin-inline:.5rem; }
 .track i { position:absolute; left:0; top:-3px; width:2px; height:8px; background:var(--accent); }
 
 
@@ -249,8 +260,6 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    shrink-fits against what is left of the window — half of it — so the bar
    wrapped onto two rows at phone widths while its contents fitted easily. */
 .strip {
-  position:absolute; left:50%; transform:translateX(-50%);
-  bottom:clamp(.6rem, 2vh, 1.1rem); z-index:6;
   width:max-content; max-width:calc(100% - 1.4rem);
   display:flex; align-items:center; gap:.5rem;
   padding:.3rem .7rem; border-radius:999px;

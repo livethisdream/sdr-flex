@@ -40,6 +40,15 @@ screenshot:
   difference is the burst's rise time, which is what a real receiver would measure too.
 - **The decode** recovers `aa aa 3c 69` end to end.
 
+## Known limits
+
+- **Decimation is capped at 96**, so the narrowest channel off the 480 kS/s source is
+  5 kS/s. Work per display frame scales with `bins × decim`, and past this the toy
+  would read a million input samples to draw one row. A real engine cascades half-band
+  stages instead of running one long filter at the input rate.
+- The mixer uses a phasor recurrence rather than `cos`/`sin` per sample — 109 dB SFDR,
+  and no measurable magnitude drift over 200 000 samples.
+
 ## What is faked, deliberately
 
 - **Latency.** The mock spends the [budget](../docs/08-ui-principles.md#latency-budget)

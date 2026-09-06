@@ -138,15 +138,26 @@ export function xlateFilterDecimate(iq, taps, offsetHz, fs, decim, count, startP
   const out = new Float32Array(count * 2);
   const dphi = (-2 * Math.PI * offsetHz) / fs;
 
-  // mix first (cheaper to reason about than folding into the convolution)
+  // Mix by rotating a running phasor rather than calling cos/sin per sample. A
+  // narrow channel needs count*decim input samples — half a million for a 1 kHz
+  // channel off a 480 kS/s source — and two transcendentals apiece locked the
+  // page solid. The recurrence is one complex multiply; drift is corrected every
+  // few thousand samples, which is far more often than it needs.
   const need = count * decim + nt;
   const mixed = new Float32Array(need * 2);
+  const rc = Math.cos(dphi), rs = Math.sin(dphi);
+  let pc = Math.cos(startPhase), ps = Math.sin(startPhase);
   for (let i = 0; i < need; i++) {
-    const ph = startPhase + dphi * i;
-    const c = Math.cos(ph), s = Math.sin(ph);
     const re = iq[i * 2], im = iq[i * 2 + 1];
-    mixed[i * 2] = re * c - im * s;
-    mixed[i * 2 + 1] = re * s + im * c;
+    mixed[i * 2] = re * pc - im * ps;
+    mixed[i * 2 + 1] = re * ps + im * pc;
+    const npc = pc * rc - ps * rs;
+    ps = pc * rs + ps * rc;
+    pc = npc;
+    if ((i & 4095) === 4095) {
+      const m = Math.hypot(pc, ps) || 1;    // renormalise away accumulated drift
+      pc /= m; ps /= m;
+    }
   }
 
   for (let o = 0; o < count; o++) {
@@ -164,8 +175,15 @@ export function xlateFilterDecimate(iq, taps, offsetHz, fs, decim, count, startP
 }
 
 /** Pick a decimation that lands at or below the target rate, favouring small factors. */
+/**
+ * Work per display frame scales with `bins * decim`, so decimation is capped.
+ * Past this the toy would read a million input samples to draw one row; a real
+ * engine would cascade half-band stages instead of one long filter.
+ */
+export const MAX_DECIM = 96;
+
 export function chooseDecimation(fs, targetRate) {
-  const max = Math.max(1, Math.floor(fs / targetRate));
+  const max = Math.max(1, Math.min(MAX_DECIM, Math.floor(fs / targetRate)));
   for (let d = max; d >= 1; d--) {
     let n = d, ok = true;
     for (const p of [2, 3, 5, 7]) while (n % p === 0) n /= p;
