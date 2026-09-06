@@ -988,6 +988,10 @@ class App {
     });
 
     addEventListener('keydown', (e) => {
+      // Escape means "never mind" wherever it is pressed. Behind the input guard it
+      // did not, so dismissing the menu from its own search box left the selection
+      // box armed on the stage with nothing behind it.
+      if (e.key === 'Escape') { this.clearSelection(); this.menu.close(); return; }
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
       if (e.key === ' ') { e.preventDefault(); $('#play').click(); }
       if (e.key === 'ArrowLeft') { e.preventDefault(); $('#back').click(); }
@@ -996,8 +1000,8 @@ class App {
       if (e.key === '=' || e.key === '+') { e.preventDefault(); this.zoomKey(1 / 1.4); }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); this.zoomKey(1.4); }
       if (e.key === '0') { e.preventDefault(); this.resetZoom && this.resetZoom(); }
-      if (e.key === '/') { e.preventDefault(); this.metrics.beginOp(); const r = $('#stage').getBoundingClientRect(); this.openMenu(r.left + r.width / 2, r.top + 60, this.selection); }
-      if (e.key === 'Escape') { this.clearSelection(); this.menu.close(); }
+      // `/` in an open menu asks for its search box; the menu handles that itself
+      if (e.key === '/' && this.menu.el.hidden) { e.preventDefault(); this.metrics.beginOp(); const r = $('#stage').getBoundingClientRect(); this.openMenu(r.left + r.width / 2, r.top + 60, this.selection); }
     });
 
     addEventListener('resize', () => { this.renderStage(); this.renderStrip(); });

@@ -73,10 +73,12 @@ Four mitigations, all load-bearing:
 1. **Releasing a drag opens the menu automatically.** You never have to *know* to
    right-click; completing the one gesture the tool teaches you opens it. This is the
    on-ramp, and it is why the decision is safe.
-2. **The menu is flat, grouped by headers once the list is long enough to need
-   scanning rather than reading, with a search field at the top** (`/`
-   focuses it). No submenus — [law 3](../08-ui-principles.md#ten-laws) survives intact,
-   and it would not survive a nested context menu.
+2. **The menu is flat, with headers and a search field that appear once the list is
+   long enough to need scanning rather than reading.** Below that, typing anything
+   summons the search field with what you typed already in it, and `/` summons it
+   empty — so the keyboard path never depends on the field being drawn. No submenus —
+   [law 3](../08-ui-principles.md#ten-laws) survives intact, and it would not survive
+   a nested context menu.
 3. **A persistent `+` on the tab bar opens the same menu.** There is always one
    visible entry point for someone who has not discovered the gesture.
 4. **Hover reveals verbs.** Hovering an object highlights it and shows its primary

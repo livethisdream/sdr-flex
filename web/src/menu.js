@@ -15,13 +15,26 @@ export class ContextMenu {
     addEventListener('keydown', (e) => {
       if (this.el.hidden) return;
       if (e.key === 'Escape') { this.close(); e.preventDefault(); return; }
-      // typing anywhere in an open menu goes to the search box, so not autofocusing
-      // costs a touch user nothing and a keyboard user nothing either
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Typing anywhere in an open menu goes to the search box — which is also how
+      // the box arrives when the list was short enough not to draw one. `/` asks for
+      // it empty; any other printable key asks for it and is the first thing in it.
+      const opening = e.key === '/';
+      if (!opening && e.key.length !== 1) return;
       const input = this.el.querySelector('input');
-      if (input && document.activeElement !== input && e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
+      if (!input) {
+        this.searching = true;
+        this.filter = opening ? '' : e.key;
+        this._render();
+        const ni = this.el.querySelector('input');
+        if (ni) { ni.focus(); ni.setSelectionRange(ni.value.length, ni.value.length); }
+        e.preventDefault();
+        e.stopPropagation();
+      } else if (document.activeElement !== input) {
         input.focus();
+        if (opening) { e.preventDefault(); e.stopPropagation(); }
       }
-    });
+    }, true);
   }
 
   open(x, y, ops, onPick) {
@@ -29,6 +42,7 @@ export class ContextMenu {
     this.onPick = onPick;
     this._picked = false;
     this.filter = '';
+    this.searching = false;
     this.el.hidden = false;
     this._render();
 
@@ -80,6 +94,11 @@ export class ContextMenu {
     // decoders will make it. Searching still matches on group name either way, so
     // "decode" finds the decoders whether or not the word is on screen.
     const headed = shown.length > 7 && groups.length > 1;
+    // A search box over four self-describing items is a control for a problem the
+    // list does not have — and on a phone it is a keyboard covering half the screen
+    // on the way to a menu. It appears with the headings, or the moment someone
+    // types, whichever comes first; `/` asks for it by name.
+    const searchable = headed || this.searching || !!this.filter;
     // a hairline still separates the runs — the grouping was worth keeping, the
     // words above it were not
     const item = (o, i, gi) =>
@@ -88,27 +107,31 @@ export class ContextMenu {
       `${o.stub ? '<span class="soon">M4</span>' : ''}</button>`;
 
     this.el.innerHTML =
-      `<div class="ctx-search"><input type="text" placeholder="search…" value="${this.filter}" aria-label="Search operations"></div>` +
+      (searchable
+        ? `<div class="ctx-search"><input type="text" placeholder="search…" value="${this.filter}" aria-label="Search operations"></div>`
+        : '') +
       (groups.length
         ? groups.map((g, gi) => (headed ? `<div class="ctx-grp">${g.name}</div>` : '') +
                                 g.items.map((o, i) => item(o, i, gi)).join('')).join('')
         : '<div class="ctx-none">nothing valid here</div>');
 
     const input = this.el.querySelector('input');
-    input.addEventListener('input', () => {
-      this.filter = input.value;
-      const pos = input.selectionStart;
-      this._render();
-      const ni = this.el.querySelector('input');
-      ni.focus();
-      ni.setSelectionRange(pos, pos);
-    });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const first = this.el.querySelector('.ctx-i:not(.stub)');
-        if (first) first.click();
-      }
-    });
+    if (input) {
+      input.addEventListener('input', () => {
+        this.filter = input.value;
+        const pos = input.selectionStart;
+        this._render();
+        const ni = this.el.querySelector('input');
+        ni.focus();
+        ni.setSelectionRange(pos, pos);
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          const first = this.el.querySelector('.ctx-i:not(.stub)');
+          if (first) first.click();
+        }
+      });
+    }
 
     for (const b of this.el.querySelectorAll('.ctx-i')) {
       b.addEventListener('click', () => {

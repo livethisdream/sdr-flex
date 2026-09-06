@@ -14,8 +14,9 @@ contract we can be held to, with numbers.
    Sceptre bury their capability. Parameters live in the inspector, always visible.
    Confirmation is undo, not a prompt.
 
-3. **Menu depth ≤ 1.** One flat, searchable list of operations, grouped by headers
-   once it is long enough to need them.
+3. **Menu depth ≤ 1.** One flat, searchable list of operations. Headers and the
+   search field appear once it is long enough to need them; below that, typing
+   summons the field with the keystroke in it.
    Anything that wants to be a submenu becomes a filtered search instead. This law is
    what makes contextual menus safe ([ADR-0018](adr/0018-contextual-menus-and-view-tabs.md));
    a nested context menu would be worse than the sidebar it replaced.
