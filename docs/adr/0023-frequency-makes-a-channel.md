@@ -90,14 +90,22 @@ primitive does not work on a live source without it.
 its window to the box — the time display, the slicer's estimator, the bit table. A view
 that quietly read outside the rectangle you drew would make the pin a lie.
 
-A pinned channel's waterfall is a **fixed spectrogram** painted once across the window,
-not a scrolling one. Scrolling implies time is passing; here it is not.
+**A pinned window is a clip, and clips play.** The first implementation painted it as
+a fixed spectrogram, reasoning that time was not passing. That was wrong: a window is
+a non-zero *duration*, so time within it passes perfectly well — it simply does not
+follow the session clock. A pinned channel gets its **own playhead** that runs from
+`t0` to `t1` and loops, and its spectrum and waterfall play exactly like a live
+channel's.
 
-Two things follow that are easy to get wrong. The window must be painted **oldest
-first**, because each row lands on top and scrolls the rest down — painting newest
-first leaves time running backwards down the pane. And a frozen pane has to **say it
-is frozen**: a static waterfall with no explanation is indistinguishable from a broken
-one, so the stage carries a badge naming the pinned window.
+Short windows play **slowed down**. An 80 ms burst at 1× would loop a dozen times a
+second and read as a strobe; the rate is derived so a window takes about four seconds
+to watch, capped at 1× so a long window plays at natural speed. Arriving at a clip
+prefills the waterfall by wrapping backwards through the window, so it is full of the
+clip immediately rather than filling over four seconds.
+
+A clip still has to **say what it is** — an unexplained loop is as confusing as an
+unexplained freeze — so the stage badge names the window and the rate, and the
+transport clock reads the clip position rather than the session's.
 
 The freeze that the gesture introduced also ends with the gesture. Auto-pausing to make
 a time drag coherent is not a reason for the session to stay paused afterwards — a

@@ -80,14 +80,29 @@ export class MockEngine {
   node(id) { return this.nodes.get(id); }
 
   /**
-   * The moment a node is looking at. A channel pinned to a window fixes time for
-   * everything beneath it; otherwise time follows the playhead.
+   * A pinned window is a clip, not a still frame — it has duration, so it plays.
+   * Short bursts play slowed down, because an 80 ms window at 1× would loop a
+   * dozen times a second and read as a strobe rather than a signal.
+   */
+  clipRate(n) {
+    const d = Math.max(1e-4, n.params.t1.value - n.params.t0.value);
+    return Math.min(1, d / 4);           // a window takes about 4 s to watch
+  }
+
+  clipPos(n) {
+    if (n._t == null) n._t = n.params.t0.value;
+    return n._t;
+  }
+
+  /**
+   * The moment a node is looking at: a pinned ancestor's clip position if there is
+   * one, otherwise the session playhead.
    */
   effectiveTime(id) {
     let n = this.node(id);
     while (n) {
       const m = n.params && n.params.timeMode;
-      if (m && m.value === 'pinned') return n.params.t1.value;
+      if (m && m.value === 'pinned') return this.clipPos(n);
       n = n.parent ? this.node(n.parent) : null;
     }
     return this.t;
@@ -201,6 +216,7 @@ export class MockEngine {
     const cold = key === 'decim' || key === 'taps';
     await sleep(cold ? LATENCY.structuralMs : LATENCY.paramMs);
     n.params[key] = { ...n.params[key], value, mode };
+    if (key === 't0' || key === 't1' || key === 'timeMode') n._t = null;
     if (n.op === 'core.tuner') {
       n.out.sampleRate = this.node(n.parent).out.sampleRate / n.params.decim.value;
       n.out.centerHz = n.params.centerHz.value;
@@ -224,7 +240,19 @@ export class MockEngine {
     const now = performance.now();
     const dt = (now - this._last) / 1000;
     this._last = now;
-    if (this.playing) this.t += Math.min(dt, 0.1);
+    const step = Math.min(dt, 0.1);
+    if (this.playing) {
+      this.t += step;
+      for (const n of this.nodes.values()) {
+        const m = n.params && n.params.timeMode;
+        if (!m || m.value !== 'pinned') continue;
+        const t0 = n.params.t0.value, t1 = n.params.t1.value;
+        const d = Math.max(1e-4, t1 - t0);
+        if (n._t == null || n._t < t0 || n._t > t1) n._t = t0;
+        n._t += step * this.clipRate(n);
+        if (n._t > t1) n._t = t0 + ((n._t - t0) % d);   // loop
+      }
+    }
     return this.t;
   }
 

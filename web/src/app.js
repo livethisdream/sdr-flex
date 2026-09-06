@@ -474,7 +474,6 @@ class App {
    * recomputed a few per frame so the switch stays responsive.
    */
   resetSpectrum() {
-    this._pinKey = null;
     this.trace.reset();
     this.waterfall.clear();
     this._rowAcc = 0;
@@ -846,67 +845,50 @@ class App {
 
     if (v === 'Spectrum') {
       const pin = this.engine.isPinned(this.channel);
-      const pinKey = pin ? `${pin.id}:${pin.params.t0.value}:${pin.params.t1.value}:${p.bins}:${p.window}` : null;
 
       if (pin) {
-        // a pinned window does not scroll — paint it once as a fixed spectrogram
-        if (this._pinKey !== pinKey) {
-          this._pinKey = pinKey;
-          const rows = this.waterfall.rows;
-          const t0 = pin.params.t0.value, t1 = pin.params.t1.value;
-          this.trace.reset();
-          // oldest pushed first: each push lands on top and scrolls the rest down,
-          // so pushing newest-first would leave the window running backwards
-          for (let i = 0; i < rows; i++) {
-            const at = t0 + (i / (rows - 1)) * (t1 - t0);
-            const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
-            if (f.kind === 'spectrum') {
-              if (i === 0) this.applyAutoRange(f.data, true);
-              this.waterfall.push(f.data);
-              this.trace.push(f.data);
-            }
+        const r = this.engine.clipRate(pin);
+        this.setStageBadge(
+          `⊓ clip ${pin.params.t0.value.toFixed(3)}–${pin.params.t1.value.toFixed(3)} s` +
+          ` · ×${r < 0.1 ? r.toFixed(3) : r.toFixed(2)}` +
+          (this.engine.playing ? '' : ' · paused'));
+      } else {
+        this.setStageBadge(this.engine.playing ? '' : '▶ paused');
+      }
+
+      const pf = this._prefill;
+      if (pf) {
+        // oldest first, a slice per frame, so the history appears without a stall
+        const budget = 14;
+        for (let k = 0; k < budget && pf.row < pf.rows; k++, pf.row++) {
+          const at = this.prefillTime(pf, pin);
+          const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
+          if (f.kind === 'spectrum') {
+            if (pf.row === 0) this.applyAutoRange(f.data, true);
+            this.waterfall.push(f.data);
+            this.trace.push(f.data);
           }
         }
+        if (pf.row >= pf.rows) this._prefill = null;
         this.trace.draw();
         this.waterfall.draw();
-        this.setStageBadge(`⊓ pinned ${pin.params.t0.value.toFixed(3)}–${pin.params.t1.value.toFixed(3)} s`);
+      } else if (!this.engine.playing) {
+        // Paused means the display holds. Pushing rows while the clock is stopped
+        // scrolls the same spectrum over and over, which looks like motion and is
+        // the opposite of what pause promises.
+        this.trace.draw();
+        this.waterfall.draw();
       } else {
-        this._pinKey = null;
-        this.setStageBadge(this.engine.playing ? '' : '▶ paused');
-        const pf = this._prefill;
-        if (pf) {
-          // oldest first, a slice per frame, so the history appears without a stall
-          const budget = 14;
-          for (let k = 0; k < budget && pf.row < pf.rows; k++, pf.row++) {
-            const at = pf.t1 - pf.span * (1 - pf.row / (pf.rows - 1));
-            const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
-            if (f.kind === 'spectrum') {
-              if (pf.row === 0) this.applyAutoRange(f.data, true);
-              this.waterfall.push(f.data);
-              this.trace.push(f.data);
-            }
-          }
-          if (pf.row >= pf.rows) this._prefill = null;
+        const f = this.engine.frame(this.current, { bins: p.bins, window: p.window });
+        if (f.kind === 'spectrum') {
+          this._autoAcc = (this._autoAcc || 0) + 1;
+          if (this._autoAcc > 20) { this._autoAcc = 0; this.applyAutoRange(f.data, false); }
+          this.trace.push(f.data);
+          this._rowAcc += dt / 1000;
+          const interval = 1 / Math.max(1, p.speed);
+          if (this._rowAcc >= interval) { this._rowAcc = 0; this.waterfall.push(f.data); }
           this.trace.draw();
           this.waterfall.draw();
-        } else if (!this.engine.playing) {
-          // Paused means the display holds. Pushing rows while the clock is stopped
-          // scrolls the same spectrum over and over, which looks like motion and is
-          // the opposite of what pause promises.
-          this.trace.draw();
-          this.waterfall.draw();
-        } else {
-          const f = this.engine.frame(this.current, { bins: p.bins, window: p.window });
-          if (f.kind === 'spectrum') {
-            this._autoAcc = (this._autoAcc || 0) + 1;
-            if (this._autoAcc > 20) { this._autoAcc = 0; this.applyAutoRange(f.data, false); }
-            this.trace.push(f.data);
-            this._rowAcc += dt / 1000;
-            const interval = 1 / Math.max(1, p.speed);
-            if (this._rowAcc >= interval) { this._rowAcc = 0; this.waterfall.push(f.data); }
-            this.trace.draw();
-            this.waterfall.draw();
-          }
         }
       }
     } else if (v === 'Time') {
@@ -942,7 +924,8 @@ class App {
       }
     }
 
-    $('#clock').textContent = this.engine.t.toFixed(3) + ' s';
+    const cp = this.engine.isPinned(this.channel);
+    $('#clock').textContent = (cp ? this.engine.clipPos(cp) : this.engine.t).toFixed(3) + ' s';
     requestAnimationFrame((t) => this.loop(t));
   }
 }
