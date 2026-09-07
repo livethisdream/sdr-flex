@@ -279,7 +279,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   font-family:var(--mono); font-size:.72rem; color:var(--dim);
   backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
 }
-.transport .track { width:clamp(120px, 26vw, 320px); flex:none; }
+.transport .track { flex:1 1 auto; width:clamp(44px, 26vw, 320px); min-width:44px; }
 .tbtn {
   color:var(--body); font-size:.76rem; min-width:34px; min-height:28px;
   border:none; border-radius:6px; background:none;
@@ -291,7 +291,12 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tbtn.play.paused { color:var(--accent); border-color:var(--accent-mid); }
 .tbtn.small { min-width:auto; min-height:26px; padding:0 .5rem; font-size:.64rem; color:var(--dim); background:transparent; }
 .tbtn.small.on { color:var(--accent); border-color:var(--accent-mid); }
-.clock { margin-left:.4rem; color:var(--body); font-variant-numeric:tabular-nums; }
+/* The clock is text and must not break; the rail beside it is the thing with slack.
+   Before this, `.track` held a hard 120px minimum and the clock was the only flex
+   item that could give, so on a narrow phone "0.678 s" wrapped its unit onto a
+   second line and stood the whole transport up to 40px. */
+.clock { margin-left:.4rem; color:var(--body); font-variant-numeric:tabular-nums;
+         white-space:nowrap; flex:none; }
 
 /* The rail is 2px but the target is the whole 22px button: a 2px hit area is a
    control you can see and not use. Every source is time-indexed (ADR-0005), so
@@ -518,6 +523,9 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .pill .pv { color:inherit; font-variant-numeric:tabular-nums; }
 .pill .pu { font-size:.58rem; color:var(--dim); }
 .pill.more { color:var(--dim); gap:.2rem; }
+/* a collapsed read-only run names itself the way its title did */
+.pill.more.ro { font-size:.54rem; letter-spacing:.13em; text-transform:uppercase; }
+.pill.more.ro .pu { letter-spacing:0; }
 .pill.more:hover { color:var(--bright); }
 
 /* ── popover: the control, shaped to the parameter ── */
