@@ -16,7 +16,7 @@
   carries IQ — the source, a tuner, a gate; everything downstream of one until the
   next channel is a *block*. Blocks are tabs, not destinations: a channel is a
   workspace you stay in while you flip between the results of what you applied to it.
-  So a gate's tab bar reads `Spectrum │ C · AM env │ D · PWM │ Flow`. Views that share
+  So a gate's tab bar reads `Spectrum │ C · AM demod │ D · PWM │ Flow`. Views that share
   an axis occupy one tab together — spectrum and waterfall are the **Spectrum** tab
   ([ADR-0020](0020-views-that-share-an-axis.md)).
 
@@ -30,7 +30,7 @@
 ┌──────────────────────────────────────────────────────────────────┐
 │ rtl-sdr #0 › A · Tuner ⊓ ✕ › B · Tuner                           │ breadcrumb
 ├──────────────────────────────────────────────────────────────────┤
-│ Spectrum │ AM env ✕ │ PWM │ Flow │                             + │ block tabs
+│ Spectrum │ AM demod ✕ │ Listen │ Flow │                        + │ block tabs
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │                  CANVAS — full width                             │
@@ -39,7 +39,7 @@
 ├──────────────────────────────────────────────────────────────────┤
 │ ◀◀ ▶ ▶▶  ──────────●───────────────────────────  12.331 s        │ transport
 ├──────────────────────────────────────────────────────────────────┤
-│ PWM D   symbol 417 µs ⟲   threshold 0.42 🔒   invert off ⟲       │ inspector
+│ PWM D   symbol 417 µs ⟲   threshold 0.42 🔒   invert off ⟲        │ inspector
 └──────────────────────────────────────────────────────────────────┘
 ```
 

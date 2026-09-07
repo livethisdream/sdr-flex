@@ -77,13 +77,13 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 ┌──────────────────────────────────────────────────────────────────┐
 │ rtl-sdr #0 › A · Tuner ⊓ ✕ › B · Tuner                           │ breadcrumb
 ├──────────────────────────────────────────────────────────────────┤
-│ Spectrum │ AM env ✕ │ PWM │ Flow │                            + │ block tabs
+│ Spectrum │ AM demod ✕ │ Listen │ Flow │                        + │ block tabs
 ├──────────────────────────────────────────────────────────────────┤
 │      ╱╲        ╱╲                                           ▓    │ live + peak
 │  ╱╲╱  ╲──╱╲──╱  ╲───╲                                       ▓    │ hold traces
 ├────────────────── draggable splitter ───────────────────────▒────┤
 │ ░░░▒▓█▓▒░░    ░▒▓░                                          ░    │ waterfall
-│ ░░░▒▓█▓▒░░    ░▒▓░        ← drag a box, release, menu opens       │ + color bar
+│ ░░░▒▓█▓▒░░    ░▒▓░        ← drag a box, release, menu opens      │ + color bar
 ├──────────────────────────────────────────────────────────────────┤
 │ 433.720    433.820    433.920 MHz    434.020    434.120          │ ONE axis
 ├──────────────────────────────────────────────────────────────────┤
@@ -195,7 +195,7 @@ say.** Chrome accretes by addition and only ever shrinks deliberately.
 
 ### Naming tabs
 
-A block tab is named for the node whose result it shows — `AM env` — and the channel
+A block tab is named for the node whose result it shows — `AM demod` — and the channel
 is named **once**, in the breadcrumb, rather than prefixed onto every tab.
 
 Prefixing (`A: Spectrum`, `A: Time`, `A: Flow`) repeats information that is identical
@@ -204,7 +204,7 @@ is the word budget's exact failure mode.
 
 **Only channels are lettered.** A letter answers "which signal am I looking at", and
 there is one of those per breadcrumb entry. Spending letters on the blocks inside a
-channel — `A · Tuner` › `C · AM env` › `D · PWM` — gave every demodulator a name that
+channel — `A · Tuner` › `C · AM demod` › `D · PWM` — gave every demodulator a name that
 carried no information, and made a chain of blocks read as a row of peers. Blocks are
 known by what they do, which is shorter and already unique within a channel.
 
@@ -311,7 +311,7 @@ keep it honest.
 |---|---|
 | `CENTER` · `433.8950` · `MHz` | why 433.8950 — the estimator and its evidence |
 | The colored mode edge | "Manual, pinned 12:04. Auto would suggest 47.5 kHz." |
-| `AM envelope` in the menu | what it does, what it outputs, its rate constraint |
+| `AM demod` in the menu | what it does, what it outputs, its rate constraint |
 | `rtl_433` and its `ext` mark | "External process — opaque, no drill-down past this node" |
 | `ring 41.2 s` | retention policy, disk budget, where the ring is written |
 | A node's error mark | the traceback |

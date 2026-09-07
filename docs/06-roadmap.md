@@ -17,7 +17,7 @@ and try the workflow. See [ADR-0021](adr/0021-mock-engine-first.md).
 - Client shell: breadcrumb, view tabs, contextual menu on drag-release, cell strip
 - Stacked spectrum + waterfall on one shared frequency axis (ADR-0020), WebGL2
 - Mock engine: synthetic scene, plus drag-and-drop of a real SigMF or `cf32` file
-- Enough DSP in JS to be honest: tuner (shift + decimate + FIR), gate, AM envelope,
+- Enough DSP in JS to be honest: tuner (shift + decimate + FIR), gate, AM demod,
   PWM slicer, and a pulse-width autocorrelation estimator for `⟲ auto`
 - **The mock injects the latency budget** — ~40 ms on parameter changes, frames capped
   at 30 fps with realistic jitter — so the prototype feels like the real thing rather
@@ -34,7 +34,7 @@ and the interaction and travel budgets are being measured automatically.
 cell strip), stacked spectrum + waterfall on one shared axis with a WebGL2 renderer
 and a 2D fallback, working FFT size / window / averaging / dB range / colormap /
 scroll speed, a draggable color bar, auto/manual with real estimators and hover
-explanation, and the full tune → AM envelope → PWM slicer chain recovering
+explanation, and the full tune → AM demod → PWM slicer chain recovering
 `aa aa 3c 69` out of the synthetic scene. Metrics for interaction count, pointer
 travel, frame rate and jitter run live.
 

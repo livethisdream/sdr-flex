@@ -35,13 +35,13 @@ Actions come to the cursor. State gets a persistent surface. Views are tabs.
 ┌──────────────────────────────────────────────────────────────────┐
 │ rtl-sdr #0 › A · Tuner ⊓ ✕ › B · Tuner                           │ breadcrumb
 ├──────────────────────────────────────────────────────────────────┤
-│ Spectrum │ AM env ✕ │ PWM │ Flow │                            + │ block tabs
+│ Spectrum │ AM demod ✕ │ Listen │ Flow │                        + │ block tabs
 ├──────────────────────────────────────────────────────────────────┤
 │      ╱╲        ╱╲                                           ▓    │ live + peak
 │  ╱╲╱  ╲──╱╲──╱  ╲───╲                                       ▓    │ hold traces
 ├────────────────── draggable splitter ───────────────────────▒────┤
 │ ░░░▒▓█▓▒░░    ░▒▓░                                          ░    │ waterfall
-│ ░░░▒▓█▓▒░░    ░▒▓░        ← drag a box, release, menu opens       │ + color bar
+│ ░░░▒▓█▓▒░░    ░▒▓░        ← drag a box, release, menu opens      │ + color bar
 ├──────────────────────────────────────────────────────────────────┤
 │ 433.720    433.820    433.920 MHz    434.020    434.120          │ ONE axis
 ├──────────────────────────────────────────────────────────────────┤
@@ -109,7 +109,7 @@ disclosure triangle.
 3. Scrubs back 8 seconds (the ring recorder has it) and drags a *time* box around
    one burst. → Node **B**: `Gate, t ∈ [−7.412 s, −7.374 s], 38 ms`.
    Canvas shows that burst's spectrogram at full resolution.
-4. Palette on B offers demodulators valid for `iq`. Picks **AM envelope**.
+4. Palette on B offers demodulators valid for `iq`. Picks **AM demod**.
    → Node **C**, output `real @ 100 kS/s`. Canvas becomes a time-series: a clean
    OOK pulse train. Amplitude histogram in the inspector shows two clusters.
 5. Menu on C offers **PWM / PPM slicer**. Its symbol period arrives as `⟲ 417 µs` —

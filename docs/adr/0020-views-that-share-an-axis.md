@@ -13,7 +13,7 @@ one pane with that axis shared — not in two tabs.*
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ Spectrum │ Time │ Constellation │ Bits │ Flow │ +        │
+│ Spectrum │ Time │ Constellation │ Bits │ Flow │ +       │
 ├─────────────────────────────────────────────────────────┤
 │      ╱╲        ╱╲                                       │  live trace
 │  ╱╲╱  ╲──╱╲──╱  ╲───╲                                   │  + peak hold

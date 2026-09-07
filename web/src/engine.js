@@ -30,21 +30,25 @@ export const OPS = {
   // A time window is a property of a channel, not a node of its own (ADR-0023),
   // so there is no gate operation here: dragging the box down the waterfall pins
   // the tuner this menu creates.
+  // The ids name the algorithm — an envelope detector, an FM discriminator — because
+  // that is what someone reading the graph needs to know. The display names follow
+  // the convention every radio uses, because that is what someone *choosing* one is
+  // looking for: nobody scans a menu for "envelope detector".
   'core.am_envelope': {
-    name: 'AM envelope', group: 'Demodulate', in: 'iq', out: 'real',
+    name: 'AM demod', group: 'Demodulate', in: 'iq', out: 'real',
   },
   // These are detectors, not "demodulators" in the sense that bundles a
   // channelizer, AGC, squelch and an audio chain into one panel. The tuner ahead of
   // them already did the filtering; listening happens at the sink. That split is
   // the whole reason these have two parameters each instead of twenty.
   'core.fm_discriminator': {
-    name: 'FM discriminator', group: 'Demodulate', in: 'iq', out: 'real',
+    name: 'FM demod', group: 'Demodulate', in: 'iq', out: 'real',
   },
   'core.ssb': {
-    name: 'SSB', group: 'Demodulate', in: 'iq', out: 'real',
+    name: 'SSB demod', group: 'Demodulate', in: 'iq', out: 'real',
   },
   'core.cw': {
-    name: 'CW', group: 'Demodulate', in: 'iq', out: 'real',
+    name: 'CW demod', group: 'Demodulate', in: 'iq', out: 'real',
   },
   'core.pwm_slicer': {
     name: 'PWM / OOK slicer', group: 'Decode', in: 'real', out: 'bits',
@@ -72,7 +76,7 @@ export const OPS = {
  */
 const DETECTORS = {
   'core.fm_discriminator': {
-    label: 'FM',
+    label: 'FM demod',
     derive(iq, count, fs) {
       const d = dsp.estimateDeviation(iq, count, fs);
       return {
@@ -96,7 +100,7 @@ const DETECTORS = {
     },
   },
   'core.ssb': {
-    label: 'SSB',
+    label: 'SSB demod',
     derive(iq, count, fs) {
       const sb = dsp.estimateSideband(iq, count);
       return {
@@ -118,7 +122,7 @@ const DETECTORS = {
     },
   },
   'core.cw': {
-    label: 'CW',
+    label: 'CW demod',
     derive(iq, count, fs) {
       const off = dsp.estimateCarrierOffset(iq, count, fs);
       return {
@@ -257,7 +261,7 @@ export class MockEngine {
       id: nid('n'), parent, op, label: '', params: {}, out: null, stub: !!spec.stub,
       // Only channels are lettered. A letter is a handle for "which signal am I
       // looking at" — spending them on the blocks inside one channel gave every
-      // demodulator a name that meant nothing and made A · Tuner › C · AM env read
+      // demodulator a name that meant nothing and made A · Tuner › C · AM demod read
       // as two peers. Blocks are known by what they do.
       letter: op === 'core.tuner' ? String.fromCharCode(65 + (this.letters++ % 26)) : null,
     };
@@ -285,7 +289,7 @@ export class MockEngine {
       node.label = 'Tuner';
     } else if (op === 'core.am_envelope') {
       node.out = { kind: 'real', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
-      node.label = 'AM env';
+      node.label = 'AM demod';
     } else if (DETECTORS[op]) {
       // Every detector lands with its parameters already derived from the signal in
       // front of it, and says what it derived them from (ADR-0017). A detector that
