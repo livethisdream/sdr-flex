@@ -62,9 +62,16 @@ parameter bar that measures itself and folds until it fits the window; and a lig
 theme in which the chrome follows the theme while the plot follows its colormap
 ([UI principles](08-ui-principles.md#visual-direction)).
 
-**Still open:** drag-and-drop of a real SigMF file, more than one source at a time and
-the picker on the device chip that goes with it, tearing tabs into tiles, and the
-newcomer test that ADR-0018 asks for.
+And the capability that makes it usable on someone else's signal: **drop an IQ file
+on the window and it becomes the source.** SigMF pairs carry their own rate and center;
+raw `cf32`/`cs16`/`cs8`/`cu8` get them from the filename where gqrx and rtl_433 put
+them, and from a stated default where they do not — with the guess shown and editable
+rather than silent. A file has an end, so the clock stops at it and the scrubber spans
+the capture rather than the session.
+
+**Still open:** more than one source at a time and the picker the device chip is now
+the obvious home for, tearing tabs into tiles, and the newcomer test that ADR-0018 asks
+for.
 
 **Validates:** ADR-0002 (the premise), ADR-0018 (the biggest UX bet, including its one
 real risk: whether a newcomer finds the contextual menu), ADR-0017, ADR-0020, and the

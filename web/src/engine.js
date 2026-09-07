@@ -175,8 +175,35 @@ export class MockEngine {
     };
     this.nodes.set(root.id, root);
     this.root = root;
+    this.capture = null;          // null means the synthetic scene
+    this.ended = false;
     return root;
   }
+
+  /**
+   * Point the session at a loaded capture instead of the synthetic scene.
+   *
+   * Everything downstream of the source is thrown away rather than retuned: the
+   * channels were drawn on a different band at a different rate, so keeping them
+   * would leave tuners pointing at frequencies the new file does not contain — a
+   * quieter kind of wrong than an empty tree.
+   */
+  async openCapture(cap) {
+    await sleep(LATENCY.structuralMs);
+    for (const c of this.children(this.root.id)) await this.removeNode(c.id);
+    this.capture = cap;
+    this.letters = 0;
+    this.t = 0;
+    const root = this.root;
+    root.label = cap.label;
+    root.params.sampleRate = param(cap.sampleRate);
+    root.params.centerHz = param(cap.centerHz);
+    root.out = { kind: 'iq', sampleRate: cap.sampleRate, centerHz: cap.centerHz };
+    return root;
+  }
+
+  /** How much signal there is, in seconds — a file ends, the scene does not. */
+  duration() { return this.capture ? this.capture.durationS : Infinity; }
 
   node(id) { return this.nodes.get(id); }
 
@@ -378,6 +405,10 @@ export class MockEngine {
     const step = Math.min(dt, 0.1);
     if (this.playing) {
       this.t += step;
+      // A file ends. Running the clock past it would scroll silence forever and look
+      // exactly like a stall, so playback stops at the end and says so.
+      const d = this.duration();
+      if (this.t >= d) { this.t = d; this.playing = false; this.ended = true; }
       for (const n of this.nodes.values()) {
         const m = n.params && n.params.timeMode;
         if (!m || m.value !== 'pinned') continue;
@@ -396,7 +427,7 @@ export class MockEngine {
   _readIQ(node, tEnd, count) {
     if (node.op === 'core.source') {
       const start = Math.max(0, Math.floor(tEnd * node.out.sampleRate) - count);
-      return scene.read(start, count);
+      return this.capture ? this.capture.read(start, count) : scene.read(start, count);
     }
     const p = this.node(node.parent);
 

@@ -61,8 +61,16 @@
   <div class="metrics" id="metrics" hidden></div>
 </div>
 
+<div class="drop" id="drop" hidden>
+  <div class="dropcard">
+    <b>Drop a capture</b>
+    <span>SigMF pair, or raw IQ — cf32, cs16, cs8, cu8</span>
+  </div>
+</div>
+<input type="file" id="file" multiple hidden>
+
 <div class="tip" id="tip" hidden></div>
-<div class="hint" id="hint">Drag a box across the spectrum — the menu opens where you release.</div>
+<div class="hint" id="hint">Drag a box across the spectrum — the menu opens where you release. Drop an IQ file anywhere to open your own capture.</div>
 
 <script type="module" src="src/app.js"></script>
 <script>

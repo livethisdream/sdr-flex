@@ -8,6 +8,7 @@ import { SpectrumTrace, TimeSeries, BitRaster } from './views.js';
 import { ContextMenu } from './menu.js';
 import { Strip } from './strip.js';
 import { Metrics } from './metrics.js';
+import { fromFiles, FORMATS } from './capture.js';
 import { AudioMixer, meterLevel } from './audio.js';
 import { COLORMAPS, cssGradient, floorColor } from './colormap.js';
 import { WINDOWS } from './dsp.js';
@@ -192,9 +193,15 @@ class App {
     // The device's center and rate are its node's parameters, so they live in the
     // strip when the source is selected. Repeating them here made the top row a
     // second readout of something already on screen.
+    // The device chip is the root of the path, so it is also where you change what
+    // the path starts from. Clicking the one you are already on opens a capture —
+    // the same place a source picker will live once there is more than one source.
+    const onRoot = this.channel === root.id;
     let html =
-      `<button class="dev${this.channel === root.id ? ' cur' : ''}" data-id="${root.id}">` +
-      `<span class="live"></span>${root.label}</button>`;
+      `<button class="dev${onRoot ? ' cur' : ''}" data-id="${root.id}"` +
+      ` title="${onRoot ? 'open a capture' : root.label}">` +
+      `<span class="live${this.engine.capture ? ' file' : ''}"></span>${root.label}` +
+      `${onRoot ? '<i class="devopen">open…</i>' : ''}</button>`;
 
     for (const n of ancestors) {
       if (n.id === root.id) continue;
@@ -211,7 +218,10 @@ class App {
     const el = $('#topbar');
     el.innerHTML = html;
     for (const b of el.querySelectorAll('[data-id]')) {
-      b.addEventListener('click', () => { this.goChannel(b.dataset.id); });
+      b.addEventListener('click', () => {
+        if (b.classList.contains('dev') && b.classList.contains('cur')) { $('#file').click(); return; }
+        this.goChannel(b.dataset.id);
+      });
     }
     this.wireRemove(el);
   }
@@ -662,6 +672,11 @@ class App {
   }
 
   setStageBadge(text) {
+    const n = this._notice;
+    if (n) {
+      if (performance.now() < n.until) text = n.text;
+      else this._notice = null;
+    }
     const el = $('#stagebadge');
     if (!el) return;
     el.textContent = text;
@@ -669,8 +684,22 @@ class App {
     el.classList.toggle('pin', text.startsWith('⊓'));
   }
 
+  /**
+   * Say something for a few seconds.
+   *
+   * The stage badge is rewritten every frame by whatever the display is doing, so a
+   * message set from outside the loop lasted exactly one frame — which is why opening
+   * a capture appeared to say nothing at all. A notice outranks the frame's own badge
+   * until it expires.
+   */
+  notify(text, ms = 6000) {
+    this._notice = { text, until: performance.now() + ms };
+    this.setStageBadge(text);
+  }
+
   setPlaying(on) {
     this.engine.playing = on;
+    this._wasPlaying = on;
     const b = $('#play');
     b.textContent = on ? '❚❚' : '▶';
     b.classList.toggle('paused', !on);
@@ -771,6 +800,42 @@ class App {
     if (this.waterfall) this.waterfall.setColormap(this.vp(this.current).colormap);
   }
 
+  /**
+   * Open dropped files as the session's source.
+   *
+   * Nothing here guesses silently: whatever was inferred — format, rate, center — is
+   * put on the source node as ordinary parameters, so the first thing you can do
+   * after opening a capture is disagree with the guess.
+   */
+  async openFiles(files) {
+    if (!files || !files.length) return;
+    this.metrics.beginOp();
+    try {
+      const cap = await fromFiles(files);
+      if (!cap.samples) throw new Error('that file has no samples in it');
+      this.mixer.removeAll();
+      await this.engine.openCapture(cap);
+      this.engine.t = 0;
+      this._tmax = 0;
+      this.channel = this.engine.root.id;
+      this.tabs.clear();
+      this.viewParams.clear();
+      this.setTab('spectrum');
+      this.resetSpectrum();
+      this._tsCache = null;
+      this._bitsSeen = false;
+      this.setPlaying(true);
+      this.metrics.endOp();
+      this.refresh();
+      this.notify(
+        `${cap.label} · ${FORMATS[cap.format].name} · ${(cap.sampleRate / 1e6).toFixed(3)} MS/s` +
+        ` · ${cap.durationS.toFixed(2)} s · ` +
+        (cap.meta ? 'from SigMF' : 'guessed from the filename — check the rate below'));
+    } catch (err) {
+      this.notify(`could not open that: ${err.message}`, 8000);
+    }
+  }
+
   /** The spectrum's share of the stage. The waterfall takes what is left. */
   setSplit(frac) {
     this.split = Math.max(0.1, Math.min(0.85, frac));
@@ -788,7 +853,10 @@ class App {
   scrubSpan() {
     const pin = this.engine.isPinned(this.channel);
     if (pin) return { t0: pin.params.t0.value, t1: pin.params.t1.value, pin };
-    return { t0: 0, t1: Math.max(0.001, this._tmax), pin: null };
+    // A capture has a real end, so the rail is the file. The synthetic scene does not,
+    // so it is however far this session has got.
+    const d = this.engine.duration();
+    return { t0: 0, t1: isFinite(d) ? d : Math.max(0.001, this._tmax), pin: null };
   }
 
   scrubFrac() {
@@ -800,6 +868,7 @@ class App {
   scrubTo(frac) {
     const { t0, t1, pin } = this.scrubSpan();
     const at = t0 + (t1 - t0) * frac;
+    this.engine.ended = false;
     if (pin) pin._t = at;
     else this.engine.t = Math.max(0, at);
     $('#clock').textContent = at.toFixed(3) + ' s';
@@ -1130,8 +1199,29 @@ class App {
       track.addEventListener('pointerup', up);
     });
 
+    // ── opening a capture ──────────────────────────────────────────────────
+    // The whole window is the drop target. A capture is the one thing you bring from
+    // outside, and making you aim at a strip of chrome to hand it over is friction
+    // for nothing.
+    const drop = $('#drop');
+    let depth = 0;
+    addEventListener('dragenter', (e) => {
+      if (![...e.dataTransfer.types].includes('Files')) return;
+      e.preventDefault(); depth++; drop.hidden = false;
+    });
+    addEventListener('dragover', (e) => { if (!drop.hidden) e.preventDefault(); });
+    addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; drop.hidden = true; } });
+    addEventListener('drop', (e) => {
+      if (drop.hidden) return;
+      e.preventDefault(); depth = 0; drop.hidden = true;
+      this.openFiles(e.dataTransfer.files);
+    });
+    // and a picker, because a phone has no drag and a keyboard user should not need one
+    $('#file').addEventListener('change', (e) => { this.openFiles(e.target.files); e.target.value = ''; });
+
     const step = (dt) => {
-      this.engine.t = Math.max(0, this.engine.t + dt);
+      this.engine.ended = false;
+      this.engine.t = Math.max(0, Math.min(this.engine.duration(), this.engine.t + dt));
       this.resetSpectrum();
       this._tsCache = null;
       this._bitsSeen = false;
@@ -1147,6 +1237,11 @@ class App {
     };
 
     $('#play').addEventListener('click', () => {
+      // pressing play at the end of a file means "again", not "stay stopped"
+      if (this.engine.ended && !this.engine.playing) {
+        this.engine.t = 0; this.engine.ended = false;
+        this._tmax = 0; this.resetSpectrum();
+      }
       this.setPlaying(!this.engine.playing);
       this.metrics.interaction();
     });
@@ -1188,6 +1283,8 @@ class App {
     this._lastFrame = ts;
     this.metrics.frame(dt);
     this.engine.tick();
+    // the engine stops itself at the end of a capture, so the button has to notice
+    if (this._wasPlaying !== this.engine.playing) this.setPlaying(this.engine.playing);
 
     const v = this.view();
     const p = this.vp(this.current);
@@ -1201,6 +1298,8 @@ class App {
           `⊓ clip ${pin.params.t0.value.toFixed(3)}–${pin.params.t1.value.toFixed(3)} s` +
           ` · ×${r < 0.1 ? r.toFixed(3) : r.toFixed(2)}` +
           (this.engine.playing ? '' : ' · paused'));
+      } else if (this.engine.ended) {
+        this.setStageBadge('⏹ end of capture — scrub back or press play to replay');
       } else {
         this.setStageBadge(this.engine.playing ? '' : '▶ paused');
       }

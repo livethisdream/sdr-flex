@@ -94,6 +94,7 @@ violated somewhere.
 
 ```
 node web/test/detectors.test.mjs
+node web/test/capture.test.mjs
 ```
 
 No browser, no dependencies. It is the first piece of

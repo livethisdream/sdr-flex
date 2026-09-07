@@ -122,6 +122,10 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .dev:hover { background:var(--panel); }
 .dev.cur { background:var(--accent-lo); }
 .dev .live { width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 7px var(--ok); flex:none; }
+/* a file is not live — it is a fixed length of past, and the dot should not pretend */
+.dev .live.file { background:var(--dim); box-shadow:none; border-radius:1px; }
+.dev .devopen { font-style:normal; color:var(--faint); font-size:.6rem; margin-left:.1rem; }
+.dev:hover .devopen { color:var(--accent); }
 .crumb { padding:.16rem .42rem; border-radius:3px; color:var(--body); font-size:.8rem; white-space:nowrap; }
 .crumb:hover { background:var(--raised); }
 .crumb.cur { background:var(--accent-lo); color:var(--bright); font-weight:600; }
@@ -343,6 +347,19 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .fn { color:var(--bright); font-size:.82rem; }
 .fk, .fr { font-family:var(--mono); font-size:.66rem; color:var(--dim); }
 .fr { margin-left:auto; }
+
+/* The drop target is the whole window, because a capture is the one thing you bring
+   from outside and there is no reason to make you aim. */
+.drop { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center;
+        background:var(--accent-veil); backdrop-filter:blur(2px); -webkit-backdrop-filter:blur(2px); }
+.drop[hidden] { display:none; }
+.dropcard {
+  display:flex; flex-direction:column; gap:.3rem; align-items:center; text-align:center;
+  padding:1.4rem 2rem; border-radius:8px; border:2px dashed var(--accent);
+  background:var(--panel); box-shadow:0 20px 50px -16px var(--shadow-hard);
+}
+.dropcard b { color:var(--bright); font-size:.95rem; }
+.dropcard span { color:var(--dim); font-family:var(--mono); font-size:.68rem; }
 
 .hint { position:fixed; left:50%; bottom:170px; transform:translateX(-50%); z-index:30; background:var(--raised); border:1px solid var(--rule); border-radius:4px; padding:.5rem .8rem; font-size:.78rem; color:var(--body); box-shadow:0 14px 34px -14px var(--shadow); transition:opacity .25s ease; }
 .hint.gone { opacity:0; pointer-events:none; }
