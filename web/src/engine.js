@@ -7,6 +7,7 @@
 
 import * as dsp from './dsp.js';
 import * as scene from './scene.js';
+import * as plugins from './plugins.js';
 
 export const LATENCY = {
   paramMs: 40,        // hot parameter → visible effect
@@ -52,6 +53,12 @@ export const OPS = {
   },
   'core.pwm_slicer': {
     name: 'PWM / OOK slicer', group: 'Decode', in: 'real', out: 'bits',
+  },
+  // The other half of slicing: a fixed symbol rate rather than pulse widths, which
+  // is what most real protocols use. Its output is `bytes` — the type ADR-0006
+  // declared and nothing had needed until a plugin wanted somewhere to plug in.
+  'core.nrz_slicer': {
+    name: 'NRZ slicer', group: 'Decode', in: 'real', out: 'bytes',
   },
   // A sink is a node. A view renders what a node produced; a sink consumes it and
   // the data leaves the graph there, which is exactly what a terminal block is
@@ -236,6 +243,86 @@ export class MockEngine {
     return { data: out, sampleRate: fs, kind: n.out.kind, count: total };
   }
 
+  /**
+   * Slice a whole capture to bytes, once.
+   *
+   * Not a frame. The packet in a capture can be anywhere in it and eight seconds
+   * long, so a window sized for a display would miss it entirely — this reads the
+   * lot, which is a job rather than something to redo sixty times a second. The
+   * result is cached on the node against the parameters that produced it, so the
+   * view is free until something actually changes.
+   */
+  async sliceBytes(nodeId, onProgress) {
+    const n = this.node(nodeId);
+    if (!n || n.out.kind !== 'bytes') return null;
+    const p = this.node(n.parent);
+    const keyOf = () => ['threshold', 'symbolUs', 'syncHex', 'bitOrder']
+      .map((k) => n.params[k].value).join('|');
+    if (n._sliced && n._sliced.key === keyOf()) return n._sliced;
+
+    const fs = p.out.sampleRate;
+    const pin = this.isPinned(p.id);
+    const t0 = pin ? pin.params.t0.value : 0;
+    const t1 = pin ? pin.params.t1.value : (isFinite(this.duration()) ? this.duration() : this.t);
+    const got = await this.readSpan(p.id, t0, t1, onProgress);
+    if (!got) return null;
+
+    // Estimate from the whole span, not a window of it — the packet is wherever it
+    // is, and an estimator that only looked at the first two seconds of british_news
+    // measured the announcer.
+    if (n.params.threshold.mode === 'auto') {
+      const otsu = dsp.otsuThreshold(got.data);
+      n.params.threshold = { ...n.params.threshold, value: otsu.value,
+        auto: { from: `Otsu over all ${(t1 - t0).toFixed(1)} s`, hist: otsu.hist } };
+    }
+    if (n.params.symbolUs.mode === 'auto') {
+      const sym = dsp.estimateNrzSymbol(got.data, n.params.threshold.value, fs);
+      n.params.symbolUs = { ...n.params.symbolUs,
+        value: sym.value > 0 ? +sym.value.toFixed(2) : n.params.symbolUs.value,
+        auto: {
+          from: sym.confident
+            ? `every run is a multiple of ${sym.value.toFixed(1)} µs (${(sym.agreement * 100).toFixed(0)}% of ${sym.runs} runs)`
+            : `shortest run over ${sym.runs} runs — they do not agree, so this is a guess`,
+          confident: sym.confident,
+        } };
+    }
+
+    const msb = n.params.bitOrder.value !== 'lsb';
+    const sync = dsp.syncBitsOf(n.params.syncHex.value, msb);
+    const r = dsp.nrzSlice(got.data, n.params.threshold.value, fs, n.params.symbolUs.value,
+                           { msbFirst: msb, syncBits: sync });
+    n._sliced = { key: keyOf(), ...r, t0, t1, sampleRate: fs };
+    return n._sliced;
+  }
+
+  /**
+   * Run a plugin node over its parent's output.
+   *
+   * The whole reason this boundary is cheap: the input is a few kilobytes that were
+   * already computed for the view above, and the output is a handful of records. No
+   * rate to negotiate, no format to convert, nothing to supervise.
+   */
+  async runPlugin(nodeId) {
+    const n = this.node(nodeId);
+    if (!n || !n.plugin) return null;
+    const p = this.node(n.parent);
+    const src = p.out.kind === 'bytes' ? await this.sliceBytes(p.id) : null;
+    if (!src) return { records: [], error: 'nothing upstream has produced bytes yet' };
+    const args = {};
+    for (const [k, v] of Object.entries(n.params)) args[k] = v.value;
+    const out = plugins.run(n.plugin, src.bytes, args);
+    n._records = out;
+    return out;
+  }
+
+  /** How much signal a node can see: its clip if pinned, else the whole capture. */
+  _spanOf(nodeId) {
+    const pin = this.isPinned(typeof nodeId === 'string' ? nodeId : nodeId.id);
+    if (pin) return Math.max(1e-3, pin.params.t1.value - pin.params.t0.value);
+    const d = this.duration();
+    return isFinite(d) ? d : 2.0;
+  }
+
   /** How much signal there is, in seconds — a file ends, the scene does not. */
   duration() { return this.capture ? this.capture.durationS : Infinity; }
 
@@ -304,9 +391,16 @@ export class MockEngine {
   async palette(nodeId) {
     await sleep(8);
     const n = this.node(nodeId);
-    return Object.entries(OPS)
+    const built = Object.entries(OPS)
       .filter(([, o]) => o.in === '*' || o.in === n.out.kind)
       .map(([id, o]) => ({ id, ...o }));
+    // A loaded plugin is an operation like any other — same menu, same filter on
+    // stream type, marked so you can see it came from outside (ADR-0013's opacity
+    // rule, applied to a kind that is not opaque at all).
+    const ext = plugins.forKind(n.out.kind)
+      .map((p) => ({ id: p.id, name: p.name, group: p.group || 'Decode',
+                     in: p.in, out: p.out, external: true }));
+    return built.concat(ext);
   }
 
   // ── nodes ────────────────────────────────────────────────────────────────
@@ -317,7 +411,8 @@ export class MockEngine {
   async addNode({ parent, op, selection }) {
     await sleep(LATENCY.structuralMs);
     const p = this.node(parent);
-    const spec = OPS[op];
+    const spec = OPS[op] || plugins.get(op);
+    if (!spec) throw new Error(`no operation ${op}`);
     const node = {
       id: nid('n'), parent, op, label: '', params: {}, out: null, stub: !!spec.stub,
       // Only channels are lettered. A letter is a handle for "which signal am I
@@ -371,6 +466,33 @@ export class MockEngine {
       };
       node.out = { kind: 'audio', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'Listen';
+    } else if (op === 'core.nrz_slicer') {
+      // These arrive undecided on purpose. A 2 s peek at the playhead is the wrong
+      // place to estimate from: a packet can sit anywhere in a capture, and the
+      // window a display happens to be showing is almost never over it. They are
+      // derived in `sliceBytes`, from exactly the samples that get sliced.
+      const fs = p.out.sampleRate;
+      node.params = {
+        threshold: param(0.5, 'auto', { from: 'not yet measured — derived when the capture is sliced' }),
+        symbolUs: param(100, 'auto', { from: 'not yet measured — derived when the capture is sliced' }),
+        // A sync word is something you discover, not something a tool can derive:
+        // there is no signal in the data that says "the bytes start here" until you
+        // know what you are looking for.
+        syncHex: param(''),
+        bitOrder: param('msb'),
+      };
+      node.out = { kind: 'bytes', sampleRate: fs, centerHz: p.out.centerHz };
+      node.label = 'NRZ';
+    } else if (plugins.get(op)) {
+      const spec2 = plugins.get(op);
+      node.params = {};
+      for (const pm of spec2.params || []) {
+        node.params[pm.id] = param(pm.default, pm.auto ? 'auto' : 'manual',
+          pm.auto ? { from: 'the default this decoder ships with', confident: false } : null);
+      }
+      node.out = { kind: spec2.out, sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = spec2.name;
+      node.plugin = op;
     } else if (op === 'core.export') {
       node.params = {
         // whole-capture by default: the common case is "give me this channel", and a
@@ -571,6 +693,14 @@ export class MockEngine {
         kind: 'timeseries', data: env.subarray(s, e), sampleRate: fs,
         spanS: (e - s) / fs, t0: windowEnd - (count - s) / fs, triggered: !!b,
       };
+    }
+
+    if (n.out.kind === 'bytes') {
+      return { kind: 'bytes', sliced: n._sliced || null };
+    }
+
+    if (n.out.kind === 'events') {
+      return { kind: 'events', run: n._records || null };
     }
 
     if (n.out.kind === 'bits') {

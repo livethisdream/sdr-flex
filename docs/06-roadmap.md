@@ -73,6 +73,13 @@ And the other half of that: **an Export block writes a channel back out** — a 
 rate a stock decoder asks for, or cf32 with a SigMF sidecar. That is what removes tools
 from the chain rather than adding a feature to this one; see below.
 
+And **plugins, earlier than planned**. A `js` plugin kind — an ES module dropped on
+the window, declaring the stream types it sits between — turns out to need no server at
+all, because at the late end of the chain there is no rate to negotiate and no format
+to convert ([ADR-0028](adr/0028-plugin-boundary-is-a-stream-type.md)). An NRZ slicer
+lands beside it, producing the `bytes` type ADR-0006 declared in week one and nothing
+had needed until something wanted somewhere to plug in.
+
 **Still open:** more than one source at a time and the picker the device chip is now
 the obvious home for, tearing tabs into tiles, and the newcomer test that ADR-0018 asks
 for.
@@ -92,6 +99,14 @@ decoders**, which read every payload back correctly. Four for four, through a ch
 that used to be inspectrum plus GNU Radio plus gqrx plus sox. That is the standard the
 tool is aiming at: not "it has a waterfall", but "it replaced the five things you would
 otherwise have strung together, and the answer came out the same".
+
+A second challenge went further. Its packet rides behind an audio programme, and its
+decoder is a third-party concurrent-code implementation that no general tool has or
+should have. Opened in SDR Flex, sliced by the NRZ slicer with the threshold and the
+symbol rate derived rather than told — 125.0 µs, every run a multiple of it, across
+six thousand runs — and handed to that decoder **loaded as a dropped-in plugin file**,
+it returns every message layered into the packet. That is the extension point working
+on a thing it was not designed around.
 
 (Recovered values are not reproduced here — the challenge set has not run yet.)
 

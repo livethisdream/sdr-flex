@@ -423,7 +423,15 @@ export function otsuThreshold(x) {
   let total = x.length, sum = 0;
   for (let i = 0; i < nb; i++) sum += i * hist[i];
 
-  let sumB = 0, wB = 0, best = -1, bestT = nb / 2;
+  // Score every split, then take the MIDDLE of the best plateau rather than its
+  // first bin. On a clean two-level signal the classes are separated by an empty
+  // gap, every threshold inside that gap separates them equally well, and keeping
+  // the first one puts the threshold at the bottom of the gap — hard against the
+  // noise floor, where every wiggle crosses it. The centre of the gap is the answer
+  // a person would point at, and on noisy data where there is no plateau it is the
+  // same bin the naive version picks.
+  const score = new Float64Array(nb).fill(-1);
+  let sumB = 0, wB = 0, best = -1;
   for (let i = 0; i < nb; i++) {
     wB += hist[i];
     if (wB === 0) continue;
@@ -432,8 +440,19 @@ export function otsuThreshold(x) {
     sumB += i * hist[i];
     const mB = sumB / wB, mF = (sum - sumB) / wF;
     const between = wB * wF * (mB - mF) * (mB - mF);
-    if (between > best) { best = between; bestT = i; }
+    score[i] = between;
+    if (between > best) best = between;
   }
+  if (!(best > 0)) return { value: (lo + hi) / 2, hist, lo, hi };
+
+  const eps = best * 1e-9;
+  let first = -1, last = -1;
+  for (let i = 0; i < nb; i++) {
+    if (score[i] < best - eps) { if (first >= 0) break; continue; }
+    if (first < 0) first = i;
+    last = i;
+  }
+  const bestT = (first + last) / 2;
   return { value: lo + ((bestT + 0.5) / nb) * (hi - lo), hist, lo, hi };
 }
 
@@ -526,6 +545,121 @@ export function pwmSlice(env, threshold, sampleRate, symbolUs) {
   }
   if (cur && cur.bits.length) groups.push(cur);
   return groups;
+}
+
+/**
+ * NRZ slicing: a fixed-rate on/off stream to bytes.
+ *
+ * The PWM slicer above reads *pulse widths* — a long mark is a one, a short mark a
+ * zero — which is how cheap remotes encode and is useless here. This is the other
+ * half: sample the envelope once per symbol on a regular grid and take each sample
+ * as one bit. Most real protocols are this one.
+ *
+ * Three things have to be right and only one of them is the threshold:
+ *
+ *   - the symbol period, or the grid drifts off the data;
+ *   - the phase of the grid, so samples land mid-symbol rather than on edges;
+ *   - where the byte boundary falls, which no amount of correct bit slicing tells
+ *     you — that is what a sync word is for.
+ */
+export function nrzSlice(env, threshold, sampleRate, symbolUs, opts = {}) {
+  const sps = (symbolUs * 1e-6) * sampleRate;
+  if (!(sps >= 1) || !env.length) return { bytes: new Uint8Array(0), bits: 0, phase: 0, syncAt: -1, sps };
+  const msbFirst = opts.msbFirst !== false;
+
+  // Grid phase, by trying every offset within one symbol and keeping the one whose
+  // samples land furthest from the threshold. A sample taken mid-symbol is
+  // unambiguous; one taken on an edge is a coin toss, and a packet of coin tosses
+  // is what "it almost decodes" looks like.
+  const tries = Math.max(4, Math.min(32, Math.round(sps)));
+  let bestPhase = 0, bestScore = -Infinity;
+  for (let k = 0; k < tries; k++) {
+    const off = (k / tries) * sps;
+    let score = 0, n = 0;
+    for (let i = off; i < env.length && n < 4000; i += sps) {
+      score += Math.abs(env[Math.round(i)] - threshold);
+      n++;
+    }
+    if (n && score / n > bestScore) { bestScore = score / n; bestPhase = off; }
+  }
+
+  const bits = [];
+  for (let i = bestPhase; i < env.length; i += sps) bits.push(env[Math.round(i)] > threshold ? 1 : 0);
+
+  // Byte alignment. The sync word is searched for rather than assumed at the start,
+  // because a capture rarely begins where the packet does.
+  let start = 0, syncAt = -1;
+  const sync = opts.syncBits;
+  if (sync && sync.length) {
+    outer: for (let i = 0; i + sync.length <= bits.length; i++) {
+      for (let j = 0; j < sync.length; j++) if (bits[i + j] !== sync[j]) continue outer;
+      syncAt = i;
+      start = i + sync.length;
+      break;
+    }
+  }
+
+  const out = new Uint8Array(Math.floor((bits.length - start) / 8));
+  for (let b = 0; b < out.length; b++) {
+    let v = 0;
+    for (let k = 0; k < 8; k++) {
+      const bit = bits[start + b * 8 + k];
+      v |= msbFirst ? (bit << (7 - k)) : (bit << k);
+    }
+    out[b] = v;
+  }
+  return { bytes: out, bits: bits.length, phase: bestPhase, syncAt, sps };
+}
+
+/** A hex string like "aa aa ff ff" to the bits a slicer looks for. */
+export function syncBitsOf(hex, msbFirst = true) {
+  const clean = String(hex).replace(/[^0-9a-fA-F]/g, '');
+  const bits = [];
+  for (let i = 0; i + 1 < clean.length; i += 2) {
+    const v = parseInt(clean.slice(i, i + 2), 16);
+    for (let k = 0; k < 8; k++) bits.push(msbFirst ? (v >> (7 - k)) & 1 : (v >> k) & 1);
+  }
+  return bits;
+}
+
+/**
+ * Symbol rate for a fixed-rate stream, from the shortest run in it.
+ *
+ * `estimateSymbolPeriod` clusters pulse *lengths*, which is right for pulse-width
+ * encoding and wrong here: in NRZ every run is a whole multiple of one symbol, so
+ * the answer is the greatest common divisor of the run lengths — approximated by
+ * the shortest run, which is a single symbol as soon as the data contains one
+ * isolated bit. A preamble of alternating bits guarantees that, which is one of
+ * the reasons preambles exist.
+ */
+export function estimateNrzSymbol(env, threshold, sampleRate) {
+  const runs = [];
+  let cur = env[0] > threshold, len = 0;
+  for (let i = 0; i < env.length; i++) {
+    const on = env[i] > threshold;
+    if (on === cur) { len++; continue; }
+    runs.push(len); cur = on; len = 1;
+  }
+  runs.push(len);
+  if (runs.length < 8) return { value: 0, confident: false, runs: runs.length };
+
+  const sorted = runs.slice().sort((a, b) => a - b);
+  // a low percentile rather than the minimum: one glitch should not set the rate
+  const shortest = sorted[Math.max(0, Math.floor(sorted.length * 0.05))];
+  if (shortest < 2) return { value: 0, confident: false, runs: runs.length };
+
+  // confidence is whether the other runs really are multiples of it
+  let hits = 0;
+  for (const r of runs) {
+    const m = r / shortest;
+    if (Math.abs(m - Math.round(m)) < 0.2) hits++;
+  }
+  const agreement = hits / runs.length;
+  return {
+    value: (shortest / sampleRate) * 1e6,
+    confident: agreement > 0.9 && runs.length > 20,
+    agreement, runs: runs.length,
+  };
 }
 
 /**

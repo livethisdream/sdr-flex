@@ -1,0 +1,20 @@
+#!/bin/sh
+# Refuse to commit anything flag-shaped.
+#
+# This repo is public. Challenge material worked on beside it is not, and the two
+# being open in one editor — or one agent session — is not a trust boundary. This
+# very nearly went the other way once: recovered flag values were written into the
+# roadmap as evidence that an end-to-end test had worked, staged, and caught only at
+# the push. A rule someone has to remember is worth exactly as much as the one that
+# failed; this one does not need remembering.
+#
+#   git config core.hooksPath .githooks     # once per clone
+#   git commit --no-verify                  # if you really mean it
+
+if git diff --cached -U0 | grep -nEi '^\+.*(flag[0-9]*\{[^}]|ctf\{)' ; then
+  echo
+  echo "pre-commit: that looks like a flag value, and this repository is public."
+  echo "If it is genuinely not one, commit with --no-verify."
+  exit 1
+fi
+exit 0

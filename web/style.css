@@ -182,6 +182,34 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .exgo:hover { filter:brightness(1.08); }
 .exnote { font-family:var(--mono); font-size:.68rem; color:var(--ok); min-height:1em; }
 
+/* Bytes: a hex dump and the three numbers that say whether it is the right one. */
+.bywrap { display:flex; flex-direction:column; gap:.6rem; }
+.byhead { display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap; }
+.byhead b { font-size:.86rem; color:var(--bright); }
+.byhead span { font-size:.72rem; color:var(--dim); }
+.byhead code { font-family:var(--mono); color:var(--body); }
+.byhead u { color:var(--warn); text-decoration:none; }
+.byhead .exgo { margin-left:auto; }
+.bydump { font-family:var(--mono); font-size:.68rem; line-height:1.5; color:var(--body);
+          background:var(--panel); border:1px solid var(--rule); border-radius:6px;
+          padding:.6rem .7rem; overflow-x:auto; margin:0; }
+
+/* Events. The count is the headline because a decoder can return many records from
+   one packet, and a view that hides that turns six messages into one. */
+.evwrap { display:flex; flex-direction:column; gap:.6rem; }
+.evhead { display:flex; align-items:baseline; gap:.5rem; }
+.evhead b { font-size:1.05rem; color:var(--bright); }
+.evhead span { font-size:.72rem; color:var(--dim); font-family:var(--mono); }
+.evhead .exgo { margin-left:auto; }
+.everr { font-family:var(--mono); font-size:.72rem; color:var(--crit); }
+.evlist { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:1px; }
+.evlist li { display:flex; align-items:baseline; gap:.6rem; padding:.4rem .6rem;
+             background:var(--panel); border-left:2px solid var(--rule); }
+.evlist li:hover { border-left-color:var(--accent); }
+.evlist i { font-style:normal; font-family:var(--mono); font-size:.62rem; color:var(--faint); min-width:1.4em; }
+.evt { font-family:var(--mono); font-size:.8rem; color:var(--bright); word-break:break-all; }
+.evk { font-family:var(--mono); font-size:.6rem; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; }
+
 /* The sink's own pane. It has no picture — what it is doing is whether it is doing
    it — so the pane is a status, not a chart. */
 .listenwrap { display:flex; flex-direction:column; align-items:center; gap:.6rem; padding:2rem 1rem; text-align:center; }

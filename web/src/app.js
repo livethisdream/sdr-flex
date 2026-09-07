@@ -10,6 +10,7 @@ import { Strip } from './strip.js';
 import { Metrics } from './metrics.js';
 import { fromFiles, FORMATS } from './capture.js';
 import * as out from './export.js';
+import * as plugins from './plugins.js';
 import { AudioMixer, meterLevel } from './audio.js';
 import { COLORMAPS, cssGradient, floorColor } from './colormap.js';
 import { WINDOWS } from './dsp.js';
@@ -30,6 +31,7 @@ const VIEWS = {
   events: ['Events', 'Flow'],
   audio: ['Listen', 'Flow'],
   file: ['Export', 'Flow'],
+  bytes: ['Bytes', 'Flow'],
 };
 
 const defaultViewParams = () => ({
@@ -326,6 +328,7 @@ class App {
     $('#pane-events').hidden = v !== 'Events';
     $('#pane-audio').hidden = v !== 'Listen';
     $('#pane-export').hidden = v !== 'Export';
+    $('#pane-bytes').hidden = v !== 'Bytes';
     if (v === 'Spectrum') {
       const p = this.vp(this.current);
       $('#cbar').style.background = cssGradient(p.colormap);
@@ -343,7 +346,8 @@ class App {
     if (v === 'Flow') this.renderFlow();
     if (v === 'Listen') this.renderAudio();
     if (v === 'Export') this.renderExport();
-    if (v === 'Events') $('#pane-events').innerHTML = '<div class="empty">Event streams arrive with the external decoders at M4.5.</div>';
+    if (v === 'Bytes') this.renderBytes();
+    if (v === 'Events') this.renderEvents();
   }
 
   /**
@@ -922,6 +926,19 @@ class App {
    */
   async openFiles(files) {
     if (!files || !files.length) return;
+    // A dropped .js is a plugin, not a capture. One gesture, and what it is decides
+    // what happens — the same reason the drop target is the whole window.
+    const js = [...files].filter((f) => /\.js$/i.test(f.name));
+    if (js.length) {
+      const names = [];
+      for (const f of js) {
+        try { const p = await plugins.loadFile(f); names.push(p.name); }
+        catch (err) { this.notify(`${f.name}: ${err.message}`, 9000); return; }
+      }
+      this.notify(`loaded ${names.join(', ')} — it will appear in the menu wherever its input type fits`);
+      this.refresh();
+      return;
+    }
     this.metrics.beginOp();
     try {
       const cap = await fromFiles(files);
@@ -947,6 +964,94 @@ class App {
     } catch (err) {
       this.notify(`could not open that: ${err.message}`, 8000);
     }
+  }
+
+  /**
+   * The Bytes pane: a hex dump, and the three numbers that decide whether it is the
+   * right one. Slicing a whole capture is a job rather than a frame, so it runs once
+   * and says what it found.
+   */
+  async renderBytes(force) {
+    const n = this.node();
+    if (!n || n.out.kind !== 'bytes') return;
+    const el = $('#pane-bytes');
+    const sliced = n._sliced;
+    if (!sliced || force) {
+      el.innerHTML = '<div class="empty">slicing the capture…</div>';
+      await this.engine.sliceBytes(n.id, () => {});
+      if (this.node() !== n) return;
+    }
+    const r = n._sliced;
+    if (!r) { el.innerHTML = '<div class="empty">nothing to slice yet</div>'; return; }
+
+    const b = r.bytes;
+    const rows = Math.min(64, Math.ceil(b.length / 16));
+    let dump = '';
+    for (let i = 0; i < rows; i++) {
+      const off = i * 16;
+      const hex = [...b.subarray(off, off + 16)].map((v) => v.toString(16).padStart(2, '0')).join(' ');
+      const asc = [...b.subarray(off, off + 16)].map((v) => (v >= 32 && v < 127 ? String.fromCharCode(v) : '·')).join('');
+      dump += `${off.toString(16).padStart(6, '0')}  ${hex.padEnd(47)}  ${asc}\n`;
+    }
+    const sync = n.params.syncHex.value;
+    el.innerHTML = `
+      <div class="bywrap">
+        <div class="byhead">
+          <b>${b.length.toLocaleString()} bytes</b>
+          <span>${r.bits.toLocaleString()} bits at ${r.sps.toFixed(2)} samples/symbol · grid phase ${r.phase.toFixed(2)}
+          · ${sync ? (r.syncAt >= 0 ? `sync <code>${sync}</code> found at bit ${r.syncAt.toLocaleString()}`
+                                    : `sync <code>${sync}</code> <u>not found</u> — bytes are packed from the start`)
+                   : 'no sync word, so the byte boundary is a guess'}</span>
+          <button class="exgo" id="byreslice">Re-slice</button>
+        </div>
+        <pre class="bydump">${dump}${b.length > rows * 16 ? `\n… ${(b.length - rows * 16).toLocaleString()} more bytes` : ''}</pre>
+      </div>`;
+    const btn = $('#byreslice');
+    if (btn) btn.addEventListener('click', () => { n._sliced = null; this.renderBytes(true); });
+  }
+
+  /**
+   * The Events pane.
+   *
+   * It leads with the count, and that is not decoration. A decoder can return many
+   * records from one packet — concurrent codes are built on it — and a view that
+   * shows the first and lets you assume it is the only one turns "six messages" into
+   * "one message and a broken challenge". Ask british_news.
+   */
+  async renderEvents(force) {
+    const n = this.node();
+    if (!n || n.out.kind !== 'events') return;
+    const el = $('#pane-events');
+    if (!n.plugin) {
+      el.innerHTML = '<div class="empty">Event streams from the built-in analyzers arrive at M4.5.</div>';
+      return;
+    }
+    if (!n._records || force) {
+      el.innerHTML = '<div class="empty">running ' + n.label + '…</div>';
+      await new Promise((r) => setTimeout(r, 0));
+      await this.engine.runPlugin(n.id);
+      if (this.node() !== n) return;
+    }
+    const r = n._records || { records: [] };
+    const rows = r.records.map((rec, i) => {
+      const extra = Object.entries(rec).filter(([k]) => k !== 'text')
+        .map(([k, v]) => `<span class="evk">${k}</span> ${v}`).join(' ');
+      return `<li><i>${i + 1}</i><span class="evt">${(rec.text ?? JSON.stringify(rec))
+        .replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span>${extra}</li>`;
+    }).join('');
+    el.innerHTML = `
+      <div class="evwrap">
+        <div class="evhead">
+          <b>${r.records.length} record${r.records.length === 1 ? '' : 's'}</b>
+          <span>${n.label}${r.ms != null ? ` · ${r.ms.toFixed(0)} ms` : ''}</span>
+          <button class="exgo" id="evrun">Run again</button>
+        </div>
+        ${r.error ? `<div class="everr">${r.error}</div>` : ''}
+        ${r.records.length ? `<ol class="evlist">${rows}</ol>`
+          : '<div class="empty">nothing decoded — the parameters below are the thing to move</div>'}
+      </div>`;
+    const btn = $('#evrun');
+    if (btn) btn.addEventListener('click', () => { n._records = null; this.renderEvents(true); });
   }
 
   /** The spectrum's share of the stage. The waterfall takes what is left. */

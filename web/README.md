@@ -96,6 +96,7 @@ violated somewhere.
 node web/test/detectors.test.mjs
 node web/test/capture.test.mjs
 node web/test/export.test.mjs
+node web/test/slicer.test.mjs
 ```
 
 No browser, no dependencies. It is the first piece of

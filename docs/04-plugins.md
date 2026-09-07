@@ -116,6 +116,7 @@ reinterpret `symbols` as `bits`.
 | Kind | What you write | Use when |
 |---|---|---|
 | `gr_hier` | A GNU Radio hier block (Python or C++) | Default for transparent chains. Composes existing GR blocks. |
+| `js` | An ES module the user drops on the window | **The late end of the chain** — a protocol codec on already-demodulated bytes. Runs in the client, needs no server, shipped in M0. See [ADR-0028](adr/0028-plugin-boundary-is-a-stream-type.md). |
 | `process` | A manifest wrapping an existing CLI program | **Reusing the field's existing decoders** — `rtl_433`, `multimon-ng`, `dump1090`, `direwolf`, `dsd`. See [ADR-0013](adr/0013-external-decoders-as-subprocesses.md) and [reuse](07-reuse.md). |
 | `gr_block` | A single GR block from an OOT module | Wrapping something that already exists |
 | `grc` | A `.grc` file | Prototyping in GRC, promoting to a plugin |

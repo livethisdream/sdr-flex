@@ -41,7 +41,7 @@ Two constraints shape everything else:
 - [Reuse](docs/07-reuse.md) — what already exists and how we reach it without rewriting it
 - [UI principles](docs/08-ui-principles.md) — the friction contract: interaction and latency budgets
 - [Demods & decoders](docs/09-demods-and-decoders.md) — what gets built, in what order, and what "shipped" means
-- [Decisions](docs/adr/) — ADRs 0001–0027
+- [Decisions](docs/adr/) — ADRs 0001–0028
 
 ## Settled
 
@@ -62,3 +62,12 @@ backend, which already tunes, demodulates and decodes the synthetic scene end to
 Everything else is still planning. [M0](docs/06-roadmap.md) is a static toy model — the real client against a
 mock engine in the browser, hosted, no backend. It tests the premise in days and needs
 GNU Radio on nobody's machine ([ADR-0021](docs/adr/0021-mock-engine-first.md)).
+
+## Hooks
+
+```
+git config core.hooksPath .githooks
+```
+
+One pre-commit hook, which refuses anything flag-shaped. This repository is public
+and challenge material gets worked on beside it; that nearly went the wrong way once.
