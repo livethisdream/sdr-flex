@@ -59,6 +59,11 @@ export const OPS = {
   'core.audio': {
     name: 'Listen', group: 'Listen', in: 'real', out: 'audio',
   },
+  // A file writer is a sink like the speaker is (ADR-0027), and it takes whatever is
+  // in front of it — `*` rather than three near-identical entries in the palette.
+  'core.export': {
+    name: 'Export', group: 'Export', in: '*', out: 'file',
+  },
   'ext.rtl433': {
     name: 'rtl_433', group: 'Decode', in: 'iq', out: 'events',
     external: true, stub: true,
@@ -202,6 +207,35 @@ export class MockEngine {
     return root;
   }
 
+  /**
+   * Everything a node produces between two moments, in one go.
+   *
+   * Every other read in this engine is a window for a display, capped at what fits on
+   * screen. An export is the opposite: it wants all of it, and it is allowed to be
+   * slow because it happens once. `onProgress` exists because "all of it" can be a
+   * minute of a 500 kS/s channel and a frozen tab is indistinguishable from a crash.
+   */
+  async readSpan(nodeId, t0, t1, onProgress) {
+    const n = this.node(nodeId);
+    if (!n || (n.out.kind !== 'iq' && n.out.kind !== 'real')) return null;
+    const fs = n.out.sampleRate;
+    const total = Math.max(1, Math.floor((t1 - t0) * fs));
+    const chunk = 1 << 16;
+    const iq = n.out.kind === 'iq';
+    const out = new Float32Array(iq ? total * 2 : total);
+    for (let done = 0; done < total; done += chunk) {
+      const want = Math.min(chunk, total - done);
+      const at = t0 + (done + want) / fs;          // reads end at a moment
+      const got = iq ? this._readIQ(n, at, want) : this._detect(n, at, want);
+      out.set(got.subarray(0, iq ? want * 2 : want), iq ? done * 2 : done);
+      if (onProgress) {
+        onProgress(Math.min(1, (done + want) / total));
+        await new Promise((r) => setTimeout(r, 0));   // let the frame loop breathe
+      }
+    }
+    return { data: out, sampleRate: fs, kind: n.out.kind, count: total };
+  }
+
   /** How much signal there is, in seconds — a file ends, the scene does not. */
   duration() { return this.capture ? this.capture.durationS : Infinity; }
 
@@ -271,7 +305,7 @@ export class MockEngine {
     await sleep(8);
     const n = this.node(nodeId);
     return Object.entries(OPS)
-      .filter(([, o]) => o.in === n.out.kind)
+      .filter(([, o]) => o.in === '*' || o.in === n.out.kind)
       .map(([id, o]) => ({ id, ...o }));
   }
 
@@ -337,6 +371,16 @@ export class MockEngine {
       };
       node.out = { kind: 'audio', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'Listen';
+    } else if (op === 'core.export') {
+      node.params = {
+        // whole-capture by default: the common case is "give me this channel", and a
+        // window is what you ask for when you already know which part you want
+        from: param(0),
+        to: param(0),
+        audioRate: param(22050),
+      };
+      node.out = { kind: 'file', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = 'Export';
     } else if (op === 'core.pwm_slicer') {
       // estimate from a real window of the parent's output — auto shows its work
       // estimate over a window wide enough to be sure it contains a burst — the

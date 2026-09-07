@@ -69,9 +69,31 @@ them, and from a stated default where they do not — with the guess shown and e
 rather than silent. A file has an end, so the clock stops at it and the scrubber spans
 the capture rather than the session.
 
+And the other half of that: **an Export block writes a channel back out** — a WAV at a
+rate a stock decoder asks for, or cf32 with a SigMF sidecar. That is what removes tools
+from the chain rather than adding a feature to this one; see below.
+
 **Still open:** more than one source at a time and the picker the device chip is now
 the obvious home for, tearing tabs into tiles, and the newcomer test that ADR-0018 asks
 for.
+
+### Tested against a real challenge set
+
+M0 was pointed at a real signal-ID challenge composite — eleven carriers in one 360 MB
+SigMF capture at 500 kS/s, ninety seconds long. It opens in about six seconds, holds
+~386 MB of heap, and draws the full band at a p99 under a millisecond a frame. Ten of
+the eleven slots stand 17–47 dB clear of the noise floor in an averaged spectrum (the
+eleventh needs a generator that was not installed here), and every declared channel
+width gets a filter that holds it.
+
+Then the part that matters. Four slots — POCSAG, FLEX, APRS and EAS/SAME — were
+channelized in the tool, exported, and handed to **the challenge author's own
+decoders**, which read every payload back correctly. Four for four, through a chain
+that used to be inspectrum plus GNU Radio plus gqrx plus sox. That is the standard the
+tool is aiming at: not "it has a waterfall", but "it replaced the five things you would
+otherwise have strung together, and the answer came out the same".
+
+(Recovered values are not reproduced here — the challenge set has not run yet.)
 
 **Validates:** ADR-0002 (the premise), ADR-0018 (the biggest UX bet, including its one
 real risk: whether a newcomer finds the contextual menu), ADR-0017, ADR-0020, and the

@@ -165,6 +165,23 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tab { position:relative; }
 .crumb .spk { font-style:normal; font-size:.62rem; }
 
+/* The export pane: a decision and a button. The command line under the audio card is
+   there because the next thing you do with the file is paste that. */
+.exwrap { display:flex; flex-direction:column; gap:.8rem; max-width:52ch; margin:0 auto; padding:1.2rem 0; }
+.exhead { font-family:var(--mono); font-size:.74rem; color:var(--bright); }
+.exhead i { font-style:normal; color:var(--dim); }
+.excard { display:flex; flex-direction:column; gap:.45rem; padding:.8rem .9rem; border:1px solid var(--rule); border-radius:6px; background:var(--panel); }
+.excard b { font-size:.82rem; color:var(--bright); font-weight:600; }
+.excard span { font-size:.74rem; color:var(--dim); line-height:1.5; }
+.excard code { font-family:var(--mono); font-size:.66rem; color:var(--dim); background:var(--raised); padding:.35rem .5rem; border-radius:4px; overflow-x:auto; white-space:pre; }
+.exrow { display:flex; align-items:center; gap:.3rem; flex-wrap:wrap; }
+.exrate { padding:.2rem .45rem; border-radius:4px; font-family:var(--mono); font-size:.68rem; color:var(--dim); border:1px solid var(--rule); }
+.exrate:hover { color:var(--bright); }
+.exrate.on { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:600; }
+.exgo { margin-left:auto; padding:.28rem .7rem; border-radius:5px; background:var(--accent); color:var(--on-accent); font-size:.74rem; font-weight:600; }
+.exgo:hover { filter:brightness(1.08); }
+.exnote { font-family:var(--mono); font-size:.68rem; color:var(--ok); min-height:1em; }
+
 /* The sink's own pane. It has no picture — what it is doing is whether it is doing
    it — so the pane is a status, not a chart. */
 .listenwrap { display:flex; flex-direction:column; align-items:center; gap:.6rem; padding:2rem 1rem; text-align:center; }

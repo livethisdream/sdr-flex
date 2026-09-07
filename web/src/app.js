@@ -9,6 +9,7 @@ import { ContextMenu } from './menu.js';
 import { Strip } from './strip.js';
 import { Metrics } from './metrics.js';
 import { fromFiles, FORMATS } from './capture.js';
+import * as out from './export.js';
 import { AudioMixer, meterLevel } from './audio.js';
 import { COLORMAPS, cssGradient, floorColor } from './colormap.js';
 import { WINDOWS } from './dsp.js';
@@ -28,6 +29,7 @@ const VIEWS = {
   bits: ['Bits', 'Time', 'Flow'],
   events: ['Events', 'Flow'],
   audio: ['Listen', 'Flow'],
+  file: ['Export', 'Flow'],
 };
 
 const defaultViewParams = () => ({
@@ -323,6 +325,7 @@ class App {
     $('#pane-flow').hidden = v !== 'Flow';
     $('#pane-events').hidden = v !== 'Events';
     $('#pane-audio').hidden = v !== 'Listen';
+    $('#pane-export').hidden = v !== 'Export';
     if (v === 'Spectrum') {
       const p = this.vp(this.current);
       $('#cbar').style.background = cssGradient(p.colormap);
@@ -339,6 +342,7 @@ class App {
     if (v === 'Spectrum') this.renderMarkers();
     if (v === 'Flow') this.renderFlow();
     if (v === 'Listen') this.renderAudio();
+    if (v === 'Export') this.renderExport();
     if (v === 'Events') $('#pane-events').innerHTML = '<div class="empty">Event streams arrive with the external decoders at M4.5.</div>';
   }
 
@@ -731,6 +735,115 @@ class App {
         <div class="lnote">Volume and squelch are in the bar below. The \u2715 on this tab
           stops the audio and removes the block; the transport's pause stops it too.</div>
       </div>`;
+  }
+
+  /**
+   * The Export pane.
+   *
+   * A file sink has no picture either — what it has is a decision about *what* to
+   * write and a button. The two shapes are the two things that consume a channel: a
+   * WAV at a rate a stock decoder asks for, and IQ with a SigMF sidecar so the channel
+   * becomes a capture in its own right.
+   */
+  renderExport() {
+    const n = this.node();
+    if (!n || n.out.kind !== 'file') return;
+    const src = this.engine.node(n.parent);
+    if (!src) { $('#pane-export').innerHTML = '<div class="empty">nothing upstream</div>'; return; }
+
+    const dur = this.engine.duration();
+    const pin = this.engine.isPinned(this.channel);
+    const span = pin
+      ? { t0: pin.params.t0.value, t1: pin.params.t1.value, why: 'the pinned window' }
+      : { t0: 0, t1: isFinite(dur) ? dur : Math.max(1, this._tmax), why: isFinite(dur) ? 'the whole capture' : 'everything played so far' };
+    const secs = Math.max(0, span.t1 - span.t0);
+    const isReal = src.out.kind === 'real';
+    const rate = src.out.sampleRate;
+    const audioRate = n.params.audioRate.value;
+
+    const mb = (bytes) => (bytes / 1e6).toFixed(1);
+    const wavBytes = 44 + Math.floor(secs * audioRate) * 2;
+    const iqBytes = Math.floor(secs * rate) * 8;
+
+    $('#pane-export').innerHTML = `
+      <div class="exwrap">
+        <div class="exhead">${this.tag(src)} · ${fmtRate(rate)} · ${secs.toFixed(2)} s <i>(${span.why})</i></div>
+        ${isReal ? `
+        <div class="excard">
+          <b>Audio — WAV, 16-bit mono</b>
+          <span>What multimon-ng, direwolf and dsd read on stdin. Resampled to the rate
+                you pick and peak-normalized, so the slicer downstream sees full scale.</span>
+          <div class="exrow">
+            ${out.AUDIO_RATES.map((r) => `<button class="exrate${r === audioRate ? ' on' : ''}" data-rate="${r}">${r}</button>`).join('')}
+            <button class="exgo" data-what="wav">Save ${mb(wavBytes)} MB</button>
+          </div>
+          <code>multimon-ng -t wav -a POCSAG1200 -a FLEX ${this.tag(src).replace(/[^\w]+/g, '_')}.wav</code>
+        </div>` : ''}
+        <div class="excard">
+          <b>IQ — cf32 + SigMF sidecar</b>
+          <span>${isReal ? 'The channel feeding this block' : 'This channel'}, as a capture
+                of its own: two files, openable here or anywhere else, carrying where it
+                came from and what was done to it.</span>
+          <div class="exrow"><button class="exgo" data-what="iq">Save ${mb(iqBytes)} MB</button></div>
+        </div>
+        <div class="exnote" id="exnote"></div>
+      </div>`;
+
+    for (const b of $('#pane-export').querySelectorAll('.exrate')) {
+      b.addEventListener('click', () => this.onParam('node', 'audioRate', parseInt(b.dataset.rate, 10)));
+    }
+    for (const b of $('#pane-export').querySelectorAll('.exgo')) {
+      b.addEventListener('click', () => this.doExport(b.dataset.what, span));
+    }
+  }
+
+  /**
+   * Write the thing out. Everything is pulled in chunks with the frame loop given a
+   * turn between them, because a minute of a 500 kS/s channel is real work and a
+   * frozen tab is indistinguishable from a crash.
+   */
+  async doExport(what, span) {
+    const n = this.node();
+    const src = this.engine.node(n.parent);
+    const note = $('#exnote');
+    const base = (this.engine.root.label + '-' + this.tag(src)).replace(/[^\w.-]+/g, '_');
+    const say = (t) => { if (note) note.textContent = t; };
+
+    // IQ comes from the nearest channel; a detector has no IQ of its own
+    let from = src;
+    while (from && from.out.kind !== 'iq' && what === 'iq') from = this.engine.node(from.parent);
+    if (what === 'iq' && !from) { say('nothing upstream carries IQ'); return; }
+
+    this.metrics.beginOp();
+    say('reading…');
+    try {
+      const got = await this.engine.readSpan(what === 'iq' ? from.id : src.id, span.t0, span.t1,
+        (f) => say(`reading… ${(f * 100).toFixed(0)}%`));
+      if (!got) { say('that block cannot be exported yet'); return; }
+
+      if (what === 'wav') {
+        say('resampling…');
+        await new Promise((r) => setTimeout(r, 0));
+        const target = n.params.audioRate.value;
+        const rs = out.resample(got.data, got.sampleRate, target);
+        out.save(out.wav(out.normalize(rs), target), `${base}-${target}.wav`);
+        say(`saved ${base}-${target}.wav — ${(rs.length / target).toFixed(2)} s at ${target} Hz`);
+      } else {
+        out.save(out.cf32(got.data), `${base}.sigmf-data`);
+        out.save(out.sigmfMeta({
+          sampleRate: got.sampleRate,
+          centerHz: from.out.centerHz,
+          label: this.tag(from),
+          from: this.engine.root.label,
+          chain: this.engine.path(from.id).map((x) => x.label).join(' > '),
+          startS: span.t0,
+        }), `${base}.sigmf-meta`);
+        say(`saved ${base}.sigmf-data + .sigmf-meta — ${got.count} samples at ${fmtRate(got.sampleRate)}`);
+      }
+      this.metrics.endOp();
+    } catch (err) {
+      say(`export failed: ${err.message}`);
+    }
   }
 
   /** The level bar under a Listen tab, so a channel says it is audible from its tab bar. */
