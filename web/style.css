@@ -506,6 +506,13 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   flex:none;
   font-size:.54rem; letter-spacing:.13em; text-transform:uppercase;
   color:var(--dim); white-space:nowrap;
+  /* A shared baseline is correct and still reads wrong here. These are small caps
+     beside figures half again their size: with no descenders and a short cap height,
+     the label's visual mass sits lower than the numbers' and the eye reads it as
+     sagging. Optical centres differ by about a pixel at these sizes, so it is lifted
+     by one. Units keep the true baseline — "50.0 kHz" is a number and its unit, and
+     those belong on one line for real. */
+  position:relative; top:-1px;
 }
 .pill {
   display:inline-flex; align-items:baseline; gap:.28rem; white-space:nowrap; flex:none;
@@ -517,7 +524,11 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .pill:disabled { color:var(--dim); cursor:default; }
 .pill:disabled:hover { background:none; }
 .pill.scrub { cursor:ew-resize; touch-action:none; }
-.pill .dot { width:5px; height:5px; border-radius:50%; flex:none; align-self:center; }
+.pill .dot {
+  width:5px; height:5px; border-radius:50%; flex:none;
+  /* the dot belongs at the middle of the figures it marks, not on their baseline */
+  align-self:baseline; position:relative; top:-3px;
+}
 .pill.au .dot { background:var(--ok); }
 .pill.mn .dot { background:var(--accent); }
 .pill .pv { color:inherit; font-variant-numeric:tabular-nums; }
