@@ -9,7 +9,7 @@ import { ContextMenu } from './menu.js';
 import { Strip } from './strip.js';
 import { Metrics } from './metrics.js';
 import { AudioMixer, meterLevel } from './audio.js';
-import { COLORMAPS, cssGradient } from './colormap.js';
+import { COLORMAPS, cssGradient, floorColor } from './colormap.js';
 import { WINDOWS } from './dsp.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -53,6 +53,8 @@ class App {
     this._rowAcc = 0;
     this._tmax = 0;                       // the furthest the session has played to
     this.split = 0.34;
+    this.theme = 'auto';
+    try { const t = localStorage.getItem('sdrflex.theme'); if (t) this.theme = t; } catch (_) { /* private mode */ }
     try { const v = parseFloat(localStorage.getItem('sdrflex.split')); if (v > 0) this.split = v; } catch (_) { /* private mode */ }
     this._specAcc = 0;
     this._specData = null;
@@ -314,6 +316,7 @@ class App {
     if (v === 'Spectrum') {
       const p = this.vp(this.current);
       $('#cbar').style.background = cssGradient(p.colormap);
+      this.applyStageColors(p.colormap);
       this.waterfall.setColormap(p.colormap);
       this.waterfall.setRange(p.dbMin, p.dbMax);
       this.trace.setRange(p.dbMin, p.dbMax);
@@ -513,7 +516,7 @@ class App {
       else if (key === 'window') p.window = value;
       else if (key === 'trigger') { p.trigger = value; this._tsCache = null; }
       else if (key === 'spanS') { p.spanS = value; this._tsCache = null; }
-      else if (key === 'colormap') { p.colormap = value; this.waterfall.setColormap(value); $('#cbar').style.background = cssGradient(value); }
+      else if (key === 'colormap') { p.colormap = value; this.applyStageColors(value); this.waterfall.setColormap(value); $('#cbar').style.background = cssGradient(value); }
       else p[key] = value;
       if (key === 'dbMin' || key === 'dbMax') p.dbAuto = false;
       if (key === 'dbMin' && p.dbMin > p.dbMax - 5) p.dbMin = p.dbMax - 5;
@@ -719,6 +722,53 @@ class App {
       if (n) out.add(n.id);
     }
     return out;
+  }
+
+  /**
+   * The plot's colors, derived from the colormap rather than from the theme.
+   *
+   * A waterfall's background is the floor of its color scale — that is what an
+   * unfilled row already shows — and every sequential scale runs dark to bright. So
+   * Viridis stays dark on a light interface and Paper is light on a dark one, and
+   * anything drawn over the plot has to take its contrast from the plot, not from
+   * the chrome around it.
+   */
+  applyStageColors(name) {
+    const f = floorColor(name);
+    const dark = f.lum < 0.5;
+    const ink = dark ? '233,241,245' : '16,23,37';
+    const r = document.documentElement.style;
+    r.setProperty('--wf-floor', f.rgb);
+    r.setProperty('--on-stage', `rgb(${ink})`);
+    r.setProperty('--on-stage-dim', `rgba(${ink},.66)`);
+    r.setProperty('--stage-veil', dark ? 'rgba(0,0,0,.5)' : 'rgba(255,255,255,.7)');
+    r.setProperty('--stage-rule', `rgba(${ink},.14)`);
+    r.setProperty('--stage-peak', `rgba(${ink},.5)`);
+    r.setProperty('--stage-trace', dark ? '#D2E8E3' : '#12283C');
+    // the filled area under the trace, tinted toward the map's own midpoint
+    r.setProperty('--stage-fill', dark ? 'rgba(33,145,140,.20)' : 'rgba(42,80,132,.14)');
+  }
+
+  /**
+   * Theme is a preference about the room, not about the signal, so it is kept per
+   * browser and defaults to whatever the operating system says. Three states rather
+   * than two: "auto" is a real answer and losing it to a binary toggle means the app
+   * stops following the system at dusk.
+   */
+  setTheme(mode) {
+    this.theme = mode;
+    const root = document.documentElement;
+    if (mode === 'auto') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', mode);
+    try { localStorage.setItem('sdrflex.theme', mode); } catch (_) { /* private mode */ }
+    const b = $('#theme');
+    if (b) {
+      b.textContent = mode === 'light' ? '\u2600' : mode === 'dark' ? '\u263E' : '\u25D0';
+      b.title = `theme: ${mode} — click for ${mode === 'auto' ? 'light' : mode === 'light' ? 'dark' : 'auto'}`;
+      b.setAttribute('aria-label', `theme: ${mode}`);
+    }
+    // the waterfall's own colors are baked into a texture, so it has to be told
+    if (this.waterfall) this.waterfall.setColormap(this.vp(this.current).colormap);
   }
 
   /** The spectrum's share of the stage. The waterfall takes what is left. */
@@ -1010,6 +1060,20 @@ class App {
       cb.addEventListener('pointermove', move);
       cb.addEventListener('pointerup', up);
     });
+
+    const MODES = ['auto', 'light', 'dark'];
+    this.setTheme(this.theme);
+    $('#theme').addEventListener('click', () => {
+      this.setTheme(MODES[(MODES.indexOf(this.theme) + 1) % MODES.length]);
+      this.renderStage();
+      this.metrics.interaction();
+    });
+    // following the system means following it as it changes, not only at load
+    try {
+      matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+        if (this.theme === 'auto') this.renderStage();
+      });
+    } catch (_) { /* older browsers: the initial read still applies */ }
 
     // ── splitter ───────────────────────────────────────────────────────────
     // How much room the spectrum gets against the waterfall is a matter of what you

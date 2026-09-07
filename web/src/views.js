@@ -1,6 +1,11 @@
 // 2D canvas views: the spectrum trace that sits above the waterfall, plus the
 // time-series and bit raster. All read their colors from CSS custom properties
 // so there is one palette.
+//
+// Two surfaces, two sets of tokens. The spectrum trace shares a surface with the
+// waterfall (ADR-0020), so it draws on `--wf-floor` in `--stage-*` colors, which the
+// app derives from the active colormap. The time-series has no colormap, so it draws
+// on `--stage` in `--trace`, which follow the theme.
 
 function css(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -50,7 +55,7 @@ export class SpectrumTrace {
     const c = this.ctx;
     const dpr = fit(this.canvas);
     const W = this.canvas.width, H = this.canvas.height;
-    c.fillStyle = css('--stage', '#05070B');
+    c.fillStyle = css('--wf-floor', '#05070B');
     c.fillRect(0, 0, W, H);
     if (!this.avg) return;
 
@@ -62,7 +67,7 @@ export class SpectrumTrace {
     const n = Math.max(2, i1 - i0);
     const sx = W / (n - 1);
 
-    c.strokeStyle = 'rgba(110,121,140,.16)';
+    c.strokeStyle = css('--stage-rule', 'rgba(110,121,140,.16)');
     c.lineWidth = 1;
     for (let g = 1; g < 4; g++) {
       const gy = Math.round((H * g) / 4) + 0.5;
@@ -79,18 +84,18 @@ export class SpectrumTrace {
 
     if (this.showPeak) {
       path(this.peak);
-      c.strokeStyle = 'rgba(110,121,140,.62)';
+      c.strokeStyle = css('--stage-peak', 'rgba(110,121,140,.62)');
       c.lineWidth = 1 * dpr;
       c.stroke();
     }
 
     path(this.avg);
     c.lineTo(W, H); c.lineTo(0, H); c.closePath();
-    c.fillStyle = 'rgba(33,145,140,.20)';
+    c.fillStyle = css('--stage-fill', 'rgba(33,145,140,.20)');
     c.fill();
 
     path(this.avg);
-    c.strokeStyle = css('--trace', '#D2E8E3');
+    c.strokeStyle = css('--stage-trace', '#D2E8E3');
     c.lineWidth = 1.2 * dpr;
     c.stroke();
   }

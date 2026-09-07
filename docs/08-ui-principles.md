@@ -425,9 +425,26 @@ as visible waterfall jitter, and this user base will see it.
 
 ## Visual direction
 
-**Dark first.** Not a theme option — the primary design target. Signal work happens in
-dim rooms and the waterfall carries the information; a bright UI destroys the dynamic
-range your eye has available for it.
+**Dark first, and the plot is not the theme.** Dark is the default and the primary
+design target: signal work happens in dim rooms and the waterfall carries the
+information. A light theme exists, because not every room is dim and not everyone
+works at night — but the line between what it changes and what it does not is the part
+worth stating.
+
+The **chrome** follows the theme. The **plot** follows the colormap. A waterfall's
+background *is* the floor of its color scale — it is what an unfilled row already
+shows — and every perceptually uniform sequential scale runs dark to bright. So Viridis
+stays dark on a light interface and `Paper`, the one scale built the other way round,
+is light on a dark one. Both are correct, and inverting a scale to match the chrome
+would throw away the mapping people have trained on.
+
+That makes the contrast rule follow the plot too: anything drawn *over* the waterfall —
+the frequency markers, the clip badge, the color-bar labels — takes its ink from the
+plot's floor, not from the theme around it. Getting this wrong is how a light theme
+ends up with white labels on a white waterfall.
+
+Theme has three states, not two. "Auto" follows the operating system and is the
+default; a binary toggle silently means the app stops following the system at dusk.
 
 **Perceptually uniform colormaps only.** Viridis, inferno, magma, cividis. The
 classic rainbow/jet colormap **lies about the data** — it creates false edges at the

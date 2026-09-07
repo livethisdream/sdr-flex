@@ -1,15 +1,88 @@
-/* SDR Flex M0. Dark-committed: signal work happens in dim rooms and the waterfall
-   needs the dynamic range the eye has available. */
+/* SDR Flex M0.
+ *
+ * Two palettes, one rule about where the line between them falls. The *chrome*
+ * follows the theme. The *plot* follows the colormap: a waterfall's background is
+ * the floor of its color scale, not a design choice, and every sequential scale runs
+ * dark to bright. So Viridis is dark on a light interface, and Paper is light on a
+ * dark one, and both are correct — `--wf-floor`, `--on-stage` and `--stage-veil` are
+ * set from the active map at runtime rather than declared here.
+ *
+ * Dark stays the default: signal work happens in dim rooms and the waterfall needs
+ * the dynamic range the eye has available. Light is a choice, and "auto" follows the
+ * operating system.
+ */
 :root {
-  --ground:#0A0C11; --panel:#111520; --raised:#171D29; --rule:#232B3A; --rule-lo:#1A2130;
-  --stage:#05070B; --trace:#D2E8E3;
-  --dim:#6E798C; --body:#B6C1D2; --bright:#EDF2F8;
-  --accent:#FF7A5C;                 /* marks what the user placed */
-  --accent-lo:rgba(255,122,92,.14);
-  --ok:#4ADE9B; --warn:#F5C24C; --crit:#FF5470;
   --display:'Archivo','Helvetica Neue',Arial,sans-serif;
   --sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;
+}
+
+/* dark — the default, and what `data-theme="dark"` pins */
+:root, :root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground:#0A0C11; --panel:#111520; --raised:#171D29; --rule:#232B3A; --rule-lo:#1A2130;
+  --stage:#05070B; --trace:#D2E8E3;
+  --dim:#6E798C; --body:#B6C1D2; --bright:#EDF2F8;
+  --faint:#3E4A5E;                  /* quieter than --dim, for a badge beside a label */
+  --accent:#FF7A5C;                 /* marks what the user placed */
+  --accent-lo:rgba(255,122,92,.14);
+  --accent-mid:rgba(255,122,92,.45);
+  --accent-veil:rgba(255,122,92,.07);
+  --accent-ring:rgba(255,122,92,.22);
+  --on-accent:#160906;
+  --ok:#4ADE9B; --warn:#F5C24C; --crit:#FF5470;
+  --ok-mid:rgba(74,222,155,.45);
+  --float:rgba(17,21,32,.88);       /* the pill bars, over whatever is behind them */
+  --shadow:rgba(0,0,0,.9);
+  --shadow-hard:rgba(0,0,0,.95);
+  --edge:rgba(255,255,255,.16);     /* a hairline on the color bar, whatever it holds */
+  --plot-veil:rgba(10,12,17,.78);   /* a label on the theme's own plot surface */
+}
+
+/* light — a brighter room, not a different tool */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground:#EEF1F6; --panel:#FFFFFF; --raised:#F6F8FB; --rule:#D2DAE6; --rule-lo:#E3E8F0;
+  --stage:#FFFFFF; --trace:#1B3348;
+  --dim:#69748A; --body:#3B475C; --bright:#101725;
+  --faint:#A3AEC0;
+  --accent:#D9461E;                 /* same coral, dark enough to read on paper */
+  --accent-lo:rgba(217,70,30,.11);
+  --accent-mid:rgba(217,70,30,.5);
+  --accent-veil:rgba(217,70,30,.08);
+  --accent-ring:rgba(217,70,30,.2);
+  --on-accent:#FFF6F3;
+  --ok:#0F7F53; --warn:#8A6206; --crit:#C22A44;
+  --ok-mid:rgba(15,127,83,.45);
+  --float:rgba(255,255,255,.92);
+  --shadow:rgba(23,32,48,.2);
+  --shadow-hard:rgba(23,32,48,.26);
+  --edge:rgba(0,0,0,.22);
+  --plot-veil:rgba(255,255,255,.8);
+}
+
+/* auto: no attribute set, so the operating system decides */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]) {
+    color-scheme: light;
+    --ground:#EEF1F6; --panel:#FFFFFF; --raised:#F6F8FB; --rule:#D2DAE6; --rule-lo:#E3E8F0;
+    --stage:#FFFFFF; --trace:#1B3348;
+    --dim:#69748A; --body:#3B475C; --bright:#101725;
+    --faint:#A3AEC0;
+    --accent:#D9461E;
+    --accent-lo:rgba(217,70,30,.11);
+    --accent-mid:rgba(217,70,30,.5);
+    --accent-veil:rgba(217,70,30,.08);
+    --accent-ring:rgba(217,70,30,.2);
+    --on-accent:#FFF6F3;
+    --ok:#0F7F53; --warn:#8A6206; --crit:#C22A44;
+    --ok-mid:rgba(15,127,83,.45);
+    --float:rgba(255,255,255,.92);
+    --shadow:rgba(23,32,48,.2);
+    --shadow-hard:rgba(23,32,48,.26);
+    --edge:rgba(0,0,0,.22);
+    --plot-veil:rgba(255,255,255,.8);
+  }
 }
 * { box-sizing:border-box; }
 html, body { height:100%; }
@@ -28,10 +101,19 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 
 /* one row: what radio, and where in it */
 .topbar {
-  display:flex; flex-wrap:wrap; align-items:center; gap:.15rem;
+  display:flex; align-items:center; gap:.4rem;
   padding:.35rem .7rem; border-bottom:1px solid var(--rule);
   background:var(--raised);
 }
+.crumbs { display:flex; flex-wrap:wrap; align-items:center; gap:.15rem; min-width:0; flex:1; }
+/* Theme is one preference about the room. It lives in the dead space at the end of
+   the breadcrumb — the only row that always exists and never fills up. */
+.themebtn {
+  flex:none; width:26px; height:26px; border-radius:5px;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:.82rem; line-height:1; color:var(--dim);
+}
+.themebtn:hover { background:var(--panel); color:var(--bright); }
 .dev {
   display:inline-flex; align-items:center; gap:.45rem;
   padding:.2rem .5rem; border-radius:3px;
@@ -100,7 +182,10 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .pane[hidden] { display:none; }
 .pane.scrolly { overflow:auto; padding:1rem; }
 
-.stage { position:relative; flex:1; min-height:0; display:flex; flex-direction:column; background:var(--stage); cursor:crosshair; touch-action:none; }
+/* The spectrum trace and the waterfall are one surface sharing one axis (ADR-0020),
+   so the stage takes the colormap's floor rather than the theme's plot color, and
+   everything drawn over it reads from --on-stage instead of --body. */
+.stage { position:relative; flex:1; min-height:0; display:flex; flex-direction:column; background:var(--wf-floor, var(--stage)); cursor:crosshair; touch-action:none; }
 .sp { display:block; width:100%; height:var(--split, 34%); flex:none; min-height:0; }
 .splitter {
   height:9px; flex:none; background:var(--panel); border-block:1px solid var(--rule-lo);
@@ -115,16 +200,16 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .wf { display:block; width:100%; flex:1; min-height:0; }
 .ts { display:block; width:100%; height:100%; }
 
-.selbox { position:absolute; top:0; bottom:0; border:1.5px solid var(--accent); background:rgba(255,122,92,.07); pointer-events:none; }
+.selbox { position:absolute; top:0; bottom:0; border:1.5px solid var(--accent); background:var(--accent-veil); pointer-events:none; }
 .selbox::after {
   content:attr(data-label); position:absolute; top:3px; left:3px;
-  font-family:var(--mono); font-size:.6rem; color:#160906; background:var(--accent);
+  font-family:var(--mono); font-size:.6rem; color:var(--on-accent); background:var(--accent);
   padding:.05rem .28rem; border-radius:2px; white-space:nowrap;
 }
 
 #cbar-wrap { position:absolute; right:10px; top:38%; bottom:14px; width:11px; cursor:ns-resize; touch-action:none; }
-.cbar { position:absolute; inset:0; border-radius:2px; border:1px solid rgba(255,255,255,.16); }
-.cb-l { position:absolute; right:16px; font-family:var(--mono); font-size:.56rem; color:var(--dim); white-space:nowrap; }
+.cbar { position:absolute; inset:0; border-radius:2px; border:1px solid var(--edge); }
+.cb-l { position:absolute; right:16px; font-family:var(--mono); font-size:.56rem; color:var(--on-stage-dim, var(--dim)); white-space:nowrap; }
 #cb-hi { top:-2px; } #cb-lo { bottom:-2px; }
 
 .zoomtag { color:var(--accent); }
@@ -140,8 +225,8 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   display:flex; align-items:center; gap:.4rem;
   width:max-content; max-width:calc(100% - 1.4rem);
   padding:.3rem .55rem; border-radius:999px;
-  background:rgba(17,21,32,.88); border:1px solid var(--rule);
-  box-shadow:0 10px 30px -12px rgba(0,0,0,.9);
+  background:var(--float); border:1px solid var(--rule);
+  box-shadow:0 10px 30px -12px var(--shadow);
   font-family:var(--mono); font-size:.72rem; color:var(--dim);
   backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
 }
@@ -154,9 +239,9 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tbtn:hover { background:var(--raised); color:var(--bright); }
 .tbtn:active { background:var(--rule-lo); }
 .tbtn.play { min-width:44px; color:var(--bright); }
-.tbtn.play.paused { color:var(--accent); border-color:rgba(255,122,92,.45); }
+.tbtn.play.paused { color:var(--accent); border-color:var(--accent-mid); }
 .tbtn.small { min-width:auto; min-height:26px; padding:0 .5rem; font-size:.64rem; color:var(--dim); background:transparent; }
-.tbtn.small.on { color:var(--accent); border-color:rgba(255,122,92,.45); }
+.tbtn.small.on { color:var(--accent); border-color:var(--accent-mid); }
 .clock { margin-left:.4rem; color:var(--body); font-variant-numeric:tabular-nums; }
 
 /* The rail is 2px but the target is the whole 22px button: a 2px hit area is a
@@ -175,7 +260,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   position:absolute; left:0; top:50%; margin-top:-6px;
   width:2px; height:12px; background:var(--accent); border-radius:1px;
 }
-.track:hover i, .track.drag i { box-shadow:0 0 0 3px rgba(255,122,92,.22); }
+.track:hover i, .track.drag i { box-shadow:0 0 0 3px var(--accent-ring); }
 
 
 .metrics { display:flex; gap:1.1rem; flex-wrap:wrap; padding:.35rem .8rem; border-top:1px solid var(--rule); font-family:var(--mono); font-size:.66rem; color:var(--dim); background:var(--ground); }
@@ -183,27 +268,27 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .metrics b { color:var(--body); font-weight:500; }
 .metrics b.ok { color:var(--ok); }
 .metrics b.bad { color:var(--warn); }
-.metrics i { font-style:normal; color:var(--rule); }
+.metrics i { font-style:normal; color:var(--faint); }
 
 /* ── contextual menu ── */
-.ctx { position:fixed; z-index:40; width:196px; background:var(--panel); border:1px solid var(--rule); border-radius:4px; overflow:hidden; box-shadow:0 18px 44px -14px rgba(0,0,0,.95); font-size:.78rem; }
+.ctx { position:fixed; z-index:40; width:196px; background:var(--panel); border:1px solid var(--rule); border-radius:4px; overflow:hidden; box-shadow:0 18px 44px -14px var(--shadow-hard); font-size:.78rem; }
 .ctx[hidden] { display:none; }
 .ctx-search { padding:.3rem .45rem; border-bottom:1px solid var(--rule); background:var(--raised); }
 .ctx-search input { width:100%; background:transparent; border:0; color:var(--bright); font-family:var(--mono); font-size:.72rem; outline:none; }
 .ctx-grp { font-family:var(--mono); font-size:.54rem; letter-spacing:.15em; text-transform:uppercase; color:var(--dim); padding:.4rem .6rem .16rem; }
 .ctx-i { display:flex; width:100%; text-align:left; gap:.4rem; align-items:baseline; padding:.28rem .6rem; color:var(--body); }
-.ctx-i:hover { background:var(--accent); color:#160906; font-weight:600; }
+.ctx-i:hover { background:var(--accent); color:var(--on-accent); font-weight:600; }
 .ctx-i.gsep { border-top:1px solid var(--rule-lo); }
 .ctx-search + .ctx-i, .ctx > .ctx-i:first-child { margin-top:.22rem; }
 .ctx-i:last-child { margin-bottom:.22rem; }
 .ctx-i.stub { color:var(--dim); cursor:default; }
 .ctx-i.stub:hover { background:transparent; color:var(--dim); font-weight:400; }
 .ctx-i .ext { margin-left:auto; font-family:var(--mono); font-size:.54rem; color:var(--warn); letter-spacing:.08em; }
-.ctx-i .soon { margin-left:auto; font-family:var(--mono); font-size:.54rem; color:var(--rule); }
+.ctx-i .soon { margin-left:auto; font-family:var(--mono); font-size:.54rem; color:var(--faint); }
 .ctx-none { padding:.5rem .6rem; color:var(--dim); font-size:.72rem; }
 
 /* ── tooltip: explanation, never identity (law 11) ── */
-.tip { position:fixed; z-index:50; width:250px; padding:.5rem .62rem; background:var(--raised); border:1px solid var(--rule); border-radius:4px; box-shadow:0 14px 34px -12px rgba(0,0,0,.95); font-size:.73rem; color:var(--dim); line-height:1.5; pointer-events:none; }
+.tip { position:fixed; z-index:50; width:250px; padding:.5rem .62rem; background:var(--raised); border:1px solid var(--rule); border-radius:4px; box-shadow:0 14px 34px -12px var(--shadow-hard); font-size:.73rem; color:var(--dim); line-height:1.5; pointer-events:none; }
 .tip[hidden] { display:none; }
 .tip b { color:var(--bright); font-weight:600; }
 .tip em { font-style:normal; color:var(--accent); font-family:var(--mono); }
@@ -244,7 +329,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tstage .ts { position:absolute; inset:0; width:100%; height:100%; }
 .trig {
   position:absolute; top:8px; left:10px; font-family:var(--mono); font-size:.62rem;
-  color:var(--dim); background:rgba(10,12,17,.78); padding:.12rem .38rem; border-radius:2px;
+  color:var(--dim); background:var(--plot-veil); padding:.12rem .38rem; border-radius:2px;
 }
 .trig.on { color:var(--ok); }
 
@@ -259,7 +344,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .fk, .fr { font-family:var(--mono); font-size:.66rem; color:var(--dim); }
 .fr { margin-left:auto; }
 
-.hint { position:fixed; left:50%; bottom:170px; transform:translateX(-50%); z-index:30; background:var(--raised); border:1px solid var(--rule); border-radius:4px; padding:.5rem .8rem; font-size:.78rem; color:var(--body); box-shadow:0 14px 34px -14px rgba(0,0,0,.9); transition:opacity .25s ease; }
+.hint { position:fixed; left:50%; bottom:170px; transform:translateX(-50%); z-index:30; background:var(--raised); border:1px solid var(--rule); border-radius:4px; padding:.5rem .8rem; font-size:.78rem; color:var(--body); box-shadow:0 14px 34px -14px var(--shadow); transition:opacity .25s ease; }
 .hint.gone { opacity:0; pointer-events:none; }
 
 @media (prefers-reduced-motion: reduce) { * { transition-duration:.001ms !important; } }
@@ -271,24 +356,24 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .markers { position:absolute; inset:0; pointer-events:none; }
 .stagebadge {
   position:absolute; top:8px; left:10px; z-index:3;
-  font-family:var(--mono); font-size:.62rem; color:var(--dim);
-  background:rgba(10,12,17,.8); padding:.12rem .4rem; border-radius:2px;
+  font-family:var(--mono); font-size:.62rem; color:var(--on-stage-dim, var(--dim));
+  background:var(--stage-veil); padding:.12rem .4rem; border-radius:2px;
   pointer-events:none;
 }
 .stagebadge[hidden] { display:none; }
 .stagebadge.pin { color:var(--accent); }
 .marker {
   position:absolute; top:0; bottom:0; padding:0;
-  background:rgba(255,122,92,.055);
-  border-left:1px solid rgba(255,122,92,.4);
-  border-right:1px solid rgba(255,122,92,.4);
+  background:var(--accent-veil);
+  border-left:1px solid var(--accent-mid);
+  border-right:1px solid var(--accent-mid);
   pointer-events:auto; cursor:pointer;
 }
-.marker:hover { background:rgba(255,122,92,.13); }
+.marker:hover { background:var(--accent-lo); }
 .marker span {
   position:absolute; left:0; bottom:3px;
-  font-family:var(--mono); font-size:.58rem; color:#160906;
-  background:rgba(255,122,92,.85); padding:.03rem .26rem; border-radius:2px;
+  font-family:var(--mono); font-size:.58rem; color:var(--on-accent);
+  background:var(--accent); padding:.03rem .26rem; border-radius:2px;
 }
 .marker:hover span { background:var(--accent); }
 
@@ -299,7 +384,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .selbox.clamped { border-bottom-style:dashed; border-bottom-color:var(--warn); }
 .selbox.armed::before {
   content:"▾ actions"; position:absolute; left:3px; bottom:3px;
-  font-family:var(--mono); font-size:.58rem; color:#160906;
+  font-family:var(--mono); font-size:.58rem; color:var(--on-accent);
   background:var(--accent); padding:.05rem .3rem; border-radius:2px; white-space:nowrap;
 }
 
@@ -331,8 +416,8 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   width:max-content; max-width:calc(100% - 1.4rem);
   display:flex; align-items:center; gap:.5rem;
   padding:.3rem .7rem; border-radius:999px;
-  background:rgba(17,21,32,.88); border:1px solid var(--rule);
-  box-shadow:0 10px 30px -10px rgba(0,0,0,.9);
+  background:var(--float); border:1px solid var(--rule);
+  box-shadow:0 10px 30px -10px var(--shadow);
   font-family:var(--mono); font-size:.74rem;
   overflow-x:auto; scrollbar-width:none;
   backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
@@ -373,7 +458,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .pop {
   position:fixed; z-index:60; min-width:190px; max-width:260px;
   background:var(--raised); border:1px solid var(--rule); border-radius:8px;
-  box-shadow:0 18px 44px -12px rgba(0,0,0,.95); padding:.55rem .6rem;
+  box-shadow:0 18px 44px -12px var(--shadow-hard); padding:.55rem .6rem;
 }
 .pop[hidden] { display:none; }
 .pophead {
@@ -385,14 +470,14 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   font-family:var(--mono); font-size:.6rem; padding:.14rem .4rem; border-radius:999px;
   border:1px solid var(--rule); color:var(--dim); text-transform:none; letter-spacing:0;
 }
-.autobtn.on { color:var(--ok); border-color:rgba(74,222,155,.45); }
+.autobtn.on { color:var(--ok); border-color:var(--ok-mid); }
 .popopts { display:flex; flex-wrap:wrap; gap:.3rem; }
 .opt {
   font-family:var(--mono); font-size:.72rem; padding:.3rem .55rem; border-radius:5px;
   border:1px solid var(--rule); color:var(--body); min-height:30px;
 }
 .opt:hover { border-color:var(--dim); color:var(--bright); }
-.opt.on { background:var(--accent); border-color:var(--accent); color:#160906; font-weight:600; }
+.opt.on { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:600; }
 .popnum { display:flex; align-items:center; gap:.4rem; }
 .popnum input[type=range] { flex:1; accent-color:var(--accent); }
 .nudge {

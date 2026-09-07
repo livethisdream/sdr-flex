@@ -25,7 +25,8 @@ and try the workflow. See [ADR-0021](adr/0021-mock-engine-first.md).
 - Interaction-count and pointer-travel instrumentation baked in from the first commit
 
 **Explicitly not in scope:** real hardware, ring recording, plugins, external
-processes, GNU Radio, audio.
+processes, GNU Radio. *(Audio was on this list and came off it: the detectors needed
+somewhere to go, and a browser can already make the noise.)*
 
 **Done when:** a stranger can open the link, drag a box, drill in, and reach bits —
 and the interaction and travel budgets are being measured automatically.
@@ -52,10 +53,14 @@ sideband from spectral asymmetry, carrier offset from the strongest bin) and eac
 saying so; a synthetic scene with something for every one of them to catch; and an
 audio sink as an ordinary terminal block ([ADR-0027](adr/0027-sinks-are-nodes.md)), so
 gain and squelch live at the sink, a detector still has two parameters instead of
-twenty, and two channels listening at once is a mixer nobody had to build. Also: removal on the
-current crumb and the current tab, a working transport scrubber — the clip end-to-end when a channel is pinned, the whole session
-otherwise — a draggable splitter between spectrum and waterfall kept per browser, and
-a parameter bar that measures itself and folds until it fits the window.
+twenty, and two channels listening at once is a mixer nobody had to build.
+
+And the smaller repairs: removal on the current crumb and the current tab; a working
+transport scrubber — the clip end to end when a channel is pinned, the whole session
+otherwise; a draggable splitter between spectrum and waterfall, kept per browser; a
+parameter bar that measures itself and folds until it fits the window; and a light
+theme in which the chrome follows the theme while the plot follows its colormap
+([UI principles](08-ui-principles.md#visual-direction)).
 
 **Still open:** drag-and-drop of a real SigMF file, more than one source at a time and
 the picker on the device chip that goes with it, tearing tabs into tiles, and the
