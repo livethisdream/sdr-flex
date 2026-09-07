@@ -8,7 +8,7 @@ import { SpectrumTrace, TimeSeries, BitRaster } from './views.js';
 import { ContextMenu } from './menu.js';
 import { Strip } from './strip.js';
 import { Metrics } from './metrics.js';
-import { AudioSink, meterLevel } from './audio.js';
+import { AudioMixer, meterLevel } from './audio.js';
 import { COLORMAPS, cssGradient } from './colormap.js';
 import { WINDOWS } from './dsp.js';
 
@@ -26,6 +26,7 @@ const VIEWS = {
   real: ['Time', 'Flow'],
   bits: ['Bits', 'Time', 'Flow'],
   events: ['Events', 'Flow'],
+  audio: ['Listen', 'Flow'],
 };
 
 const defaultViewParams = () => ({
@@ -48,7 +49,7 @@ class App {
     this.trace = new SpectrumTrace($('#sp'));
     this.timeSeries = new TimeSeries($('#ts'));
     this.bitRaster = new BitRaster($('#bits'));
-    this.audio = new AudioSink();
+    this.mixer = new AudioMixer();
     this._rowAcc = 0;
     this._tmax = 0;                       // the furthest the session has played to
     this.split = 0.34;
@@ -114,6 +115,14 @@ class App {
   /** How a node is written down. Only channels carry a letter (engine.addNode). */
   tag(n) { return n.letter ? `${n.letter} · ${n.label}` : n.label; }
 
+  /** Everything under a node, in any direction — used to stop what is about to vanish. */
+  descendants(id) {
+    const out = [];
+    const walk = (nid) => { for (const c of this.engine.children(nid)) { out.push(c); walk(c.id); } };
+    walk(id);
+    return out;
+  }
+
   blocksOf(channelId) {
     const out = [];
     const walk = (id) => {
@@ -130,8 +139,6 @@ class App {
   tabKey() { return this.tabs.get(this.channel) || 'spectrum'; }
 
   setTab(key) {
-    // the subscription is to one node's output, so leaving that node ends it
-    if (this.audio.on && key !== this.tabKey()) this.audio.stop();
     this.tabs.set(this.channel, key);
     this.current = (key === 'spectrum' || key === 'flow') ? this.channel : key;
   }
@@ -150,7 +157,6 @@ class App {
     this.renderTabs();
     this.renderStrip();
     this.renderStage();
-    this.renderListen();
   }
 
   /**
@@ -170,8 +176,13 @@ class App {
 
     const pin = (n) => (n.params && n.params.timeMode && n.params.timeMode.value === 'pinned'
       ? ` <b class="pin" title="pinned ${n.params.t0.value.toFixed(2)}–${n.params.t1.value.toFixed(2)} s">⊓</b>` : '');
+    // Audio outlives the tab you started it on — that is what makes several channels
+    // a mixer rather than a mode — so a channel you have navigated away from has to
+    // say it is still making noise.
+    const audible = this.audibleChannels();
+    const spk = (n) => (audible.has(n.id) ? ' <b class="spk" title="audible">\u{1F508}</b>' : '');
     const crumb = (n, cls) =>
-      `<button class="crumb ${cls}" data-id="${n.id}">${this.tag(n)}${pin(n)}` +
+      `<button class="crumb ${cls}" data-id="${n.id}">${this.tag(n)}${pin(n)}${spk(n)}` +
       (cls === 'cur' && n.id !== root.id
         ? `<i class="x" data-del="${n.id}" role="button" tabindex="0" title="remove ${this.tag(n)} and everything under it">✕</i>` : '') +
       `</button>`;
@@ -230,6 +241,7 @@ class App {
     this.metrics.beginOp();
     this.clearSelection();
     this.strip.closePop();
+    for (const d of [n, ...this.descendants(id)]) this.mixer.remove(d.id);
     await this.engine.removeNode(id);
     let ch = this.engine.node(parent);
     while (ch && !this.isChannel(ch)) ch = this.engine.node(ch.parent);
@@ -244,7 +256,6 @@ class App {
   }
 
   goChannel(id) {
-    if (this.audio.on) this.audio.stop();
     this.clearSelection();
     this.channel = id;
     this.resetSpectrum();
@@ -260,13 +271,17 @@ class App {
     if (key !== 'spectrum' && key !== 'flow' && !blocks.some((b) => b.id === key)) this.setTab('spectrum');
 
     const items = [{ k: 'spectrum', label: 'Spectrum' }]
-      .concat(blocks.map((b) => ({ k: b.id, label: this.tag(b), kind: b.out.kind, del: b.id, ext: OPS[b.op] && OPS[b.op].external })))
+      .concat(blocks.map((b) => ({ k: b.id, label: this.tag(b), kind: b.out.kind, del: b.id,
+                                   live: b.out.kind === 'audio' && this.mixer.has(b.id),
+                                   ext: OPS[b.op] && OPS[b.op].external })))
       .concat([{ k: 'flow', label: 'Flow' }]);
 
     const el = $('#tabs');
     el.innerHTML = items.map((it) =>
-      `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}" data-k="${it.k}">` +
+      `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}${it.live ? ' live' : ''}" data-k="${it.k}">` +
+      `${it.live ? '<span class="spk">\u{1F508}</span>' : ''}` +
       `${it.label}${it.kind ? `<span class="tk">${it.kind}</span>` : ''}` +
+      `${it.live ? '<i class="alvl"></i>' : ''}` +
       (it.del && it.k === this.tabKey()
         ? `<i class="x" data-del="${it.del}" role="button" tabindex="0" title="remove ${it.label} and everything after it">✕</i>` : '') +
       `</button>`).join('') +
@@ -295,6 +310,7 @@ class App {
     $('#pane-bits').hidden = v !== 'Bits';
     $('#pane-flow').hidden = v !== 'Flow';
     $('#pane-events').hidden = v !== 'Events';
+    $('#pane-audio').hidden = v !== 'Listen';
     if (v === 'Spectrum') {
       const p = this.vp(this.current);
       $('#cbar').style.background = cssGradient(p.colormap);
@@ -309,6 +325,7 @@ class App {
     }
     if (v === 'Spectrum') this.renderMarkers();
     if (v === 'Flow') this.renderFlow();
+    if (v === 'Listen') this.renderAudio();
     if (v === 'Events') $('#pane-events').innerHTML = '<div class="empty">Event streams arrive with the external decoders at M4.5.</div>';
   }
 
@@ -440,6 +457,8 @@ class App {
           bfoHz: { label: 'bfo', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 1.5, min: -3000, max: 3000, integer: true, type: 'num' },
           offsetHz: { label: 'offset', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2.5, integer: true, type: 'num' },
           pitchHz: { label: 'pitch', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2, min: 200, max: 2000, integer: true, type: 'num' },
+          volume: { label: 'volume', unit: '', fmt: (v) => (v * 100).toFixed(0) + '%', step: 0.004, min: 0, max: 1, type: 'num' },
+          squelch: { label: 'squelch', unit: '', fmt: (v) => (v > 0 ? v.toFixed(3) : 'off'), step: 0.0004, min: 0, max: 0.4, type: 'num' },
           gain: { label: 'gain', unit: '×', fmt: (v) => (v < 10 ? v.toFixed(1) : String(Math.round(v))), step: 0.02, min: 0.1, max: 60, type: 'num' },
         }[key] || { label: key, unit: '', fmt: String, type: 'num', step: 1 };
         nodeCells.push({
@@ -448,7 +467,9 @@ class App {
           autoValue: pr.auto ? pr.auto.suggested ?? pr.auto.initial : null,
         });
       }
-      nodeCells.push({ key: 'out', label: 'out', unit: 'kS/s', type: 'ro', value: n.out.sampleRate, fmt: (v) => (v / 1e3).toFixed(1) });
+      // a sink has no output; what its rate describes is what it is being fed
+      nodeCells.push({ key: 'out', label: n.out.kind === 'audio' ? 'in' : 'out', unit: 'kS/s',
+                       type: 'ro', value: n.out.sampleRate, fmt: (v) => (v / 1e3).toFixed(1) });
     }
     groups.push({ key: 'node', title: n.op === 'core.source' ? 'src' : (n.letter || n.label), cells: nodeCells });
 
@@ -480,33 +501,12 @@ class App {
       });
     }
 
-    // Listening is a subscription to this node, so its controls belong with the
-    // node's — but only while it is running. A volume slider on a silent tool is a
-    // control for something that is not happening.
-    if (this.audio.on) {
-      groups.push({
-        key: 'audio', title: 'listen',
-        cells: [
-          { key: 'gain', label: 'volume', unit: '', type: 'num', value: this.audio.gain,
-            fmt: (v) => (v * 100).toFixed(0) + '%', step: 0.004, min: 0, max: 1 },
-          { key: 'squelch', label: 'squelch', unit: '', type: 'num', value: this.audio.squelch,
-            fmt: (v) => (v > 0 ? v.toFixed(3) : 'off'), step: 0.0004, min: 0, max: 0.4 },
-        ],
-      });
-    }
-
     this.strip.render(groups);
     this.strip.onScrub = (g, k, v) => this.onParam(g, k, v);
     this.strip.onMode = (g, k, mode) => this.onMode(g, k, mode);
   }
 
   async onParam(group, key, value) {
-    if (group === 'audio') {
-      if (key === 'gain') this.audio.setGain(value);
-      else this.audio.squelch = value;
-      this.renderStrip();
-      return;
-    }
     if (group === 'view') {
       const p = this.vp(this.current);
       if (key === 'bins') { p.bins = parseInt(value, 10); this.resetSpectrum(); }
@@ -527,6 +527,7 @@ class App {
     }
     const n = this.node();
     if (!n.params[key]) return;
+    if (n.out.kind === 'audio' && key === 'volume') this.mixer.setVolume(n.id, value);
     const wasAuto = n.params[key].mode === 'auto';
     if (wasAuto && n.params[key].auto) n.params[key].auto.suggested = n.params[key].value;
     await this.engine.setParam(this.current, key, value, 'manual');
@@ -555,6 +556,13 @@ class App {
       this.menu.open(x, y, usable.length ? usable : ops, async (opId) => {
         const sel = selection || this.defaultSelection();
         const node = await this.engine.addNode({ parent: this.current, op: opId, selection: sel });
+        // Adding a Listen block *is* the gesture a browser needs before it will open
+        // an audio context — which is the nicest possible answer to that constraint:
+        // the thing that starts the audio is the thing that says audio should exist.
+        if (node.out.kind === 'audio') {
+          const ok = await this.mixer.add(node.id, this.engine.effectiveTime(node.parent), node.params.volume.value);
+          if (!ok) this.setStageBadge('this browser has no audio output');
+        }
         this.clearSelection();
         this.vp(node.id);
         if (this.isChannel(node)) {
@@ -666,25 +674,51 @@ class App {
   }
 
   /**
-   * The listen button exists when the current node has something to listen to, and
-   * says what it is doing while it does it: lit when on, dimmed while the squelch
-   * holds it closed, with a level bar so silence is distinguishable from failure.
+   * The Listen pane. A sink has no picture of its own — what it is doing is *whether*
+   * it is doing it, and how loudly. Repeating its parent's waveform here would be a
+   * second copy of the tab next door.
    */
-  renderListen() {
-    const el = $('#listen');
-    if (!el) return;
+  renderAudio() {
     const n = this.node();
-    const can = !!(n && n.out && n.out.kind === 'real');
-    el.hidden = !can;
-    if (!can && this.audio.on) this.audio.stop();
-    el.classList.toggle('on', this.audio.on);
-    el.classList.toggle('sq', this.audio.muted);
-    el.title = this.audio.on ? 'stop listening' : 'listen';
-    const lvl = el.querySelector('.lvl');
-    if (lvl) {
-      const v = this.audio.on ? meterLevel(this.audio.level) : 0;
-      lvl.style.transform = `scaleX(${v.toFixed(3)})`;
+    if (!n || n.out.kind !== 'audio') return;
+    const src = this.engine.node(n.parent);
+    const live = this.mixer.has(n.id);
+    const muted = this.mixer.isMuted(n.id);
+    const state = !live ? 'stopped' : muted ? 'squelched' : this.engine.playing ? 'playing' : 'paused';
+    const lvl = this.mixer.level(n.id);
+    const sq = n.params.squelch.value;
+    $('#pane-audio').innerHTML = `
+      <div class="listenwrap">
+        <div class="lspk ${state}">${state === 'playing' ? '\u{1F50A}' : '\u{1F508}'}</div>
+        <div class="lmeter">
+          <i style="transform:scaleX(${meterLevel(lvl).toFixed(3)})"></i>
+          ${sq > 0 ? `<u style="left:${(meterLevel(sq) * 100).toFixed(1)}%" title="squelch"></u>` : ''}
+        </div>
+        <div class="lstate">${state} \u00b7 ${lvl.toFixed(3)}${sq > 0 ? ` \u00b7 squelch ${sq.toFixed(3)}` : ''}</div>
+        <div class="lsrc">${src ? `${this.tag(src)} \u00b7 ${fmtRate(src.out.sampleRate)}` : 'nothing upstream'}</div>
+        <div class="lnote">Volume and squelch are in the bar below. The \u2715 on this tab
+          stops the audio and removes the block; the transport's pause stops it too.</div>
+      </div>`;
+  }
+
+  /** The level bar under a Listen tab, so a channel says it is audible from its tab bar. */
+  updateAudioIndicators() {
+    for (const el of document.querySelectorAll('.tab[data-k] .alvl')) {
+      const id = el.closest('.tab').dataset.k;
+      el.style.transform = `scaleX(${meterLevel(this.mixer.level(id)).toFixed(3)})`;
+      el.closest('.tab').classList.toggle('sq', this.mixer.isMuted(id));
     }
+  }
+
+  /** Every channel that has a live Listen block under it, for the breadcrumb mark. */
+  audibleChannels() {
+    const out = new Set();
+    for (const id of this.mixer.voices.keys()) {
+      let n = this.engine.node(id);
+      while (n && !this.isChannel(n)) n = n.parent ? this.engine.node(n.parent) : null;
+      if (n) out.add(n.id);
+    }
+    return out;
   }
 
   /** The spectrum's share of the stage. The waterfall takes what is left. */
@@ -1032,25 +1066,6 @@ class App {
       track.addEventListener('pointerup', up);
     });
 
-    // ── listen ─────────────────────────────────────────────────────────────
-    // A browser will only open an AudioContext from a gesture, so the button is the
-    // only place this can start — which is fine, because listening should be a
-    // decision anyway. A tool that starts making noise on its own is a tool people
-    // mute at the operating system and then wonder why it is silent.
-    const listen = $('#listen');
-    listen.addEventListener('click', async () => {
-      if (this.audio.on) { this.audio.stop(); }
-      else {
-        const n = this.node();
-        if (!n || n.out.kind !== 'real') return;
-        const ok = await this.audio.start(this.engine, n.id, this.engine.effectiveTime(n.id));
-        if (!ok) this.setStageBadge('this browser has no audio output');
-      }
-      this.renderListen();
-      this.renderStrip();
-      this.metrics.interaction();
-    });
-
     const step = (dt) => {
       this.engine.t = Math.max(0, this.engine.t + dt);
       this.resetSpectrum();
@@ -1207,10 +1222,18 @@ class App {
       }
     }
 
-    // The sink runs its own clock; this only tops the queue up and reports the level.
-    if (this.audio.on) {
-      if (this.engine.playing) this.audio.pump(this.engine, this.engine.effectiveTime(this.current));
-      this.renderListen();
+    // The mixer runs on the AudioContext clock; this only tops its queues up. Each
+    // voice follows its own node's playhead, which is what keeps a pinned clip's
+    // audio inside the clip.
+    if (this.mixer.count) {
+      if (this.engine.playing) {
+        this.mixer.pump(this.engine, (id) => {
+          const n = this.engine.node(id);
+          return n ? this.engine.effectiveTime(n.parent) : null;
+        });
+      }
+      this.updateAudioIndicators();
+      if (this.view() === 'Listen') this.renderAudio();
     }
 
     if (this.engine.t > this._tmax) this._tmax = this.engine.t;

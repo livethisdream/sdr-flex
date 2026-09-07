@@ -50,8 +50,9 @@ SSB and CW detectors beside the existing AM one, each landing with its parameter
 already derived (deviation from the 98th percentile of the instantaneous frequency,
 sideband from spectral asymmetry, carrier offset from the strongest bin) and each
 saying so; a synthetic scene with something for every one of them to catch; and an
-audio sink that is a subscription rather than a node, so gain and squelch live at the
-sink and a detector still has two parameters instead of twenty. Also: removal on the
+audio sink as an ordinary terminal block ([ADR-0027](adr/0027-sinks-are-nodes.md)), so
+gain and squelch live at the sink, a detector still has two parameters instead of
+twenty, and two channels listening at once is a mixer nobody had to build. Also: removal on the
 current crumb and the current tab, a working transport scrubber — the clip end-to-end when a channel is pinned, the whole session
 otherwise — a draggable splitter between spectrum and waterfall kept per browser, and
 a parameter bar that measures itself and folds until it fits the window.
@@ -108,7 +109,7 @@ Wave 1 of the [demod and decoder plan](09-demods-and-decoders.md); the M0 mock
 already runs the detectors and the sink, so M3 is that design against the real engine.
 
 - AM / NBFM / WBFM / USB / LSB / CW demodulators
-- `real` stream type, time-series view, audio subscription + mixer strip
+- `real` stream type, time-series view, `core.audio` sink + mixer strip
 - Type-filtered menus (first real use of ADR-0006)
 - Multiple sibling tuners, fragment splitting (ADR-0004)
 

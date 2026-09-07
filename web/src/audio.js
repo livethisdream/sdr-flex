@@ -1,8 +1,9 @@
-// The audio sink.
+// The audio sink's runtime.
 //
-// It is not a node. A detector produces a real-valued stream; listening to one is a
-// subscription to that stream, the same way the spectrum view is a subscription —
-// which is why gain and squelch live here and not on the detector (docs/09).
+// The sink itself is a node in the graph (ADR-0027) — this is just the machinery
+// that keeps a browser's audio clock fed. One entry per `core.audio` node, each with
+// its own gain, which is what makes several audible channels a mixer rather than a
+// special case.
 //
 // Scheduling: the engine is time-indexed, so audio is pulled forward in contiguous
 // chunks and queued back-to-back against the AudioContext clock. Pulling one buffer
@@ -12,7 +13,7 @@
 
 const CHUNK_S = 0.12;          // one pull
 const LEAD_S = 0.32;           // how far ahead of the clock to stay queued
-const MAX_LEAD_S = 0.6;        // beyond this we are ahead of the user, not the buffer
+const MAX_DRIFT_S = 0.6;       // beyond this the queue is stale, not merely behind
 
 /** RMS as a 0..1 meter reading over a 60 dB range — a linear bar spends nine tenths
  *  of its travel on the loudest tenth of the signals, which is no meter at all. */
@@ -22,73 +23,78 @@ export function meterLevel(rms) {
   return Math.max(0, Math.min(1, (db + 60) / 60));
 }
 
-export class AudioSink {
+export class AudioMixer {
   constructor() {
     this.ctx = null;
-    this.gainNode = null;
-    this.nodeId = null;
-    this.gain = 0.5;
-    this.squelch = 0;          // 0 = off; otherwise an RMS floor below which we mute
-    this.on = false;
-    this._next = 0;            // AudioContext time the next chunk starts at
-    this._srcT = 0;            // signal time the next chunk starts at
-    this._busy = false;
-    this.level = 0;            // last chunk's RMS, for the meter
-    this.muted = false;        // squelch closed
+    this.voices = new Map();     // nodeId → { gain, next, srcT, level, muted, busy }
   }
 
-  /** Browsers only allow this from a gesture, so it is called from the button. */
-  async start(engine, nodeId, atTime) {
+  get count() { return this.voices.size; }
+  has(id) { return this.voices.has(id); }
+  voice(id) { return this.voices.get(id) || null; }
+  level(id) { const v = this.voices.get(id); return v ? v.level : 0; }
+  isMuted(id) { const v = this.voices.get(id); return !!(v && v.muted); }
+
+  /**
+   * Browsers only open an AudioContext from a gesture. Adding a Listen node is one,
+   * which is the nicest possible answer: the thing that starts the audio is the same
+   * thing that says audio should exist.
+   */
+  async add(id, atTime, volume = 0.5) {
+    if (this.voices.has(id)) return true;
     if (!this.ctx) {
       const C = window.AudioContext || window.webkitAudioContext;
       if (!C) return false;
       this.ctx = new C();
-      this.gainNode = this.ctx.createGain();
-      this.gainNode.connect(this.ctx.destination);
     }
     if (this.ctx.state === 'suspended') await this.ctx.resume();
-    this.gainNode.gain.value = this.gain;
-    this.nodeId = nodeId;
-    this.on = true;
-    this._next = 0;
-    this._srcT = atTime;
+    const gain = this.ctx.createGain();
+    gain.gain.value = volume;
+    gain.connect(this.ctx.destination);
+    this.voices.set(id, { gain, next: 0, srcT: atTime, level: 0, muted: false, busy: false });
     return true;
   }
 
-  stop() {
-    this.on = false;
-    this.nodeId = null;
-    this.level = 0;
-    if (this.ctx) this.gainNode.gain.value = 0;
+  remove(id) {
+    const v = this.voices.get(id);
+    if (!v) return;
+    try { v.gain.disconnect(); } catch (e) { /* already gone */ }
+    this.voices.delete(id);
   }
 
-  setGain(g) {
-    this.gain = g;
-    if (this.gainNode && this.on) this.gainNode.gain.value = g;
+  removeAll() { for (const id of [...this.voices.keys()]) this.remove(id); }
+
+  setVolume(id, value) {
+    const v = this.voices.get(id);
+    if (v) v.gain.gain.value = value;
   }
 
   /**
-   * Keep the queue full. Called once a frame; does nothing most of the time.
+   * Keep every voice's queue full. Called once a frame; does nothing most of the time.
    *
-   * `atTime` is where the engine's playhead is. If the queue has drifted away from
-   * it — a scrub, a channel switch, a pause — the queue is abandoned rather than
-   * played out, because audio that is three seconds behind the waterfall is worse
-   * than a gap.
+   * `timeOf(id)` gives the engine playhead for that node. If a queue has drifted away
+   * from it — a scrub, a pause, a pinned clip looping — it is abandoned rather than
+   * played out, because audio three seconds behind the waterfall is worse than a gap.
    */
-  async pump(engine, atTime) {
-    if (!this.on || !this.ctx || this._busy) return;
-    const now = this.ctx.currentTime;
-    if (this._next < now) { this._next = now + 0.02; this._srcT = atTime; }
-    if (Math.abs(this._srcT - atTime) > MAX_LEAD_S) { this._next = now + 0.02; this._srcT = atTime; }
-    if (this._next - now > LEAD_S) return;
+  pump(engine, timeOf) {
+    if (!this.ctx) return;
+    for (const [id, v] of this.voices) this._pumpOne(engine, id, v, timeOf(id));
+  }
 
-    this._busy = true;
+  async _pumpOne(engine, id, v, atTime) {
+    if (v.busy || atTime == null) return;
+    const now = this.ctx.currentTime;
+    if (v.next < now || Math.abs(v.srcT - atTime) > MAX_DRIFT_S) { v.next = now + 0.02; v.srcT = atTime; }
+    if (v.next - now > LEAD_S) return;
+
+    v.busy = true;
     try {
-      const n = engine.node(this.nodeId);
-      if (!n || n.out.kind !== 'real') { this.stop(); return; }
-      const count = Math.max(256, Math.round(n.out.sampleRate * CHUNK_S));
-      const got = await engine.readAudio(this.nodeId, this._srcT, count);
-      if (!got || !this.on) return;
+      const n = engine.node(id);
+      const src = n && engine.node(n.parent);
+      if (!src || src.out.kind !== 'real') { this.remove(id); return; }
+      const count = Math.max(256, Math.round(src.out.sampleRate * CHUNK_S));
+      const got = await engine.readAudio(src.id, v.srcT, count);
+      if (!got || !this.voices.has(id)) return;
 
       // A browser will resample an arbitrary rate for us, which is exactly the
       // conversion we would otherwise write — and it is allowed to do it in the
@@ -97,34 +103,36 @@ export class AudioSink {
       const buf = this.ctx.createBuffer(1, got.data.length, rate);
       const ch = buf.getChannelData(0);
 
-      let sum = 0, dc = 0;
+      let dc = 0;
       for (let i = 0; i < got.data.length; i++) dc += got.data[i];
       dc /= got.data.length || 1;
+      let sum = 0;
       for (let i = 0; i < got.data.length; i++) {
-        const v = got.data[i] - dc;        // AM sits on a pedestal; a speaker cannot use it
-        ch[i] = v;
-        sum += v * v;
+        const x = got.data[i] - dc;         // AM sits on a pedestal; a speaker cannot use it
+        ch[i] = x;
+        sum += x * x;
       }
-      this.level = Math.sqrt(sum / (got.data.length || 1));
-      this.muted = this.squelch > 0 && this.level < this.squelch;
+      v.level = Math.sqrt(sum / (got.data.length || 1));
+      const squelch = (n.params.squelch && n.params.squelch.value) || 0;
+      v.muted = squelch > 0 && v.level < squelch;
 
-      // A detector's output scale varies by orders of magnitude between signals —
-      // FM comes out normalized to its deviation, SSB comes out at whatever the
-      // antenna gave it. One AGC at the sink, bringing everything to the same
-      // loudness and soft-clipping what is left, beats a gain control on every
-      // detector and a surprise at every channel change.
+      // A detector's output scale varies by orders of magnitude between signals — FM
+      // comes out normalized to its deviation, SSB comes out at whatever the antenna
+      // gave it. One AGC at the sink, bringing everything to the same loudness and
+      // soft-clipping what is left, beats a gain control on every detector and a
+      // surprise at every channel change.
       const TARGET = 0.25, MAX_GAIN = 400;
-      const g = this.muted ? 0 : Math.min(MAX_GAIN, TARGET / Math.max(this.level, 1e-6));
+      const g = v.muted ? 0 : Math.min(MAX_GAIN, TARGET / Math.max(v.level, 1e-6));
       for (let i = 0; i < ch.length; i++) ch[i] = Math.tanh(ch[i] * g);
 
-      const src = this.ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(this.gainNode);
-      src.start(this._next);
-      this._next += buf.duration;
-      this._srcT += got.data.length / got.sampleRate;
+      const node = this.ctx.createBufferSource();
+      node.buffer = buf;
+      node.connect(v.gain);
+      node.start(v.next);
+      v.next += buf.duration;
+      v.srcT += got.data.length / got.sampleRate;
     } finally {
-      this._busy = false;
+      v.busy = false;
     }
   }
 }

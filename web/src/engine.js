@@ -49,6 +49,12 @@ export const OPS = {
   'core.pwm_slicer': {
     name: 'PWM / OOK slicer', group: 'Decode', in: 'real', out: 'bits',
   },
+  // A sink is a node. A view renders what a node produced; a sink consumes it and
+  // the data leaves the graph there, which is exactly what a terminal block is
+  // (ADR-0027). Nothing takes `audio` as input, so nothing can follow it.
+  'core.audio': {
+    name: 'Listen', group: 'Listen', in: 'real', out: 'audio',
+  },
   'ext.rtl433': {
     name: 'rtl_433', group: 'Decode', in: 'iq', out: 'events',
     external: true, stub: true,
@@ -291,6 +297,15 @@ export class MockEngine {
       node.params = DETECTORS[op].derive(iq, count, fs);
       node.out = { kind: 'real', sampleRate: fs, centerHz: p.out.centerHz };
       node.label = DETECTORS[op].label;
+    } else if (op === 'core.audio') {
+      node.params = {
+        volume: param(0.5),
+        // off by default: a squelch that arrives closed looks exactly like a
+        // broken decoder, and the difference takes a while to work out
+        squelch: param(0),
+      };
+      node.out = { kind: 'audio', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = 'Listen';
     } else if (op === 'core.pwm_slicer') {
       // estimate from a real window of the parent's output — auto shows its work
       // estimate over a window wide enough to be sure it contains a burst — the

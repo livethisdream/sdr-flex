@@ -31,3 +31,4 @@ why, what it costs, and what would make us change our minds.
 | [0024](0024-composable-decode-chain.md) | The transparent decode path is composable single-purpose nodes | Accepted |
 | [0025](0025-golden-capture-conformance.md) | A demod or decoder ships with a golden capture, or it does not ship | Accepted |
 | [0026](0026-decoder-packs.md) | A decoder ships as a pack — manifest, fixtures and version pin | Proposed |
+| [0027](0027-sinks-are-nodes.md) | Sinks are nodes; views are tabs | Accepted |

@@ -63,6 +63,38 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 }
 .x:hover, .x:focus-visible { background:var(--crit); color:#fff; outline:none; }
 
+/* A Listen block is a node like any other, so it is a tab like any other — it just
+   also has to say, at a glance and from across the room, whether it is making noise.
+   The level rides the *top* edge and is green: a 2px accent line along the bottom is
+   already spoken for, and it means "this tab is selected". */
+.tab.live { color:var(--body); }
+.tab.live.on { color:var(--bright); }
+.tab .spk { font-size:.66rem; margin-right:.24rem; }
+.tab.sq .spk { opacity:.35; }
+.tab .alvl {
+  display:block; position:absolute; left:.7rem; right:.7rem; top:3px; height:2px;
+  border-radius:1px; background:var(--ok);
+  transform-origin:left; transform:scaleX(0); transition:transform .1s linear;
+}
+.tab { position:relative; }
+.crumb .spk { font-style:normal; font-size:.62rem; }
+
+/* The sink's own pane. It has no picture — what it is doing is whether it is doing
+   it — so the pane is a status, not a chart. */
+.listenwrap { display:flex; flex-direction:column; align-items:center; gap:.6rem; padding:2rem 1rem; text-align:center; }
+.lspk { font-size:2.4rem; line-height:1; opacity:.5; }
+.lspk.playing { opacity:1; }
+.lspk.squelched { opacity:.3; }
+.lmeter { position:relative; width:min(320px, 70%); height:4px; border-radius:2px; background:var(--rule-lo); }
+.lmeter i { display:block; height:100%; border-radius:2px; background:var(--ok); transform-origin:left; transform:scaleX(0); transition:transform .1s linear; }
+/* where the squelch sits, so the number in the bar below has somewhere to point.
+   Accent means "the user put this here" everywhere else in the tool, and a threshold
+   is exactly that; the level beside it is measured, so it is not accent. */
+.lmeter u { position:absolute; top:-3px; width:2px; height:10px; background:var(--accent); }
+.lstate { font-family:var(--mono); font-size:.7rem; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); }
+.lsrc { font-family:var(--mono); font-size:.8rem; color:var(--bright); }
+.lnote { max-width:40ch; font-size:.74rem; color:var(--dim); line-height:1.5; }
+
 .panes { flex:1; min-height:0; position:relative; }
 .pane { position:absolute; inset:0; display:flex; flex-direction:column; }
 .pane[hidden] { display:none; }
@@ -127,18 +159,6 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tbtn.small.on { color:var(--accent); border-color:rgba(255,122,92,.45); }
 .clock { margin-left:.4rem; color:var(--body); font-variant-numeric:tabular-nums; }
 
-/* Listening is a subscription to a detector's output, so it belongs on the transport
-   with the other things that are true of "now" — not as a control on the detector.
-   It appears only where there is something to hear. */
-.tbtn.listen { position:relative; min-width:30px; font-size:.8rem; color:var(--dim); }
-.tbtn.listen[hidden] { display:none; }
-.tbtn.listen.on { color:var(--accent); }
-.tbtn.listen .lvl {
-  position:absolute; left:4px; right:4px; bottom:3px; height:2px; border-radius:1px;
-  background:var(--accent); transform-origin:left; transform:scaleX(0);
-  transition:transform .08s linear;
-}
-.tbtn.listen.sq .spk { opacity:.4; }
 /* The rail is 2px but the target is the whole 22px button: a 2px hit area is a
    control you can see and not use. Every source is time-indexed (ADR-0005), so
    this scrubs for real — through the clip when a channel is pinned, through

@@ -61,15 +61,22 @@ accepts the noise.
 
 Squelch, AGC and audio gain are **parameters of the audio sink**, not of the detector.
 Putting them on the detector is what makes SDRangel's demod panels twenty controls deep.
-The sink is not a node either: a detector produces a real-valued stream, and listening
-to one is a subscription to that stream the same way the spectrum view is. So the
-control is on the transport, where the other things that are true of *now* live, and it
-appears only where there is something to hear.
+
+The sink is a **node** — `core.audio`, reached from the same menu as everything else
+([ADR-0027](adr/0027-sinks-are-nodes.md)). It was first built as a speaker button on the
+transport, on the argument that listening is a subscription like the spectrum view is.
+That was wrong: a view renders what a node produced, while a sink consumes it and takes
+it out of the graph, which is what a terminal block is. The evidence arrived within a
+day — the button crowded the transport until the scrubber was pushed off a phone screen,
+which is exactly what happens when something that belongs in the model gets bolted onto
+the chrome.
 
 **Done when:** dropping a box on an FM broadcast station and hitting play produces audio
 with no other interaction, and the deviation readout says where it got its number.
 
-**Status:** running in the M0 mock. The scene grew a target for each detector — a keyed
+**Status:** running in the M0 mock, with the sink as a `core.audio` block. Two channels
+with a Listen block each is a working mixer, which was never designed — the graph
+already expressed it. The scene grew a target for each detector — a keyed
 carrier, a two-tone USB signal, and an NBFM tone at ±3 kHz with a slow warble so the
 deviation readout visibly moves — and the estimators are asserted against them, including
 the negative case: pointed at empty spectrum, FM reports "looks unmodulated" and SSB
