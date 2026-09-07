@@ -487,10 +487,14 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .strip::-webkit-scrollbar { display:none; }
 /* the last pill fades out rather than being cut off mid-word */
 .strip.more-right { -webkit-mask-image:linear-gradient(90deg, #000 calc(100% - 26px), transparent); mask-image:linear-gradient(90deg, #000 calc(100% - 26px), transparent); }
-.pgroup { display:flex; align-items:center; gap:.35rem; flex:none; }
+/* Baseline, not centre. The group title is a much smaller box than the pills beside
+   it, so centring the boxes drops its text about two pixels below theirs — three
+   different baselines in a row of type that is meant to read as one line. */
+.pgroup { display:flex; align-items:baseline; gap:.35rem; flex:none; }
 /* the rule belongs to the run that follows, so it cannot drift or outlive it */
 .pgroup + .pgroup::before {
   content:""; flex:none; width:1px; height:1em; margin-right:.2rem;
+  align-self:center;                /* a rule has no baseline to share */
   background:var(--rule);
 }
 .ptitle {
