@@ -1,0 +1,4 @@
+
+# scratch symlinks to captures being tested against — never commit these
+web/_c_*
+web/_t.*
