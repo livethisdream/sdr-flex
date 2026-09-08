@@ -52,13 +52,18 @@ A live source is a program writing raw IQ into a ring recording, which the engin
 exactly as it reads a file ([ADR-0030](../docs/adr/0030-a-radio-is-a-recording.md)). So
 support for a radio means having its capture program installed, and nothing else:
 
-| Driver | Needs | From |
-|---|---|---|
-| RTL-SDR | `rtl_sdr` | `rtl-sdr` |
-| ADALM-PLUTO | `iio_readdev`, `iio_attr` | `libiio-utils` |
-| USRP (UHD) | `uhd_rx_cfile` | `uhd-host` |
-| SoapySDR (anything else) | `rx_sdr` | `soapysdr-tools` |
-| Synthetic signal | nothing | built in |
+| Driver | Needs | From | Windows |
+|---|---|---|---|
+| RTL-SDR | `rtl_sdr` | `rtl-sdr` | yes |
+| ADALM-PLUTO | `iio_readdev`, `iio_attr` | `libiio-utils` | yes |
+| USRP (UHD) | `uhd_rx_cfile` | `uhd-host` | no — it writes to `/dev/stdout` |
+| SoapySDR (anything else) | `rx_sdr` | `soapysdr-tools` | yes |
+| Synthetic signal | nothing | built in | yes |
+
+The server runs on Windows as well as Linux, and looks up these programs by PATHEXT
+there, so `iio_readdev.exe` is found from the bare name. UHD is the exception: it takes
+a filename rather than a stream and is pointed at `/dev/stdout`, which Windows does not
+have, so that driver reports itself unavailable there rather than failing obscurely.
 
 They show up under `src` on the bottom bar, as "listen to a radio…". A driver whose
 program is not installed is still listed, greyed, saying what it wants — that is a
@@ -96,51 +101,57 @@ How the container reaches the radio depends on how the radio attaches:
   those). If you would rather not, run the server outside a container — it is one
   command and no privileges.
 
-### Windows, WSL and a Pluto
+### Windows and a Pluto
 
-This is three network namespaces stacked — Windows, WSL, and the container — and the
-Pluto is on the far side of all three. Do it in that order, and stop at the first thing
-that fails.
+The Pluto is a *network* device — its USB-ethernet gadget answers on `192.168.2.1`, and
+libiio talks to it over TCP. So the only question is which machine can open that
+socket, and the shortest answer is usually the one that already can.
 
-**1. Can Windows see it?** With the Pluto plugged in and its driver installed, a
-network adapter appears with an address on `192.168.2.x`. `ping 192.168.2.1` from
-PowerShell.
-
-**2. Can WSL see it?** This is the step that usually fails. WSL2 is NAT'd behind its
-own virtual switch and cannot reach the Windows host's Pluto adapter by default. The
-fix is mirrored networking — in `%USERPROFILE%\.wslconfig`:
+**Run the server on Windows.** Node is cross-platform and so is everything in here.
+Install libiio for Windows (Analog Devices ships an installer with `iio_info`,
+`iio_attr` and `iio_readdev` in it), make sure `iio_info -u ip:192.168.2.1` answers
+from PowerShell, then:
 
 ```
-[wsl2]
-networkingMode=mirrored
+node server\main.js
 ```
 
-then `wsl --shutdown` and start it again. Now `ping 192.168.2.1` and
-`iio_info -u ip:192.168.2.1` from inside WSL. If `iio_info` prints the device tree,
-everything after this is straightforward. (Mirrored networking needs Windows 11 22H2 or
-newer with WSL 2.0+. The alternative is `usbipd-win` to attach the USB device to WSL
-directly, which then needs a WSL kernel with the USB-ethernet modules built in — more
-work, and only worth it if mirrored mode is not available to you.)
+No WSL, no container, no namespace to cross. If Tailscale is running on Windows this is
+also the only arrangement where the tailnet address is found automatically, because it
+is the machine that has one.
 
-**3. Then, and only then, add the container.** Docker Desktop puts the container in yet
-another namespace, and host networking on Docker Desktop for Windows is not the same
-thing it is on Linux. Two ways through:
+**If you would rather run it in WSL**, the problem is that WSL2 sits behind its own NAT
+and cannot reach the Windows host's Pluto adapter. Pick the smallest fix that works:
 
-- **Run the server in WSL directly**, no container: `node server/main.js`. Nothing to
-  configure, and it is the path that has actually been tested.
-- **Install Docker Engine inside WSL** (not Docker Desktop) and add
-  `network_mode: host` to the service. Then the container shares WSL's network, which
-  step 2 has already established can reach the Pluto.
+- **Forward the port from Windows.** `iiod` listens on 30431, so one `netsh` rule makes
+  it reachable without changing how anything else on the machine is networked:
 
-**One more thing that will bite.** If Tailscale runs on Windows rather than inside WSL,
-WSL has no `100.x` address, so `SDRFLEX_BIND=auto` finds no tailnet and falls back to
-loopback — reachable from WSL and from nowhere else. Either run Tailscale inside WSL
-too, or bind to the WSL address and forward the port from Windows with
-`netsh interface portproxy`.
+  ```
+  netsh interface portproxy add v4tov4 ^
+    listenaddress=0.0.0.0 listenport=30431 ^
+    connectaddress=192.168.2.1 connectport=30431
+  ```
 
-**Recommendation:** get to the end of step 2, run `node server/main.js`, and open a
-radio. Containerize afterwards if you want it supervised. Adding Docker before the
-Pluto works means debugging two problems as one.
+  Then from WSL, point at the Windows host instead of the Pluto — the URI is
+  `ip:<windows host address>`, and libiio's default port is the one you forwarded.
+
+- **Attach the USB device to WSL** with `usbipd-win`, so the Pluto enumerates inside WSL
+  and `192.168.2.1` is on a WSL interface directly. Clean when it works; it needs the
+  WSL kernel to carry the USB-ethernet modules, which is not guaranteed.
+
+- **Mirrored networking** (`networkingMode=mirrored` in `.wslconfig`) also fixes it, and
+  is the largest hammer available: it changes networking for every WSL distro on the
+  machine and is known to interact badly with VPNs and with anything that binds ports.
+  Worth knowing about; not worth reaching for first.
+
+**Then, and only then, consider a container.** Docker Desktop puts the container in yet
+another namespace, and host networking there is not the same thing it is on Linux. If
+you want it supervised, install Docker Engine inside WSL rather than Docker Desktop and
+add `network_mode: host` — but get the Pluto answering first, or two problems debug as
+one.
+
+**Recommendation:** run it on Windows, or in WSL with the portproxy rule. Containerize
+later, if at all — this is one command and no privileges.
 
 ### What has and has not been verified
 

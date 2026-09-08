@@ -128,9 +128,13 @@ detectors, pinned clips and auto-derived parameters all work on live signal unch
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the
-  real test of the driver table. For a Pluto under WSL the order of operations matters
-  and is written down in `server/README.md` — get WSL talking to `192.168.2.1` before
-  adding a container, or two problems debug as one.
+  real test of the driver table.
+- **For a Pluto on a Windows machine, the shortest path is running the server on
+  Windows** — the Pluto is a network device on `192.168.2.1`, and Windows is already
+  the machine that can reach it. WSL sits behind its own NAT and needs a port forward
+  (or usbipd) first; mirrored networking also works but changes networking for every
+  distro on the machine and is not worth reaching for. Written up in
+  `server/README.md`.
 - **The image has never been built.** There is no Docker daemon in the environment this
   was written in, so the `Dockerfile` and `docker-compose.yml` are unverified. The
   runtime they describe was verified by running the server with the same environment

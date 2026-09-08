@@ -89,8 +89,12 @@ export const DRIVERS = {
       '--rate', String(Math.round(sampleRate)),
       ...(gain != null ? ['--gain', String(gain)] : []),
       ...(device ? ['--args', device] : []),
+      // uhd_rx_cfile takes a filename, not a stream, so it is pointed at the process's
+      // own stdout. There is no /dev/stdout on Windows — this driver is Unix-only
+      // until someone with a USRP says what works there.
       '/dev/stdout',
     ],
+    unixOnly: true,
     probe: { command: 'uhd_find_devices', args: [] },
   },
 
@@ -127,18 +131,38 @@ export const DRIVERS = {
   },
 };
 
-/** Is the program this driver needs actually on the box? */
+/**
+ * Is the program this driver needs actually on the box?
+ *
+ * Windows spells its executables `iio_readdev.exe` and has no execute bit, so a
+ * straight `accessSync(X_OK)` on the bare name finds nothing and every driver reports
+ * itself missing on a machine where they are all installed. Running the server on
+ * Windows directly is the shortest path to a Pluto plugged into a Windows box — no
+ * WSL, no container, no namespace to cross — so it is worth this much care.
+ */
 export function available(kind) {
   const d = DRIVERS[kind];
   if (!d) return false;
   if (d.alwaysAvailable) return true;
-  // An absolute command (the synthetic driver runs this very Node) is checked directly.
   if (path.isAbsolute(d.command)) return executable(d.command);
-  return (process.env.PATH || '').split(path.delimiter).some((dir) => executable(path.join(dir, d.command)));
+  const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  return dirs.some((dir) => candidates(d.command).some((c) => executable(path.join(dir, c))));
+}
+
+/** The names one command can have here. On Windows, PATHEXT decides. */
+function candidates(command) {
+  if (process.platform !== 'win32') return [command];
+  if (path.extname(command)) return [command];
+  const exts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  return [command, ...exts.map((e) => command + e.toLowerCase()), ...exts.map((e) => command + e)];
 }
 
 function executable(p) {
-  try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; }
+  try {
+    // No execute bit on Windows: a file that is there and named right is runnable.
+    fs.accessSync(p, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
+    return fs.statSync(p).isFile();
+  } catch { return false; }
 }
 
 /** Every driver, with whether it could actually run here. */
@@ -148,7 +172,7 @@ export function list() {
     name: d.name,
     command: d.command,
     format: d.format,
-    available: available(kind),
+    available: available(kind) && !(d.unixOnly && process.platform === 'win32'),
     defaults: d.defaults,
     minRate: d.minRate,
     maxRate: d.maxRate,
