@@ -19,3 +19,16 @@ Then, as needed:
   `.githooks/pre-commit` rejects flag-shaped strings; it is a backstop, not the control.
 - Measure before adjusting anything visual. Element rectangles are not baselines.
 - Every auto-derived parameter shows the evidence for its value (ADR-0017).
+
+## Running it
+
+- In a browser: serve `web/` statically, or open `web/index.html`.
+- With the engine on a box: `node server/main.js`, or see `server/README.md`.
+- `?engine=mock` forces the in-tab engine. The browser tests rely on this.
+
+## Tests
+
+- `node --test "web/test/*.test.mjs"` — pure logic, the wire format, the socket, and mock-versus-
+  server parity. No browser needed.
+- The Playwright suites drive the real DOM. Headless `requestAnimationFrame` is
+  unreliable, so they step `app._frame(t)` by hand through `window.sdrflex`.

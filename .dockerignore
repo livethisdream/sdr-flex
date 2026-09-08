@@ -1,0 +1,7 @@
+.git
+.githooks
+captures
+docs
+project
+node_modules
+*.md

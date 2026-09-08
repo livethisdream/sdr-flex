@@ -33,3 +33,4 @@ why, what it costs, and what would make us change our minds.
 | [0026](0026-decoder-packs.md) | A decoder ships as a pack — manifest, fixtures and version pin | Proposed |
 | [0027](0027-sinks-are-nodes.md) | Sinks are nodes; views are tabs | Accepted |
 | [0028](0028-plugin-boundary-is-a-stream-type.md) | A plugin is defined by the stream types it sits between | Accepted |
+| [0029](0029-the-client-owns-the-clock.md) | The client owns the clock; the server answers about moments | Accepted |

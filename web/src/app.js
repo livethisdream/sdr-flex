@@ -3,6 +3,7 @@
 // (ADR-0021) — the client cannot tell, which is the point.
 
 import { MockEngine, OPS, LATENCY } from './engine.js';
+import { RemoteEngine } from './remote.js';
 import { Waterfall } from './waterfall.js';
 import { SpectrumTrace, TimeSeries, BitRaster } from './views.js';
 import { ContextMenu } from './menu.js';
@@ -67,6 +68,7 @@ class App {
   }
 
   async start() {
+    await this.connectEngine();
     const root = await this.engine.createSession();
     this.channel = root.id;        // where the breadcrumb is
     this.current = root.id;        // whose result is on screen
@@ -457,6 +459,11 @@ class App {
       nodeCells.push(
         { key: 'centerHz', label: 'center', unit: 'MHz', type: 'ro', value: n.out.centerHz, fmt: fmtHz },
         { key: 'sampleRate', label: 'rate', unit: 'kS/s', type: 'ro', value: n.out.sampleRate, fmt: (v) => (v / 1e3).toFixed(0) });
+      // Where a capture comes from belongs with the facts about the one you have.
+      // Only when there is a library to open: in the tab, the gesture is the drop.
+      if (this.hasLibrary) {
+        nodeCells.push({ key: 'library', label: 'open a capture…', type: 'action', value: '' });
+      }
     } else {
       const live = !n.params.timeMode || n.params.timeMode.value === 'live';
       for (const [key, pr] of Object.entries(n.params)) {
@@ -525,6 +532,9 @@ class App {
     this.strip.render(groups);
     this.strip.onScrub = (g, k, v) => this.onParam(g, k, v);
     this.strip.onMode = (g, k, mode) => this.onMode(g, k, mode);
+    this.strip.onAction = (g, k, e) => {
+      if (k === 'library') this.openLibrary(e ? e.clientX : null, e ? e.clientY : null);
+    };
   }
 
   async onParam(group, key, value) {
@@ -618,12 +628,23 @@ class App {
     this._specData = null;
     const p = this.vp(this.current);
     const span = this.waterfall.rows / Math.max(1, p.speed);
-    this._prefill = {
+    const pf = {
       row: 0,
       rows: this.waterfall.rows,
       t1: this.engine.effectiveTime(this.channel),
       span,
     };
+    this._prefill = pf;
+    // A remote engine would otherwise be asked for these one at a time, which is one
+    // round trip per row of the waterfall. The plan is fully known here, so it says so
+    // and the rows come back in batches. The in-tab engine has no `prefetch` and needs
+    // none — it answers in microseconds.
+    if (this.engine.prefetch) {
+      const pin = this.engine.isPinned(this.channel);
+      const times = [];
+      for (let row = 0; row < pf.rows; row++) times.push(this.prefillTime({ ...pf, row }, pin));
+      this.engine.prefetch(this.current, { bins: p.bins, window: p.window }, times);
+    }
   }
 
   /**
@@ -924,6 +945,79 @@ class App {
    * put on the source node as ordinary parameters, so the first thing you can do
    * after opening a capture is disagree with the guess.
    */
+  /**
+   * Use the engine on the other end of the socket, if there is one.
+   *
+   * The same client is served both by a container and by any static host, and which
+   * one it is talking to is not worth a build flag or a question: it tries the socket
+   * this page would have been served from, and falls back to the in-tab engine when
+   * nothing answers. `?engine=mock` forces the fallback, which is how the browser
+   * tests keep testing the mock.
+   */
+  async connectEngine() {
+    if (new URLSearchParams(location.search).get('engine') === 'mock') return;
+    if (location.protocol === 'file:') return;
+    const remote = new RemoteEngine();
+    try {
+      const hello = await remote.connect();
+      this.engine = remote;
+      this.remote = true;
+      this.hasLibrary = !!hello.captures;
+      remote.onStatus(({ connected }) => {
+        if (!connected) this.notify('lost the engine — the page is showing its last frames', 12000);
+      });
+    } catch {
+      // nothing there: the in-tab engine is a complete tool, not a degraded mode
+    }
+  }
+
+  /** The captures on the box, in the same menu everything else opens in. */
+  async openLibrary(x, y) {
+    let caps;
+    try { caps = await this.engine.listCaptures(); }
+    catch (err) { this.notify(`could not read the library: ${err.message}`, 8000); return; }
+    if (!caps.length) { this.notify('no captures in the server\u2019s capture directory', 7000); return; }
+    const ops = caps.map((c) => ({
+      id: c.id,
+      name: `${c.label} — ${(c.sampleRate / 1e6).toFixed(3)} MS/s · ${c.durationS.toFixed(1)} s`,
+      group: c.sigmf ? 'SigMF' : 'guessed from the filename',
+    }));
+    const px = x != null ? x : innerWidth / 2, py = y != null ? y : innerHeight - 120;
+    // the menu hands back the id it was given, the same as everywhere else it is used
+    this.menu.open(px, py, ops, async (id) => {
+      const c = caps.find((k) => k.id === id);
+      if (!c) return;
+      this.metrics.beginOp();
+      try {
+        this.mixer.removeAll();
+        await this.engine.openCapture(id);
+        this.afterOpen(c);
+        this.notify(`${c.label} · ${(c.sampleRate / 1e6).toFixed(3)} MS/s · ${c.durationS.toFixed(2)} s` +
+                    ` · rate and center from ${c.derived}`);
+      } catch (err) {
+        this.notify(`could not open that: ${err.message}`, 8000);
+      }
+      this.metrics.endOp();
+    });
+  }
+
+  /** Everything that has to be forgotten when the source changes under the graph. */
+  afterOpen() {
+    this.engine.t = 0;
+    this._tmax = 0;
+    this.channel = this.engine.root.id;
+    this.current = this.engine.root.id;
+    this.tabs.clear();
+    this.viewParams.clear();
+    this.setTab('spectrum');
+    this.resetSpectrum();
+    this._tsCache = null;
+    this._bitsSeen = false;
+    this.setPlaying(true);
+    this.metrics.endOp();
+    this.refresh();
+  }
+
   async openFiles(files) {
     if (!files || !files.length) return;
     // A dropped .js is a plugin, not a capture. One gesture, and what it is decides
@@ -939,24 +1033,20 @@ class App {
       this.refresh();
       return;
     }
+    // With the engine on a server the samples are on the server too, so a dropped
+    // capture is a file in the wrong place rather than a file in the wrong format.
+    if (this.remote) {
+      this.notify('this engine reads captures from the box — pick one from the library', 7000);
+      this.openLibrary();
+      return;
+    }
     this.metrics.beginOp();
     try {
       const cap = await fromFiles(files);
       if (!cap.samples) throw new Error('that file has no samples in it');
       this.mixer.removeAll();
       await this.engine.openCapture(cap);
-      this.engine.t = 0;
-      this._tmax = 0;
-      this.channel = this.engine.root.id;
-      this.tabs.clear();
-      this.viewParams.clear();
-      this.setTab('spectrum');
-      this.resetSpectrum();
-      this._tsCache = null;
-      this._bitsSeen = false;
-      this.setPlaying(true);
-      this.metrics.endOp();
-      this.refresh();
+      this.afterOpen();
       this.notify(
         `${cap.label} · ${FORMATS[cap.format].name} · ${(cap.sampleRate / 1e6).toFixed(3)} MS/s` +
         ` · ${cap.durationS.toFixed(2)} s · ` +
@@ -1528,15 +1618,20 @@ class App {
         // beats predicting it: the cost per row varies with decimation, cache state
         // and machine, and a formula tuned to one of those is wrong for the others.
         const deadline = performance.now() + 6;
-        for (let k = 0; pf.row < pf.rows; k++, pf.row++) {
+        for (let k = 0; pf.row < pf.rows; k++) {
           if (k > 0 && performance.now() > deadline) break;
           const at = this.prefillTime(pf, pin);
           const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
+          // A row that has not arrived yet is not a row to skip. Advancing past it
+          // would leave a gap in the waterfall that never fills, because nothing ever
+          // comes back to that moment.
+          if (f.kind === 'pending') break;
           if (f.kind === 'spectrum') {
             if (pf.row === 0) this.applyAutoRange(f.data, true);
             this.waterfall.push(f.data);
             this.trace.push(f.data);
           }
+          pf.row++;
         }
         if (pf.row >= pf.rows) this._prefill = null;
         this.trace.draw();

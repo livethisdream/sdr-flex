@@ -1,0 +1,3 @@
+# Captures live on the box, not in the repository. Never commit sample data.
+*
+!.gitignore

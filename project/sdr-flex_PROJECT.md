@@ -10,14 +10,17 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-08 · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-08 (overnight: the container) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
 ---
 
 ## Where it is
 
-MVP, running in the browser with no build step. Static ES modules, mock engine,
-~4,300 lines. 28 ADRs.
+MVP in the browser, **and** the same tool with its engine in a container. Static ES
+modules, no build step, no dependencies on either side. 29 ADRs.
+
+Run it on a box: see `server/README.md`. Short version, on a tailnet:
+`SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
 
 Working end to end:
 
@@ -31,6 +34,8 @@ Working end to end:
 - Plugin framework: drop a `.js` file, it registers against a stream type (ADR-0028)
 - Dark / light / auto theme
 - Command palette with `/` search
+- The engine over a WebSocket, in a container, reading captures off the box's disk —
+  the page picks the server engine when one answers and the in-tab engine otherwise
 
 Tests: four Node suites (`web/test/*.test.mjs`) for pure logic, plus Playwright
 suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
@@ -49,33 +54,50 @@ a dozen tools, evolving into a real analysis tool. Not a tool players are asked 
 
 ---
 
-## Decided in conversation, not yet an ADR
+## The container, as built
 
-- **Containerized engine is the next substantive step**, scoped smaller than M1: an
-  engine speaking the same async contract over WebSocket, browser swaps `MockEngine`
-  for a thin client, no UI changes. Acceptance test is the largest capture behaving
-  identically with a one-import diff.
-- **Deployment target is a home server on a Tailscale tailnet.** The container serves
-  the static client itself so the page and the WebSocket share an origin — this avoids
-  both CORS and the mixed-content rule that blocks `ws://` from an `https://` page.
-  `tailscale serve` if real TLS is wanted. **Never `tailscale funnel`** — that is the
-  public internet, and captures with flags live on that box. Bind to the Tailscale
-  interface, not `0.0.0.0`. No auth in the app; the tailnet is the boundary.
-- **The point of the server is heap, not convenience.** The capture stays on the
-  server's disk; the tab pulls only the spectrum rows and spans it draws.
+All of this is now in the tree and tested; it is written up as
+[ADR-0029](../docs/adr/0029-the-client-owns-the-clock.md).
+
+- **Node, not Python.** `engine.js`, `dsp.js` and `capture.js` turned out to be pure —
+  no DOM, no browser API — so they run in Node unchanged and the night went into the
+  transport contract rather than re-deriving FFTs. The DSP core can move to Python or
+  Rust later; the contract is the durable part. `MockEngine` is now the wrong name for
+  what the server runs, and renaming it is the moment that happens.
+- **The client owns the clock.** The server keeps no playhead; every read carries the
+  moment it wants. That is what makes a reconnect lose pixels and nothing else, and it
+  is also what makes the parity test possible.
+- **The graph is mirrored, not queried**, so the synchronous accessors the paint path
+  needs stay synchronous. Every mutating call returns a whole snapshot.
+- **`frame` returns the latest answer**, or `{kind:'pending'}` before the first arrives.
+  Live views run one round trip behind; the waterfall states its whole prefill plan up
+  front and gets 260 rows in five round trips instead of 260.
+- **No dependencies, either side.** The WebSocket server is ~150 lines of RFC 6455
+  rather than `ws`, so the image is a Node base plus this repo and installs nothing.
+- **Plugins stayed in the tab**, as planned. On the server they would be arbitrary code
+  running as the server against every capture on the box.
+- **Captures stay on the box**: the library is a directory scan, the client names a
+  capture by id, and a path outside the directory is refused. Dropping a capture file
+  on a remote engine says so and opens the library instead.
+- **Bind defaults to the tailnet interface**, falling back to loopback — never to every
+  interface. The compose port publish is scoped to one host address so forgetting to
+  set it fails closed.
+
+Numbers, measured on loopback:
+
+| | |
+|---|---|
+| One frame, request to reply | 0.67 ms median (0.35 ms in-process) |
+| 64 frames in one batch | 0.36 ms per frame, 256 KB |
+| A 260-row waterfall prefill | ~90 ms, five round trips |
+| A 256 MB capture, resident | 18 MB — and flat, it does not track file size |
 
 ## Open, needs a decision
 
-- **Node or Python for the engine.** Recommended Node: `engine.js` and `dsp.js` lift
-  over nearly as-is, so the effort goes into the transport contract rather than
-  re-deriving FFTs, and the DSP core can be swapped to Python later when GNU Radio
-  integration is a real requirement. Python first means reimplementing all the DSP
-  before the contract is proven. **Not yet confirmed.**
-- **Where plugins run** once there is a server. They are browser JS today. Proposal is
-  to keep them browser-side for the first server pass and revisit deliberately.
-- **Server-side file opening.** Drag-drop stops being the primary path once the
-  captures live on the box; pointing at a path on the server is a new capability, not
-  a port. Probably belongs in the same pass.
+- **The image has never been built.** There is no Docker daemon in the environment this
+  was written in, so the `Dockerfile` and `docker-compose.yml` are unverified. The
+  runtime they describe was verified by running the server with the same environment
+  variables and capture directory. First thing to try on a real box.
 - **History rewrite.** A commit in pushed history contains a symlink target naming a
   private repository path. The symlinks were removed in a follow-up commit and are
   gitignored, but the string remains in history. Not yet decided whether to rewrite.
@@ -87,13 +109,19 @@ a dozen tools, evolving into a real analysis tool. Not a tool players are asked 
 ## Loose ends
 
 - Plugins do not survive a reload. `web/plugins/bbc.js` sits in the repo and nothing
-  loads it at startup.
+  loads it at startup. With a server this is worse than it was: a plugin now has to be
+  re-dropped in every tab, since it lives only in the tab.
 - That plugin has no ADR-0025 conformance fixture.
 - `web/test/plugin.mjs` (Playwright) depends on capture files that were removed in the
   security cleanup, so it fails for that reason rather than a regression. Needs
   re-pointing at a fixture that can live in a public repo.
 - One capture in the set is 0.1 s long, which the author believes is a packaging bug
   on their side.
+- The remote engine has no reconnect. If the socket drops the page says so and keeps
+  showing its last frames, but recovering means a reload.
+- `readSpan` on a long channel still builds the whole span in the tab's memory. The
+  server chunks it over the wire, but export is the one path that still wants all of it
+  at once.
 
 ## Deferred on purpose
 

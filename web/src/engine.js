@@ -8,6 +8,7 @@
 import * as dsp from './dsp.js';
 import * as scene from './scene.js';
 import * as plugins from './plugins.js';
+import { Graph } from './graph.js';
 
 export const LATENCY = {
   paramMs: 40,        // hot parameter → visible effect
@@ -17,6 +18,7 @@ export const LATENCY = {
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms + (Math.random() - 0.5) * 2 * LATENCY.jitterMs));
+const instant = () => Promise.resolve();
 
 let nextId = 0;
 const nid = (p) => `${p}${++nextId}`;
@@ -163,19 +165,22 @@ function param(value, mode = 'manual', auto = null) {
   return { value, mode, auto };
 }
 
-export class MockEngine {
-  constructor() {
-    this.nodes = new Map();
-    this.root = null;
-    this.letters = 0;      // channels are named in creation order, not by op
-    this.t = 0;            // playhead, seconds since scene start
-    this.playing = true;
-    this._last = performance.now();
+export class MockEngine extends Graph {
+  /**
+   * `latency: false` for an engine with a network in front of it.
+   *
+   * The simulated delays exist so the UI is tuned against a backend that cannot
+   * answer instantly (ADR-0021). Once there is a real one, they stop being honest
+   * and start being 260 ms added to every structural edit on top of the real cost.
+   */
+  constructor({ latency = true } = {}) {
+    super();
+    this._sleep = latency ? sleep : instant;
   }
 
   // ── session ──────────────────────────────────────────────────────────────
   async createSession() {
-    await sleep(120);
+    await this._sleep(120);
     const root = {
       id: nid('n'), parent: null, op: 'core.source',
       label: 'synthetic #0',
@@ -187,8 +192,6 @@ export class MockEngine {
     };
     this.nodes.set(root.id, root);
     this.root = root;
-    this.capture = null;          // null means the synthetic scene
-    this.ended = false;
     return root;
   }
 
@@ -201,7 +204,7 @@ export class MockEngine {
    * quieter kind of wrong than an empty tree.
    */
   async openCapture(cap) {
-    await sleep(LATENCY.structuralMs);
+    await this._sleep(LATENCY.structuralMs);
     for (const c of this.children(this.root.id)) await this.removeNode(c.id);
     this.capture = cap;
     this.letters = 0;
@@ -252,7 +255,7 @@ export class MockEngine {
    * result is cached on the node against the parameters that produced it, so the
    * view is free until something actually changes.
    */
-  async sliceBytes(nodeId, onProgress) {
+  async sliceBytes(nodeId, onProgress, at = null) {
     const n = this.node(nodeId);
     if (!n || n.out.kind !== 'bytes') return null;
     const p = this.node(n.parent);
@@ -263,7 +266,8 @@ export class MockEngine {
     const fs = p.out.sampleRate;
     const pin = this.isPinned(p.id);
     const t0 = pin ? pin.params.t0.value : 0;
-    const t1 = pin ? pin.params.t1.value : (isFinite(this.duration()) ? this.duration() : this.t);
+    const now = at != null ? at : this.t;
+    const t1 = pin ? pin.params.t1.value : (isFinite(this.duration()) ? this.duration() : now);
     const got = await this.readSpan(p.id, t0, t1, onProgress);
     if (!got) return null;
 
@@ -302,11 +306,11 @@ export class MockEngine {
    * already computed for the view above, and the output is a handful of records. No
    * rate to negotiate, no format to convert, nothing to supervise.
    */
-  async runPlugin(nodeId) {
+  async runPlugin(nodeId, at = null) {
     const n = this.node(nodeId);
     if (!n || !n.plugin) return null;
     const p = this.node(n.parent);
-    const src = p.out.kind === 'bytes' ? await this.sliceBytes(p.id) : null;
+    const src = p.out.kind === 'bytes' ? await this.sliceBytes(p.id, null, at) : null;
     if (!src) return { records: [], error: 'nothing upstream has produced bytes yet' };
     const args = {};
     for (const [k, v] of Object.entries(n.params)) args[k] = v.value;
@@ -315,81 +319,9 @@ export class MockEngine {
     return out;
   }
 
-  /** How much signal a node can see: its clip if pinned, else the whole capture. */
-  _spanOf(nodeId) {
-    const pin = this.isPinned(typeof nodeId === 'string' ? nodeId : nodeId.id);
-    if (pin) return Math.max(1e-3, pin.params.t1.value - pin.params.t0.value);
-    const d = this.duration();
-    return isFinite(d) ? d : 2.0;
-  }
-
-  /** How much signal there is, in seconds — a file ends, the scene does not. */
-  duration() { return this.capture ? this.capture.durationS : Infinity; }
-
-  node(id) { return this.nodes.get(id); }
-
-  /**
-   * A pinned window is a clip, not a still frame — it has duration, so it plays.
-   * Short bursts play slowed down, because an 80 ms window at 1× would loop a
-   * dozen times a second and read as a strobe rather than a signal.
-   */
-  /** Derived so a window takes about four seconds to watch — overridable like anything else. */
-  autoClipRate(n) {
-    const d = Math.max(1e-4, n.params.t1.value - n.params.t0.value);
-    return Math.min(1, d / 4);
-  }
-
-  clipRate(n) {
-    const p = n.params.rate;
-    if (p && p.mode === 'manual') return p.value;
-    const v = this.autoClipRate(n);
-    if (p) p.value = v;                  // keep the readout honest while auto
-    return v;
-  }
-
-  clipPos(n) {
-    if (n._t == null) n._t = n.params.t0.value;
-    return n._t;
-  }
-
-  /**
-   * The moment a node is looking at: a pinned ancestor's clip position if there is
-   * one, otherwise the session playhead.
-   */
-  effectiveTime(id) {
-    let n = this.node(id);
-    while (n) {
-      const m = n.params && n.params.timeMode;
-      if (m && m.value === 'pinned') return this.clipPos(n);
-      n = n.parent ? this.node(n.parent) : null;
-    }
-    return this.t;
-  }
-
-  isPinned(id) {
-    let n = this.node(id);
-    while (n) {
-      const m = n.params && n.params.timeMode;
-      if (m && m.value === 'pinned') return n;
-      n = n.parent ? this.node(n.parent) : null;
-    }
-    return null;
-  }
-
-  path(id) {
-    const out = [];
-    let n = this.node(id);
-    while (n) { out.unshift(n); n = n.parent ? this.node(n.parent) : null; }
-    return out;
-  }
-
-  children(id) {
-    return [...this.nodes.values()].filter((n) => n.parent === id);
-  }
-
   // ── palette: only operations valid on this node's output type ────────────
   async palette(nodeId) {
-    await sleep(8);
+    await this._sleep(8);
     const n = this.node(nodeId);
     const built = Object.entries(OPS)
       .filter(([, o]) => o.in === '*' || o.in === n.out.kind)
@@ -408,9 +340,11 @@ export class MockEngine {
    * selection: { f0, f1 } in Hz absolute, and optionally { t0, t1 } in seconds.
    * Everything derivable is derived and marked `auto` (ADR-0017).
    */
-  async addNode({ parent, op, selection }) {
-    await sleep(LATENCY.structuralMs);
+  async addNode({ parent, op, selection, at = null }) {
+    await this._sleep(LATENCY.structuralMs);
     const p = this.node(parent);
+    // Everything below that estimates from the signal estimates at this moment.
+    const now = at != null ? at : this.effectiveTime(parent);
     const spec = OPS[op] || plugins.get(op);
     if (!spec) throw new Error(`no operation ${op}`);
     const node = {
@@ -452,7 +386,7 @@ export class MockEngine {
       // arrives needing to be told the deviation is a detector for someone who
       // already knew the answer.
       const fs = p.out.sampleRate;
-      const iq = this._readIQ(p, this.effectiveTime(p.id), Math.min(65536, Math.floor(fs * 0.25)));
+      const iq = this._readIQ(p, now, Math.min(65536, Math.floor(fs * 0.25)));
       const count = iq.length / 2;
       node.params = DETECTORS[op].derive(iq, count, fs);
       node.out = { kind: 'real', sampleRate: fs, centerHz: p.out.centerHz };
@@ -511,7 +445,7 @@ export class MockEngine {
       const pPin = this.isPinned(p.id);
       const pSpan = pPin ? Math.max(1e-3, pPin.params.t1.value - pPin.params.t0.value) : Infinity;
       const estSpan = Math.min(pSpan, 1.05);
-      const env = await this._readReal(p, this.effectiveTime(p.id), Math.min(131072, Math.floor(p.out.sampleRate * estSpan)));
+      const env = await this._readReal(p, now, Math.min(131072, Math.floor(p.out.sampleRate * estSpan)));
       const otsu = dsp.otsuThreshold(env);
       const sym = dsp.estimateSymbolPeriod(env, otsu.value, p.out.sampleRate);
       node.params = {
@@ -533,7 +467,7 @@ export class MockEngine {
   }
 
   async removeNode(id) {
-    await sleep(30);
+    await this._sleep(30);
     for (const c of this.children(id)) await this.removeNode(c.id);
     this.nodes.delete(id);
   }
@@ -542,7 +476,7 @@ export class MockEngine {
   async setParam(nodeId, key, value, mode = 'manual') {
     const n = this.node(nodeId);
     const cold = key === 'decim' || key === 'taps';
-    await sleep(cold ? LATENCY.structuralMs : LATENCY.paramMs);
+    await this._sleep(cold ? LATENCY.structuralMs : LATENCY.paramMs);
     n.params[key] = { ...n.params[key], value, mode };
     if (key === 't0' || key === 't1' || key === 'timeMode') n._t = null;
     if (n.op === 'core.tuner') {
@@ -558,34 +492,9 @@ export class MockEngine {
 
   async setMode(nodeId, key, mode) {
     const n = this.node(nodeId);
-    await sleep(LATENCY.paramMs);
+    await this._sleep(LATENCY.paramMs);
     n.params[key] = { ...n.params[key], mode };
     return n;
-  }
-
-  // ── transport ────────────────────────────────────────────────────────────
-  tick() {
-    const now = performance.now();
-    const dt = (now - this._last) / 1000;
-    this._last = now;
-    const step = Math.min(dt, 0.1);
-    if (this.playing) {
-      this.t += step;
-      // A file ends. Running the clock past it would scroll silence forever and look
-      // exactly like a stall, so playback stops at the end and says so.
-      const d = this.duration();
-      if (this.t >= d) { this.t = d; this.playing = false; this.ended = true; }
-      for (const n of this.nodes.values()) {
-        const m = n.params && n.params.timeMode;
-        if (!m || m.value !== 'pinned') continue;
-        const t0 = n.params.t0.value, t1 = n.params.t1.value;
-        const d = Math.max(1e-4, t1 - t0);
-        if (n._t == null || n._t < t0 || n._t > t1) n._t = t0;
-        n._t += step * this.clipRate(n);
-        if (n._t > t1) n._t = t0 + ((n._t - t0) % d);   // loop
-      }
-    }
-    return this.t;
   }
 
   // ── sample production ────────────────────────────────────────────────────

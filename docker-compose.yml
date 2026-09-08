@@ -1,0 +1,33 @@
+# One service, and the only thing worth thinking about is the address it answers on.
+#
+#   SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d
+#
+# The left-hand side of the port publish is the host address the container is reachable
+# at. Scoped to the tailnet address, the port exists on the tailnet and nowhere else:
+# not on the LAN, not on a coffee-shop Wi-Fi, not on anything a router might forward.
+# It defaults to loopback so that forgetting to set it fails closed.
+#
+# There is no authentication in front of this. On a tailnet that is a reasonable
+# posture, because the network is the boundary and only your own devices are on it. It
+# is not a reasonable posture on a network with anybody else on it, and it is why
+# `tailscale funnel` — which publishes to the whole internet — must never be pointed
+# at this port.
+
+services:
+  sdrflex:
+    build: .
+    image: sdr-flex:latest
+    container_name: sdr-flex
+    restart: unless-stopped
+    ports:
+      - "${SDRFLEX_HOST_IP:-127.0.0.1}:${SDRFLEX_PORT:-8722}:8722"
+    volumes:
+      # Captures stay on the box. Read-only: the tool reads them and never writes back.
+      - "${SDRFLEX_CAPTURES:-./captures}:/captures:ro"
+    environment:
+      SDRFLEX_CAPTURES: /captures
+      SDRFLEX_BIND: 0.0.0.0
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8722/index.html"]
+      interval: 30s
+      timeout: 3s

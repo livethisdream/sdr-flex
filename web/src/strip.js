@@ -61,7 +61,7 @@ export class Strip {
       // away from the things you actually turn. Nothing inline, and the facts are one
       // tap away. It keeps the shape every other run has — title, then a fold chip —
       // so it sits on the same baseline and folds the same way they do.
-      const allRo = shown.every((c) => c.type === 'ro');
+      const allRo = foldsWhole(shown);
       const rest = allRo ? shown : shown.slice(inline);
       return `<div class="pgroup" data-g="${g.key}">
         <span class="ptitle">${g.title}</span>
@@ -72,6 +72,7 @@ export class Strip {
   }
 
   _mode(c) {
+    if (c.type === 'action') return 'action';
     if (c.type === 'ro') return 'ro';
     return c.canAuto ? (c.mode || 'manual') : 'plain';
   }
@@ -141,8 +142,8 @@ export class Strip {
   openMore(gk, anchor) {
     const g = this.groups.find((x) => x.key === gk);
     if (!g) return;
-    const allRo = g.cells.every((c) => c.type === 'ro');
-    const rest = allRo ? g.cells : g.cells.slice(this._inline);
+    // The same test the layout used, or the chip opens a popover holding nothing.
+    const rest = foldsWhole(g.cells) ? g.cells : g.cells.slice(this._inline);
     this._openKey = null;
     if (this._openPill) this._openPill.classList.remove('open');
     this._openPill = anchor;
@@ -155,6 +156,7 @@ export class Strip {
         const val = `<span class="mv">${c.fmt ? c.fmt(c.value) : c.value}${c.unit ? ' ' + c.unit : ''}</span>`;
         // a read-only fact is still worth reading — it just does not open anything
         if (c.type === 'ro') return `<div class="moreitem ro"><span class="mk">${c.label}</span>${val}</div>`;
+        if (c.type === 'action') return `<button class="moreitem act" data-act="${c.key}"><span class="mk">${c.label}</span></button>`;
         return `<button class="moreitem ${dot}" data-k="${c.key}">
           <span class="mk">${c.label}</span>${val}
         </button>`;
@@ -162,7 +164,14 @@ export class Strip {
     this.pop.hidden = false;
 
     for (const b of this.pop.querySelectorAll('.moreitem')) {
-      b.addEventListener('click', () => this.openPop(gk, b.dataset.k, anchor));
+      if (b.dataset.act) {
+        b.addEventListener('click', (e) => {
+          this.closePop();
+          this.onAction && this.onAction(gk, b.dataset.act, e);
+        });
+      } else {
+        b.addEventListener('click', () => this.openPop(gk, b.dataset.k, anchor));
+      }
     }
     const r = anchor.getBoundingClientRect();
     const pr = this.pop.getBoundingClientRect();
@@ -254,4 +263,17 @@ export class Strip {
       this.pop.style.top = Math.max(8, r.top - pr.height - 8) + 'px';
     }
   }
+}
+
+/**
+ * Does this whole run fold away, or does it keep controls on the bar?
+ *
+ * A run you can only read has nothing to turn, so all of it goes behind one chip. An
+ * action is not a control either — it opens something rather than holding a value — so
+ * a run of facts with a door at the end still folds like a run of facts. Both the
+ * layout and the popover have to agree about this: when they did not, the chip drew
+ * correctly and opened onto an empty list.
+ */
+function foldsWhole(cells) {
+  return cells.every((c) => c.type === 'ro' || c.type === 'action');
 }
