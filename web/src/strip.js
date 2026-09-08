@@ -60,13 +60,13 @@ export class Strip {
       // facts about the capture, not controls — they were taking a third of the bar
       // away from the things you actually turn. Nothing inline, and the facts are one
       // tap away. It keeps the shape every other run has — title, then a fold chip —
-      // so it sits on the same baseline and counts the same way they do.
+      // so it sits on the same baseline and folds the same way they do.
       const allRo = shown.every((c) => c.type === 'ro');
       const rest = allRo ? shown : shown.slice(inline);
       return `<div class="pgroup" data-g="${g.key}">
         <span class="ptitle">${g.title}</span>
         ${allRo ? '' : shown.slice(0, inline).map((c) => this._pill(g.key, c)).join('')}
-        ${rest.length ? `<button class="pill more" data-g="${g.key}"${allRo ? ` title="${g.title} — read-only"` : ''}>⋯<span class="pu">${rest.length}</span></button>` : ''}
+        ${rest.length ? `<button class="pill more" data-g="${g.key}" title="${allRo ? `${g.title} — read-only` : `${rest.length} more`}">⋯</button>` : ''}
       </div>`;
     }).join('');
   }

@@ -536,7 +536,8 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .pill.mn .dot { background:var(--accent); }
 .pill .pv { color:inherit; font-variant-numeric:tabular-nums; }
 .pill .pu { font-size:.58rem; color:var(--dim); }
-.pill.more { color:var(--dim); gap:.2rem; }
+/* with the count gone the chip is one glyph wide — too small to hit on a phone */
+.pill.more { color:var(--dim); min-width:26px; justify-content:center; }
 .pill.more:hover { color:var(--bright); }
 
 /* ── popover: the control, shaped to the parameter ── */
