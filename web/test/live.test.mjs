@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { RemoteEngine } from '../src/remote.js';
 import { createServer } from '../../server/main.js';
+import { available } from '../../server/radio.js';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -161,10 +162,24 @@ test('the past expires, and the clock will not sit on a moment that is gone', as
   assert.ok(e.t >= first, `the playhead was pulled forward to ${e.t.toFixed(2)}s, not left in the void`);
 });
 
-test('a driver whose program is missing fails with the reason', async (t) => {
+test('a radio that cannot start says why, and leaves nothing half-open', async (t) => {
   const { e } = await fixture(t);
-  await assert.rejects(() => e.openRadio('rtl', {}), /rtl_sdr is not installed/);
-  assert.ok(!e.isLive(), 'and the session is not left half-open');
+  // Two different failures, and which one you get depends on the machine: a box with
+  // no rtl-sdr package cannot find the program, and a box with the package but no
+  // dongle gets the program's own complaint. Both have to arrive as a readable reason
+  // rather than a hang or a half-open session, and asserting only the first made this
+  // test pass for the wrong reason until rtl_sdr was actually installed.
+  const err = await e.openRadio('rtl', {}).then(() => null, (x) => x);
+  assert.ok(err, 'starting a radio with no hardware must not succeed');
+  assert.match(err.message,
+    available('rtl') ? /device|found|usb|failed|open/i : /rtl_sdr is not installed/,
+    `unhelpful reason: ${JSON.stringify(err.message)}`);
+  assert.ok(err.message.length > 8, 'and it says something, not just "error"');
+  assert.ok(!e.isLive(), 'the session is not left pointing at a radio that never started');
+
+  // whatever happened, the session still works afterwards
+  await e.openRadio('synthetic', { sampleRate: 120_000 });
+  assert.ok(e.isLive(), 'and a radio that can start still starts');
 });
 
 test('stopping the radio takes the recording with it', async (t) => {
