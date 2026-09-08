@@ -481,7 +481,10 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    wrapped onto two rows at phone widths while its contents fitted easily. */
 .strip {
   width:max-content; max-width:calc(100% - 1.4rem);
-  display:flex; align-items:center; gap:.5rem;
+  /* Baseline between the runs as well as inside them. Centring boxes made each run's
+     text land wherever its own box height rounded to — src and view were drawn on
+     lines 0.8px apart, which is invisible as a measurement and obvious as a wobble. */
+  display:flex; align-items:baseline; gap:.5rem;
   padding:.3rem .7rem; border-radius:999px;
   background:var(--float); border:1px solid var(--rule);
   box-shadow:0 10px 30px -10px var(--shadow);
@@ -534,9 +537,6 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .pill .pv { color:inherit; font-variant-numeric:tabular-nums; }
 .pill .pu { font-size:.58rem; color:var(--dim); }
 .pill.more { color:var(--dim); gap:.2rem; }
-/* a collapsed read-only run names itself the way its title did */
-.pill.more.ro { font-size:.54rem; letter-spacing:.13em; text-transform:uppercase; }
-.pill.more.ro .pu { letter-spacing:0; }
 .pill.more:hover { color:var(--bright); }
 
 /* ── popover: the control, shaped to the parameter ── */

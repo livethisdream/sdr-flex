@@ -56,22 +56,17 @@ export class Strip {
       const shown = g.cells;
       if (!shown.length) return '';
 
-      // A run you can only read collapses to its own name. The source's centre and
-      // rate are facts about the capture, not controls — they were taking a third of
-      // the bar away from the things you actually turn. One chip, and the facts are
-      // one tap away.
-      if (shown.every((c) => c.type === 'ro')) {
-        return `<div class="pgroup" data-g="${g.key}">
-          <button class="pill more ro" data-g="${g.key}" title="${g.title} — read-only">
-            ${g.title}<span class="pu">${shown.length}</span></button>
-        </div>`;
-      }
-
-      const rest = shown.slice(inline);
+      // A run you can only read folds away entirely. The source's centre and rate are
+      // facts about the capture, not controls — they were taking a third of the bar
+      // away from the things you actually turn. Nothing inline, and the facts are one
+      // tap away. It keeps the shape every other run has — title, then a fold chip —
+      // so it sits on the same baseline and counts the same way they do.
+      const allRo = shown.every((c) => c.type === 'ro');
+      const rest = allRo ? shown : shown.slice(inline);
       return `<div class="pgroup" data-g="${g.key}">
         <span class="ptitle">${g.title}</span>
-        ${shown.slice(0, inline).map((c) => this._pill(g.key, c)).join('')}
-        ${rest.length ? `<button class="pill more" data-g="${g.key}">⋯<span class="pu">${rest.length}</span></button>` : ''}
+        ${allRo ? '' : shown.slice(0, inline).map((c) => this._pill(g.key, c)).join('')}
+        ${rest.length ? `<button class="pill more" data-g="${g.key}"${allRo ? ` title="${g.title} — read-only"` : ''}>⋯<span class="pu">${rest.length}</span></button>` : ''}
       </div>`;
     }).join('');
   }
