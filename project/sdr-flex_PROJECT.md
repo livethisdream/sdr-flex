@@ -1,11 +1,14 @@
-# Status
+# SDR Flex — project note
 
-Running note: where the build actually is, what has been decided in conversation but
-not yet written into an ADR, and what is still open. The ADRs record *why* a thing is
-the way it is; the roadmap records the plan as designed. Neither survives the gap
-between one working session and the next, which is what this file is for.
+Where the build actually is, what has been decided in conversation but not yet written
+into an ADR, and what is still open. `docs/adr/` records *why* each decision was made
+and `docs/06-roadmap.md` records the plan as designed. Neither survives the gap between
+one working session and the next, which is what this file is for.
 
-Update this at the end of a session, not the start of the next one.
+Lives at `project/<repo-name>_PROJECT.md` by convention — same path in every repo, so
+it is the first file to read and does not have to be found.
+
+Update it at the end of a session, not the start of the next one.
 
 **Last updated:** 2026-09-08 · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
