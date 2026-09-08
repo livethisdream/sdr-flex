@@ -1,0 +1,51 @@
+# The engine, plus the programs radios need.
+#
+# The default image is Alpine and about as small as a Node image gets, because a server
+# that only reads captures needs nothing but Node. A radio needs its vendor's capture
+# program, and those live in Debian packages — so this variant trades roughly 400 MB of
+# image for the ability to plug something in.
+#
+#   docker compose build --build-arg ...   no: pick the file instead
+#   SDRFLEX_DOCKERFILE=Dockerfile.radio docker compose up -d --build
+#
+# The tool still installs nothing of its own: these are the same programs you would run
+# by hand, and the driver table in server/radio.js just runs them for you.
+
+FROM node:22-bookworm-slim
+
+# Each package supplies exactly one driver in server/radio.js. Drop the ones you do not
+# have hardware for — every driver reports itself as unavailable if its program is
+# missing, and says which program that is.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libiio-utils \
+      rtl-sdr \
+      soapysdr-tools soapysdr-module-rtlsdr \
+      uhd-host \
+      ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --system --create-home --shell /usr/sbin/nologin sdrflex
+WORKDIR /app
+
+COPY web ./web
+COPY server ./server
+
+VOLUME /captures
+ENV SDRFLEX_CAPTURES=/captures \
+    SDRFLEX_PORT=8722 \
+    SDRFLEX_BIND=0.0.0.0 \
+    SDRFLEX_RINGS=/rings
+
+# Ring recordings are scratch, and large: sixty seconds of 2.4 MS/s cu8 is 288 MB. Its
+# own directory so it can be mounted onto a real disk when the container's writable
+# layer is somewhere you would rather not put that.
+RUN mkdir -p /rings && chown sdrflex /rings
+VOLUME /rings
+
+EXPOSE 8722
+USER sdrflex
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=3s \
+  CMD node -e "fetch('http://127.0.0.1:8722/index.html').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "server/main.js"]

@@ -15,7 +15,11 @@
 
 services:
   sdrflex:
-    build: .
+    build:
+      context: .
+      # Dockerfile.radio adds the vendor capture programs a live radio needs. The
+      # default has none of them, and every driver says so rather than failing oddly.
+      dockerfile: ${SDRFLEX_DOCKERFILE:-Dockerfile}
     image: sdr-flex:latest
     container_name: sdr-flex
     restart: unless-stopped
@@ -24,10 +28,23 @@ services:
     volumes:
       # Captures stay on the box. Read-only: the tool reads them and never writes back.
       - "${SDRFLEX_CAPTURES:-./captures}:/captures:ro"
+      # Ring recordings are scratch and can be hundreds of megabytes. Point this at a
+      # real disk if the container's writable layer is somewhere you would rather not.
+      - "${SDRFLEX_RINGS:-sdrflex-rings}:/rings"
     environment:
       SDRFLEX_CAPTURES: /captures
+      SDRFLEX_RINGS: /rings
       SDRFLEX_BIND: 0.0.0.0
+    # A radio is a USB device, and a container cannot see one it was not given. This
+    # is the least privilege that works for a Pluto reached over its USB-ethernet
+    # gadget: nothing. For RTL-SDR and USRP, which are claimed as USB devices, add
+    #   devices: ["/dev/bus/usb:/dev/bus/usb"]
+    # and read the note in server/README.md about udev rules first.
+
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8722/index.html"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8722/index.html').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 3s
+
+volumes:
+  sdrflex-rings:

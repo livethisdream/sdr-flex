@@ -107,9 +107,15 @@ detectors, pinned clips and auto-derived parameters all work on live signal unch
 - **A synthetic driver is first-class**: the same scene the in-tab engine draws, at a
   real rate in real time. It is how the live path was tested here, and it is how anyone
   without an SDR can see the tool work.
-- **Only the synthetic driver has run.** The other four command lines were written from
-  documented interfaces on a machine where none of those programs exist. Most likely
-  thing in this repo to be wrong; cheapest thing to fix.
+- **Only the synthetic driver has run.** The RTL-SDR and Pluto command lines have since
+  been checked against the real `rtl_sdr`, `iio_attr` and `iio_readdev` binaries — they
+  parse and reach the point of looking for hardware — but no radio has been attached.
+  Known suspect: the Pluto's channels are commonly 12 bits in a 16-bit word, and this
+  reads them as `cs16`, so a real signal about 24 dB quiet means a scale factor is
+  needed.
+- **A radio needs `Dockerfile.radio`**, not the default image — the default has none of
+  the vendor capture programs in it. `SDRFLEX_DOCKERFILE=Dockerfile.radio docker
+  compose up -d --build`.
 - **A source has a span now, not just a duration.** A ring's past expires, so
   `span()` is `[first, last]`, it rides along on every frame reply, and the playhead is
   clamped into it. Past the head reads return zeros; before the window the ring throws
@@ -121,8 +127,10 @@ detectors, pinned clips and auto-derived parameters all work on live signal unch
 
 ## Open, needs a decision
 
-- **No real radio has ever been attached.** The first RTL-SDR plugged into the box is
-  the real test of the driver table.
+- **No real radio has ever been attached.** The first one plugged into the box is the
+  real test of the driver table. For a Pluto under WSL the order of operations matters
+  and is written down in `server/README.md` — get WSL talking to `192.168.2.1` before
+  adding a container, or two problems debug as one.
 - **The image has never been built.** There is no Docker daemon in the environment this
   was written in, so the `Dockerfile` and `docker-compose.yml` are unverified. The
   runtime they describe was verified by running the server with the same environment

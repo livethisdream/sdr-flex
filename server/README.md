@@ -78,10 +78,87 @@ Two things worth knowing before you rely on it:
   so a new center frequency means a new process and an empty ring. The frequency
   readout follows your pointer immediately; the radio follows when you let go.
 
+### A radio in a container
+
+The default image has none of these programs in it. Build the radio variant instead:
+
+```
+SDRFLEX_DOCKERFILE=Dockerfile.radio docker compose up -d --build
+```
+
+How the container reaches the radio depends on how the radio attaches:
+
+- **Pluto** talks over its USB-ethernet gadget, so it is a *network* device at
+  `192.168.2.1`. The container needs a route to that address and no USB access at all.
+- **RTL-SDR and USRP** are claimed as USB devices, so the container needs
+  `devices: ["/dev/bus/usb:/dev/bus/usb"]` in `docker-compose.yml`, and the host needs
+  udev rules that let a non-root user open them (`rtl-sdr` and `uhd-host` install
+  those). If you would rather not, run the server outside a container — it is one
+  command and no privileges.
+
+### Windows, WSL and a Pluto
+
+This is three network namespaces stacked — Windows, WSL, and the container — and the
+Pluto is on the far side of all three. Do it in that order, and stop at the first thing
+that fails.
+
+**1. Can Windows see it?** With the Pluto plugged in and its driver installed, a
+network adapter appears with an address on `192.168.2.x`. `ping 192.168.2.1` from
+PowerShell.
+
+**2. Can WSL see it?** This is the step that usually fails. WSL2 is NAT'd behind its
+own virtual switch and cannot reach the Windows host's Pluto adapter by default. The
+fix is mirrored networking — in `%USERPROFILE%\.wslconfig`:
+
+```
+[wsl2]
+networkingMode=mirrored
+```
+
+then `wsl --shutdown` and start it again. Now `ping 192.168.2.1` and
+`iio_info -u ip:192.168.2.1` from inside WSL. If `iio_info` prints the device tree,
+everything after this is straightforward. (Mirrored networking needs Windows 11 22H2 or
+newer with WSL 2.0+. The alternative is `usbipd-win` to attach the USB device to WSL
+directly, which then needs a WSL kernel with the USB-ethernet modules built in — more
+work, and only worth it if mirrored mode is not available to you.)
+
+**3. Then, and only then, add the container.** Docker Desktop puts the container in yet
+another namespace, and host networking on Docker Desktop for Windows is not the same
+thing it is on Linux. Two ways through:
+
+- **Run the server in WSL directly**, no container: `node server/main.js`. Nothing to
+  configure, and it is the path that has actually been tested.
+- **Install Docker Engine inside WSL** (not Docker Desktop) and add
+  `network_mode: host` to the service. Then the container shares WSL's network, which
+  step 2 has already established can reach the Pluto.
+
+**One more thing that will bite.** If Tailscale runs on Windows rather than inside WSL,
+WSL has no `100.x` address, so `SDRFLEX_BIND=auto` finds no tailnet and falls back to
+loopback — reachable from WSL and from nowhere else. Either run Tailscale inside WSL
+too, or bind to the WSL address and forward the port from Windows with
+`netsh interface portproxy`.
+
+**Recommendation:** get to the end of step 2, run `node server/main.js`, and open a
+radio. Containerize afterwards if you want it supervised. Adding Docker before the
+Pluto works means debugging two problems as one.
+
+### What has and has not been verified
+
 **Only the synthetic driver has been tested.** The other four command lines are written
 from documented interfaces, on a machine where none of those programs are installed.
 They are the most likely thing here to be wrong, and the easiest to fix — each one is a
 row in the table at the top of `server/radio.js`.
+
+The Pluto and RTL-SDR command lines have since been checked against the real
+`iio_attr`, `iio_readdev` and `rtl_sdr` binaries: the arguments parse and get as far as
+looking for hardware. That is not the same as knowing they work, and one thing in
+particular is worth checking first:
+
+- **The Pluto's sample scaling.** `iio_readdev` writes the raw buffer, and the AD9361's
+  channels are commonly 12 bits carried in a 16-bit word. This build reads them as
+  `cs16`, so if the signal looks real but about 24 dB quieter than it should, that is
+  why — and the fix is a scale factor, not a redesign. `iio_attr -u ip:192.168.2.1 -c
+  ad9361-phy voltage0` will tell you what the channel actually reports.
 
 ## Security posture, stated plainly
 
