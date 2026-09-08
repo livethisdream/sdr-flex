@@ -7,7 +7,7 @@ not the start of the next one.
 
 Then, as needed:
 
-- `docs/adr/` — why each decision was made. 28 of them; they are the design.
+- `docs/adr/` — why each decision was made. 30 of them; they are the design.
 - `docs/06-roadmap.md` — the plan as designed, with its sequencing rationale.
 - `docs/08-ui-principles.md` — before changing anything visual.
 
@@ -24,6 +24,8 @@ Then, as needed:
 
 - In a browser: serve `web/` statically, or open `web/index.html`.
 - With the engine on a box: `node server/main.js`, or see `server/README.md`.
+- With no SDR to hand: open a radio and pick "Synthetic signal" — a real process,
+  paced to real time, which is how the live path is tested.
 - `?engine=mock` forces the in-tab engine. The browser tests rely on this.
 
 ## Tests

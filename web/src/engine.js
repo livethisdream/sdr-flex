@@ -218,6 +218,23 @@ export class MockEngine extends Graph {
   }
 
   /**
+   * Point the session at a radio instead of a file.
+   *
+   * The same call as `openCapture` in every way that matters, because ADR-0005 says a
+   * live source is a medium that happens to still be being written — the engine below
+   * this line cannot tell them apart, and that is the whole design.
+   */
+  async openRadio(radio) {
+    const root = await this.openCapture(radio);
+    // Opening a radio means "show me what is on the air", not "show me the oldest
+    // thing still in the buffer". The playhead starts at the live edge; scrubbing back
+    // into what the ring already holds is then a deliberate move rather than the
+    // state you happen to land in.
+    this.t = radio.durationS;
+    return root;
+  }
+
+  /**
    * Everything a node produces between two moments, in one go.
    *
    * Every other read in this engine is a window for a display, capped at what fits on

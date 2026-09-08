@@ -16,6 +16,7 @@
 
 import { MockEngine as Engine } from '../web/src/engine.js';
 import { encode, decode } from '../web/src/proto.js';
+import { Radio, list as listDrivers } from './radio.js';
 
 export const PROTOCOL = 1;
 
@@ -23,11 +24,13 @@ export const PROTOCOL = 1;
 const CHUNK_FLOATS = 1 << 20;
 
 export class Session {
-  constructor(conn, { library, log = () => {} }) {
+  constructor(conn, { library, log = () => {}, ringDir } = {}) {
     this.conn = conn;
     this.library = library;
     this.log = log;
+    this.ringDir = ringDir;
     this.engine = new Engine({ latency: false });
+    this.radio = null;
     this.closed = false;
 
     conn.on('message', (buf) => this._onMessage(buf));
@@ -35,7 +38,10 @@ export class Session {
   }
 
   dispose() {
-    if (this.engine.capture && this.engine.capture.close) this.engine.capture.close();
+    // A radio is a process and a file on disk; a tab going away has to take both with
+    // it, or a box accumulates dead dongles and gigabytes of ring nobody is watching.
+    if (this.radio) { this.radio.stop(); this.radio = null; }
+    else if (this.engine.capture && this.engine.capture.close) this.engine.capture.close();
     this.engine.capture = null;
   }
 
@@ -52,8 +58,13 @@ export class Session {
       if (this.closed) return;
       // `frames` is the hot path and answers many times a second; it is the one reply
       // that does not carry the graph, because nothing it does can change the graph.
+      // `frames` is the hot path and does not carry the graph, but a live source moves
+      // on its own — so it carries the two numbers that say how far back history now
+      // goes. Thirty times a second, for free, the mirror stays honest about a window
+      // nothing the client did has changed.
       this._send(m === 'frames'
-        ? { id, t: 'ok', v }
+        ? { id, t: 'ok', v, live: this.engine.isLive() ? this.engine.span() : null,
+            radio: this.radio ? { status: this.radio.status, dropped: this.radio.ring?.dropped || 0 } : null }
         : { id, t: 'ok', v, g: this.engine._snapshot() });
     } catch (e) {
       this.log(`${m} failed: ${e.stack || e.message}`);
@@ -64,7 +75,7 @@ export class Session {
 
 const METHODS = {
   async hello() {
-    return { protocol: PROTOCOL, engine: 'node', captures: !!this.library };
+    return { protocol: PROTOCOL, engine: 'node', captures: !!this.library, radios: true };
   },
 
   async createSession() {
@@ -74,6 +85,32 @@ const METHODS = {
 
   async listCaptures() {
     return { captures: this.library ? this.library.list() : [] };
+  },
+
+  /** Every driver this build knows, and whether its program is on this box. */
+  async listRadios() {
+    return { drivers: listDrivers() };
+  },
+
+  async openRadio({ kind, tuning, ringSeconds }) {
+    const radio = new Radio({
+      kind,
+      ringSeconds: Math.min(600, Math.max(5, ringSeconds || 60)),
+      ringDir: this.ringDir,
+      log: this.log,
+    });
+    await radio.start(tuning || {});
+    if (this.radio) this.radio.stop();
+    else if (this.engine.capture && this.engine.capture.close) this.engine.capture.close();
+    this.radio = radio;
+    const root = await this.engine.openRadio(radio);
+    return { root: root.id, label: radio.label, format: radio.format,
+             sampleRate: radio.sampleRate, centerHz: radio.centerHz };
+  },
+
+  async stopRadio() {
+    if (this.radio) { this.radio.stop(); this.radio = null; this.engine.capture = null; }
+    return {};
   },
 
   async openCapture({ id }) {
@@ -100,6 +137,16 @@ const METHODS = {
   },
 
   async setParam({ nodeId, key, value, mode }) {
+    // Retuning a radio is not setting a parameter on a node, it is starting a new
+    // recording: none of these programs can be retuned in flight, so the process
+    // restarts and the ring starts over. Saying so is better than a knob that looks
+    // continuous and silently throws away everything behind it.
+    const n = this.engine.node(nodeId);
+    if (this.radio && n && n.op === 'core.source' && (key === 'centerHz' || key === 'sampleRate')) {
+      await this.radio.retune({ [key]: value });
+      await this.engine.openRadio(this.radio);
+      return { rebuilt: true, retuned: true };
+    }
     const r = await this.engine.setParam(nodeId, key, value, mode);
     return { rebuilt: r.rebuilt };
   },

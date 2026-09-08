@@ -456,14 +456,27 @@ class App {
 
     const nodeCells = [];
     if (n.op === 'core.source') {
+      // A file's center and rate are facts about it. A radio's are what you told it,
+      // and telling it something else is the most basic thing you do with a radio — so
+      // the same two cells are read-only on a capture and controls on a live source.
+      const live = this.engine.isLive && this.engine.isLive();
       nodeCells.push(
-        { key: 'centerHz', label: 'center', unit: 'MHz', type: 'ro', value: n.out.centerHz, fmt: fmtHz },
-        { key: 'sampleRate', label: 'rate', unit: 'kS/s', type: 'ro', value: n.out.sampleRate, fmt: (v) => (v / 1e3).toFixed(0) });
-      // Where a capture comes from belongs with the facts about the one you have.
-      // Only when there is a library to open: in the tab, the gesture is the drop.
+        live
+          ? { key: 'centerHz', label: 'center', unit: 'MHz', type: 'num', value: n.out.centerHz,
+              fmt: fmtHz, step: 2000, min: 0 }
+          : { key: 'centerHz', label: 'center', unit: 'MHz', type: 'ro', value: n.out.centerHz, fmt: fmtHz },
+        { key: 'sampleRate', label: 'rate', unit: 'kS/s', type: 'ro', value: n.out.sampleRate,
+          fmt: (v) => (v / 1e3).toFixed(0) });
+      // Where a source comes from belongs with the facts about the one you have.
+      // Only when there is a server to ask: in the tab, the gesture is the drop.
       if (this.hasLibrary) {
         nodeCells.push({ key: 'library', label: 'open a capture…', type: 'action', value: '' });
       }
+      if (this.hasRadios) {
+        nodeCells.push({ key: 'radio', label: live ? 'change radio…' : 'listen to a radio…',
+                         type: 'action', value: '' });
+      }
+      if (live) nodeCells.push({ key: 'stopradio', label: 'stop the radio', type: 'action', value: '' });
     } else {
       const live = !n.params.timeMode || n.params.timeMode.value === 'live';
       for (const [key, pr] of Object.entries(n.params)) {
@@ -533,7 +546,10 @@ class App {
     this.strip.onScrub = (g, k, v) => this.onParam(g, k, v);
     this.strip.onMode = (g, k, mode) => this.onMode(g, k, mode);
     this.strip.onAction = (g, k, e) => {
-      if (k === 'library') this.openLibrary(e ? e.clientX : null, e ? e.clientY : null);
+      const x = e ? e.clientX : null, y = e ? e.clientY : null;
+      if (k === 'library') this.openLibrary(x, y);
+      if (k === 'radio') this.openRadios(x, y);
+      if (k === 'stopradio') this.stopRadio();
     };
   }
 
@@ -561,6 +577,27 @@ class App {
     if (n.out.kind === 'audio' && key === 'volume') this.mixer.setVolume(n.id, value);
     const wasAuto = n.params[key].mode === 'auto';
     if (wasAuto && n.params[key].auto) n.params[key].auto.suggested = n.params[key].value;
+
+    // Retuning a radio restarts its process and empties its ring. A scrub fires forty
+    // times on the way to a frequency, and forty restarts would be forty seconds of
+    // dead air to move 200 kHz. So the readout follows the pointer immediately and the
+    // radio follows once the pointer stops.
+    if (n.op === 'core.source' && this.engine.isLive && this.engine.isLive()) {
+      n.params[key].value = value;
+      n.out[key] = value;
+      this.renderStrip();
+      this.renderAxis();
+      clearTimeout(this._retune);
+      this._retune = setTimeout(async () => {
+        this.notify(`retuning to ${(value / 1e6).toFixed(4)} MHz — history starts over`, 6000);
+        try {
+          await this.engine.setParam(this.current, key, value, 'manual');
+          this.afterOpen();
+        } catch (err) { this.notify(`could not retune: ${err.message}`, 9000); }
+      }, 450);
+      return;
+    }
+
     await this.engine.setParam(this.current, key, value, 'manual');
     this.renderStrip();
     this.renderAxis();
@@ -657,7 +694,10 @@ class App {
    */
   prefillTime(pf, pin) {
     const frac = pf.rows > 1 ? pf.row / (pf.rows - 1) : 1;
-    if (!pin) return Math.max(0, pf.t1 - pf.span * (1 - frac));
+    // A file starts at zero. A ring starts wherever it has not yet overwritten, and
+    // asking behind that draws the oldest row over and over instead of saying so.
+    const floor = this.engine.span ? this.engine.span()[0] : 0;
+    if (!pin) return Math.max(floor, pf.t1 - pf.span * (1 - frac));
     const t0 = pin.params.t0.value;
     const d = Math.max(1e-4, pin.params.t1.value - t0);
     const back = pf.span * this.engine.clipRate(pin) * (1 - frac);
@@ -963,6 +1003,7 @@ class App {
       this.engine = remote;
       this.remote = true;
       this.hasLibrary = !!hello.captures;
+      this.hasRadios = !!hello.radios;
       remote.onStatus(({ connected }) => {
         if (!connected) this.notify('lost the engine — the page is showing its last frames', 12000);
       });
@@ -999,6 +1040,56 @@ class App {
       }
       this.metrics.endOp();
     });
+  }
+
+  /**
+   * The radios this build knows, and what is actually plugged in.
+   *
+   * A driver whose program is not installed is still listed, greyed, saying what it
+   * wants — "rtl_sdr is not installed" is a five-second problem, and a menu that hides
+   * the option instead is a twenty-minute one.
+   */
+  async openRadios(x, y) {
+    let drivers;
+    try { drivers = await this.engine.listRadios(); }
+    catch (err) { this.notify(`could not ask about radios: ${err.message}`, 8000); return; }
+    const ops = drivers.map((d) => ({
+      id: d.kind,
+      name: d.available
+        ? `${d.name} — ${(d.defaults.sampleRate / 1e6).toFixed(3)} MS/s`
+        : `${d.name} — needs ${d.command}`,
+      group: d.available ? 'Available' : 'Not installed',
+      stub: !d.available,
+    }));
+    const px = x != null ? x : innerWidth / 2, py = y != null ? y : innerHeight - 120;
+    this.menu.open(px, py, ops, async (kind) => {
+      const d = drivers.find((k) => k.kind === kind);
+      if (!d || !d.available) return;
+      // Keep the frequency you were already looking at. Someone who has tuned to a
+      // band and then reaches for a radio means that band, not the driver's default.
+      const centerHz = this.engine.root ? this.engine.root.out.centerHz : d.defaults.centerHz;
+      this.metrics.beginOp();
+      this.notify(`starting ${d.name}…`, 20000);
+      try {
+        this.mixer.removeAll();
+        await this.engine.openRadio(kind, { ...d.defaults, centerHz });
+        this.afterOpen();
+        this.notify(`${d.name} · ${(this.engine.capture.sampleRate / 1e6).toFixed(3)} MS/s` +
+                    ` · ${(this.engine.capture.centerHz / 1e6).toFixed(4)} MHz · recording`);
+      } catch (err) {
+        this.notify(`${d.name} did not start: ${err.message}`, 12000);
+      }
+      this.metrics.endOp();
+    });
+  }
+
+  async stopRadio() {
+    try {
+      await this.engine.stopRadio();
+      this.mixer.removeAll();
+      this.afterOpen();
+      this.notify('radio stopped — the recording is gone with it');
+    } catch (err) { this.notify(`could not stop it: ${err.message}`, 8000); }
   }
 
   /** Everything that has to be forgotten when the source changes under the graph. */
@@ -1606,6 +1697,19 @@ class App {
           `⊓ clip ${pin.params.t0.value.toFixed(3)}–${pin.params.t1.value.toFixed(3)} s` +
           ` · ×${r < 0.1 ? r.toFixed(3) : r.toFixed(2)}` +
           (this.engine.playing ? '' : ' · paused'));
+      } else if (this.engine.isLive && this.engine.isLive()) {
+        // On a radio the useful fact is not the time, it is how far behind the air you
+        // are — zero means you are watching it happen, and anything else means you
+        // scrubbed back into the ring and are watching a recording of it.
+        const [first, last] = this.engine.span();
+        const behind = last - this.engine.t;
+        const status = this.engine.capture.status;
+        const held = last - first;
+        this.setStageBadge(
+          status && status !== 'running' ? `◉ radio ${status}`
+          : behind < 0.35 ? `◉ live · ${held.toFixed(0)} s of history`
+          : `◉ ${behind.toFixed(1)} s behind live · ${held.toFixed(0)} s of history` +
+            (this.engine.playing ? '' : ' · paused'));
       } else if (this.engine.ended) {
         this.setStageBadge('⏹ end of capture — scrub back or press play to replay');
       } else {

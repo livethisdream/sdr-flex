@@ -28,6 +28,10 @@ export const CONFIG = {
   webDir: process.env.SDRFLEX_WEB || path.join(HERE, '..', 'web'),
   captureDir: process.env.SDRFLEX_CAPTURES || path.join(HERE, '..', 'captures'),
   quiet: process.env.SDRFLEX_QUIET === '1',
+  // Ring recordings are scratch: sized up front, deleted when the tab goes away. On a
+  // box where /tmp is a small tmpfs, sixty seconds of 2.4 MS/s cu8 is 288 MB of RAM,
+  // so this is worth being able to point at a disk.
+  ringDir: process.env.SDRFLEX_RINGS || os.tmpdir(),
 };
 
 const MIME = {
@@ -83,7 +87,7 @@ function serveStatic(req, res, webDir) {
   });
 }
 
-export function createServer({ webDir, captureDir, quiet } = CONFIG) {
+export function createServer({ webDir, captureDir, quiet, ringDir } = CONFIG) {
   const log = quiet ? () => {} : (...a) => console.log('[sdr-flex]', ...a);
   const library = captureDir && fs.existsSync(captureDir) ? new Library(captureDir) : null;
   if (!library) log(`no capture directory at ${captureDir} — the synthetic scene only`);
@@ -102,7 +106,7 @@ export function createServer({ webDir, captureDir, quiet } = CONFIG) {
     if (!conn) return;
     conn.on('error', (e) => log(`socket: ${e.message}`));
     log('client connected');
-    const s = new Session(conn, { library, log });
+    const s = new Session(conn, { library, log, ringDir: ringDir || CONFIG.ringDir });
     conn.on('close', () => log('client gone'));
     return s;
   });

@@ -31,6 +31,28 @@ export class Graph {
   /** How much signal there is, in seconds — a file ends, the scene does not. */
   duration() { return this.capture ? this.capture.durationS : Infinity; }
 
+  /**
+   * The moments a source can actually answer for, as [first, last] in seconds.
+   *
+   * A file's is its whole length and never moves. A live source's start moves forward
+   * as the ring overwrites itself, so the earliest moment you can still look at is not
+   * zero and does not stay put — which is the one way a live medium is genuinely not a
+   * file, and the only place downstream has to know the difference (ADR-0030).
+   */
+  span() {
+    const c = this.capture;
+    if (!c) return [0, Infinity];
+    if (!c.live) return [0, c.durationS];
+    // On the server this is a radio and the window is a question you ask it; on the
+    // client it is a snapshot and the window is two numbers that came over the wire.
+    // Same graph code runs against both, so it accepts either.
+    const w = typeof c.windowS === 'function' ? c.windowS() : c.windowS;
+    return w || [0, c.durationS];
+  }
+
+  /** Is the source still being written? */
+  isLive() { return !!(this.capture && this.capture.live); }
+
   node(id) { return this.nodes.get(id); }
 
   path(id) {
@@ -96,6 +118,7 @@ export class Graph {
   _spanOf(nodeId) {
     const pin = this.isPinned(typeof nodeId === 'string' ? nodeId : nodeId.id);
     if (pin) return Math.max(1e-3, pin.params.t1.value - pin.params.t0.value);
+    if (this.isLive()) { const [a, b] = this.span(); return Math.max(1e-3, b - a); }
     const d = this.duration();
     return isFinite(d) ? d : 2.0;
   }
@@ -108,10 +131,21 @@ export class Graph {
     const step = Math.min(dt, 0.1);
     if (this.playing) {
       this.t += step;
+      const d = this.duration();
       // A file ends. Running the clock past it would scroll silence forever and look
       // exactly like a stall, so playback stops at the end and says so.
-      const d = this.duration();
-      if (this.t >= d) { this.t = d; this.playing = false; this.ended = true; }
+      //
+      // A radio does not end — it just has not happened yet. The playhead rides the
+      // head of the recording instead of stopping at it, and falls behind only when
+      // the user scrubs back, which is the whole point of recording it.
+      if (this.isLive()) {
+        const [first, last] = this.span();
+        if (this.t > last) this.t = last;
+        // and it cannot sit on a moment that has been overwritten
+        if (this.t < first) this.t = first;
+      } else if (this.t >= d) {
+        this.t = d; this.playing = false; this.ended = true;
+      }
       for (const n of this.nodes.values()) {
         const m = n.params && n.params.timeMode;
         if (!m || m.value !== 'pinned') continue;
@@ -154,6 +188,11 @@ export class Graph {
         label: this.capture.label, sampleRate: this.capture.sampleRate,
         centerHz: this.capture.centerHz, durationS: this.capture.durationS,
         format: this.capture.format, samples: this.capture.samples,
+        // a live source is still being written, and says how far back it still goes
+        live: !!this.capture.live,
+        windowS: this.capture.live ? this.capture.windowS() : null,
+        driver: this.capture.kind || null,
+        status: this.capture.status || null,
       } : null,
       // `_`-prefixed fields are one side's private business: sliced byte caches,
       // plugin records and clip positions do not travel.

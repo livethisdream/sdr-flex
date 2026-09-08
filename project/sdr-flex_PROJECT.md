@@ -10,14 +10,15 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-08 (overnight: the container) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-08 (the container, then hardware) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
 ---
 
 ## Where it is
 
-MVP in the browser, **and** the same tool with its engine in a container. Static ES
-modules, no build step, no dependencies on either side. 29 ADRs.
+MVP in the browser, the same tool with its engine in a container, and live radio into a
+ring recording. Static ES modules, no build step, no dependencies on either side.
+30 ADRs.
 
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
@@ -36,6 +37,8 @@ Working end to end:
 - Command palette with `/` search
 - The engine over a WebSocket, in a container, reading captures off the box's disk —
   the page picks the server engine when one answers and the in-tab engine otherwise
+- Live radio: a capture program writes a ring recording, the engine reads it exactly as
+  it reads a file, and you can scrub back into what already went past
 
 Tests: four Node suites (`web/test/*.test.mjs`) for pure logic, plus Playwright
 suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
@@ -92,8 +95,34 @@ Numbers, measured on loopback:
 | A 260-row waterfall prefill | ~90 ms, five round trips |
 | A 256 MB capture, resident | 18 MB — and flat, it does not track file size |
 
+## Hardware, as built
+
+[ADR-0030](../docs/adr/0030-a-radio-is-a-recording.md). A radio is a process writing raw
+IQ into a ring on disk; everything below the source reads it as a file, so chains,
+detectors, pinned clips and auto-derived parameters all work on live signal unchanged.
+
+- **A driver is a row in a table** — what program to run, how to pass a frequency and a
+  rate, what samples come out. RTL-SDR, Pluto, UHD and SoapySDR are four rows. No
+  bindings, no native modules, still zero dependencies.
+- **A synthetic driver is first-class**: the same scene the in-tab engine draws, at a
+  real rate in real time. It is how the live path was tested here, and it is how anyone
+  without an SDR can see the tool work.
+- **Only the synthetic driver has run.** The other four command lines were written from
+  documented interfaces on a machine where none of those programs exist. Most likely
+  thing in this repo to be wrong; cheapest thing to fix.
+- **A source has a span now, not just a duration.** A ring's past expires, so
+  `span()` is `[first, last]`, it rides along on every frame reply, and the playhead is
+  clamped into it. Past the head reads return zeros; before the window the ring throws
+  rather than inventing silence.
+- **Retuning restarts the recording**, because none of these programs retune in flight.
+  The readout follows the pointer, the radio follows when it stops.
+- **The ring is scratch** — sized up front, deleted with the tab. `SDRFLEX_RINGS` points
+  it at a real disk when `/tmp` is a tmpfs.
+
 ## Open, needs a decision
 
+- **No real radio has ever been attached.** The first RTL-SDR plugged into the box is
+  the real test of the driver table.
 - **The image has never been built.** There is no Docker daemon in the environment this
   was written in, so the `Dockerfile` and `docker-compose.yml` are unverified. The
   runtime they describe was verified by running the server with the same environment
@@ -122,8 +151,22 @@ Numbers, measured on loopback:
 - `readSpan` on a long channel still builds the whole span in the tab's memory. The
   server chunks it over the wire, but export is the one path that still wants all of it
   at once.
+- The live window only refreshes while the client is asking for frames. The app does
+  that sixty times a second in every view, so it does not matter in practice — but a
+  backgrounded tab's idea of where history starts goes stale.
+- "Promote this ring to a permanent capture" does not exist, and is the obvious next
+  thing to want the first time you hear something interesting go past.
+- One radio per session. Two tabs are two radios, and on one dongle the second fails
+  with whatever the driver says about a busy device.
 
 ## Deferred on purpose
+
+- **WebUSB.** Discussed and deliberately postponed. It is real — RTL-SDR has working
+  prior art in a browser — but it fights the architecture twice over: samples would
+  arrive in the tab with the engine on the box, and a tab has nowhere to write the ring
+  that ADR-0005 depends on. Worth building later as a *second* mode ("laptop, dongle,
+  no server"), RTL-only, not as the way in. Chrome and Edge only, and needs a secure
+  context, so it would force the `tailscale serve` TLS setup.
 
 - Slot-map overlay — until the CTF has been played blind.
 - Remainder of decoder wave 2: Manchester, differential, framer, CRC.

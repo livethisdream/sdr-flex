@@ -109,6 +109,17 @@ export class RemoteEngine extends Graph {
     }
     this._calls.delete(msg.id);
     if (msg.g) this._adopt(msg.g);
+    // A live source moves without anyone asking it to, so every frame reply carries
+    // where its history now starts and ends. This is the one piece of state the client
+    // cannot derive from its own clock (ADR-0030).
+    if (msg.live && this.capture) {
+      this.capture.windowS = msg.live;
+      this.capture.durationS = msg.live[1];
+    }
+    if (msg.radio && this.capture) {
+      this.capture.status = msg.radio.status;
+      this.capture.dropped = msg.radio.dropped;
+    }
     if (msg.t === 'err') { c.reject(new Error(msg.e)); return; }
 
     if (c.chunks && msg.v && msg.v.floats != null) {
@@ -131,6 +142,33 @@ export class RemoteEngine extends Graph {
   async listCaptures() {
     const r = await this.call('listCaptures');
     return r.captures;
+  }
+
+  /** Every radio driver this build knows, and whether its program is installed. */
+  async listRadios() {
+    const r = await this.call('listRadios');
+    return r.drivers;
+  }
+
+  /**
+   * Start a radio and point the session at it.
+   *
+   * From here down nothing distinguishes this from opening a file: the source is a
+   * medium either way (ADR-0005), and the only difference the client carries is that
+   * its span moves.
+   */
+  async openRadio(kind, tuning) {
+    this._forget();
+    const r = await this.call('openRadio', { kind, tuning });
+    this.ended = false;
+    this.t = this.capture ? this.capture.durationS : 0;
+    return r;
+  }
+
+  async stopRadio() {
+    this._forget();
+    await this.call('stopRadio');
+    return this.root;
   }
 
   /**

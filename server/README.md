@@ -20,6 +20,7 @@ as they are, and the server is Node's own `http`, `net` and `crypto`. Node 22 or
 | `SDRFLEX_BIND` | `auto` | Address to bind. `auto` picks the Tailscale interface if there is one, otherwise loopback — never every interface |
 | `SDRFLEX_CAPTURES` | `./captures` | Directory of captures to offer |
 | `SDRFLEX_WEB` | `../web` | The client to serve |
+| `SDRFLEX_RINGS` | the system temp directory | Where live recordings are kept |
 
 ## In a container, on a tailnet
 
@@ -45,6 +46,43 @@ tailscale serve --bg http://127.0.0.1:8722
 **Never `tailscale funnel`.** That publishes to the whole internet, and there is no
 authentication in front of this.
 
+## Radios
+
+A live source is a program writing raw IQ into a ring recording, which the engine reads
+exactly as it reads a file ([ADR-0030](../docs/adr/0030-a-radio-is-a-recording.md)). So
+support for a radio means having its capture program installed, and nothing else:
+
+| Driver | Needs | From |
+|---|---|---|
+| RTL-SDR | `rtl_sdr` | `rtl-sdr` |
+| ADALM-PLUTO | `iio_readdev`, `iio_attr` | `libiio-utils` |
+| USRP (UHD) | `uhd_rx_cfile` | `uhd-host` |
+| SoapySDR (anything else) | `rx_sdr` | `soapysdr-tools` |
+| Synthetic signal | nothing | built in |
+
+They show up under `src` on the bottom bar, as "listen to a radio…". A driver whose
+program is not installed is still listed, greyed, saying what it wants — that is a
+five-second problem, and a menu that hides the option instead is a twenty-minute one.
+
+**The synthetic source is not a radio.** It generates the same scene the in-tab engine
+draws, at a real rate in real time, so you can see the whole live path work — recording,
+scrubbing back into history, building a chain on a moving source — on a machine with
+nothing plugged into it. It is also how the live path is tested.
+
+Two things worth knowing before you rely on it:
+
+- **The ring is scratch.** Sixty seconds by default, allocated up front, deleted when
+  the tab goes away. Sixty seconds of 2.4 MS/s cu8 is 288 MB, so if `/tmp` is a tmpfs
+  on your box, point `SDRFLEX_RINGS` at a real disk.
+- **Retuning restarts the recording.** None of these programs can be retuned in flight,
+  so a new center frequency means a new process and an empty ring. The frequency
+  readout follows your pointer immediately; the radio follows when you let go.
+
+**Only the synthetic driver has been tested.** The other four command lines are written
+from documented interfaces, on a machine where none of those programs are installed.
+They are the most likely thing here to be wrong, and the easiest to fix — each one is a
+row in the table at the top of `server/radio.js`.
+
 ## Security posture, stated plainly
 
 There is no login. The network is the boundary. On a tailnet that is reasonable, because
@@ -58,6 +96,10 @@ Two things follow that are worth knowing:
 - **Plugins run in the browser, not on the server** ([ADR-0029](../docs/adr/0029-the-client-owns-the-clock.md)).
   Dropping a `.js` file executes it in your tab's sandbox. It does not execute on the
   box, and that is deliberate.
+- **Anything that can reach the port can start a radio**, which means spawning one of
+  the capture programs above and writing a ring to disk. The driver list is fixed and
+  the arguments are built here rather than passed through, so this is not a way to run
+  arbitrary commands — but it is a way to use up a dongle and some disk.
 
 ## Is it working?
 
