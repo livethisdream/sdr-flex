@@ -279,19 +279,34 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   font-family:var(--mono); font-size:.72rem; color:var(--dim);
   backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
 }
-/* Looping is the default, so on is the quiet state: it looks like the buttons beside
+/* Drawn rather than typed.
+   The neighbours are text glyphs, and this one started as ⟲ — which is a font glyph
+   too, and therefore a different shape on every platform. The transport is four
+   controls that have to read as one set, so the one with the least reliable glyph is
+   the one worth drawing: two arrows chasing each other, matching the doubling in ◀◀
+   and ▶▶, identical on every machine.
+
+   Looping is the default, so on is the quiet state: it looks like the buttons beside
    it and asks for no attention. Colouring it made the least important control in the
-   bar the loudest thing in it.
-   Off is the deliberate choice, so off is what gets marked — and marked as a setting
-   rather than dimmed, because a greyed control reads as one you cannot use. */
-.tbtn.loop { font-size:.95rem; position:relative; }
-.tbtn.loop:not(.on) { color:var(--dim); }
-.tbtn.loop:not(.on)::after {
-  content:""; position:absolute; left:50%; top:50%;
-  width:1.05em; height:1.5px; border-radius:1px;
-  background:currentColor;
-  transform:translate(-50%, -50%) rotate(-45deg);
+   bar the loudest thing in it. Off is the deliberate choice, so off is what gets
+   marked — and marked as a setting rather than dimmed, because a greyed control reads
+   as one you cannot use. */
+.tbtn.loop { position:relative; }
+.tbtn.loop svg {
+  /* sized to the cap height of the glyphs beside it, not to its own viewBox */
+  width:14px; height:14px; display:block;
+  fill:none; stroke:currentColor; stroke-width:2.2;
+  stroke-linecap:round; stroke-linejoin:round;
 }
+/* The slash is cut *out* of the icon rather than drawn over it. Laid on top it merged
+   with strokes of its own weight and colour, and at fourteen pixels the result was a
+   blob rather than a crossed-out loop. The bar is translucent over a blur, so a
+   knock-out line in a background colour would be the wrong colour — a mask needs no
+   colour at all and stays right in both themes. */
+.tbtn.loop svg .slash { display:none; }
+.tbtn.loop:not(.on) svg g { mask:url(#noloop); }
+.tbtn.loop:not(.on) svg .slash { display:inline; }
+.tbtn.loop:not(.on) { color:var(--dim); }
 
 .transport .track { flex:1 1 auto; width:clamp(44px, 26vw, 320px); min-width:44px; }
 .tbtn {
