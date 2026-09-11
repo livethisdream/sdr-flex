@@ -25,7 +25,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
 import { resample } from '../web/src/export.js';
 
 /**
@@ -319,7 +320,73 @@ export const ADAPTERS = {
     },
     title: ['text'],
   },
+  // ── and one that is not a program at all ──────────────────────────────────
+  //
+  // A GNU Radio flowgraph satisfies the same contract every other row does: samples in
+  // on stdin, records out on stdout. So it needs no new machinery here — only a way to
+  // say that what must be installed is a *module inside an interpreter* rather than a
+  // name on PATH, which `module` does. The flowgraph itself ships in `flowgraphs/` and
+  // is ours, written by hand rather than exported from GNU Radio Companion: a .grc
+  // export carries a GUI, a throttle and a sample-rate variable that only make sense
+  // live, and none of that belongs in a job that reads a span and exits (ADR-0032).
+  'ext.lora': {
+    name: 'LoRa', group: 'Decode', in: 'iq', out: 'events',
+    // The interpreter that has the bindings, which is not necessarily the one called
+    // `python3`: GNU Radio's are built against one CPython and a box can have five.
+    command: ['python3.12', 'python3.11', 'python3.10', 'python3'],
+    module: 'gnuradio.lora_sdr',
+    flowgraph: 'lora.py',
+    blurb: 'LoRa — chirp spread spectrum, SF7 to SF12',
+    // The one adapter whose rate is not a constant: LoRa is sampled at a whole multiple
+    // of its bandwidth, so the bandwidth parameter decides what the decoder is fed.
+    wants: ({ params }) => ({ format: 'cf32', rate: (Number(params.bw) || 125_000) * 2 }),
+    params: [
+      { id: 'sf', type: 'text', default: '7', label: 'spreading factor',
+        placeholder: '7 \u2026 12',
+        hint: 'higher spreads further and sends slower; the first thing to sweep' },
+      { id: 'bw', type: 'text', default: '125000', label: 'bandwidth',
+        placeholder: '125000, 250000, 500000',
+        hint: 'also sets the rate the decoder is fed, at twice this' },
+      { id: 'cr', type: 'text', default: '1', label: 'coding rate',
+        placeholder: '1 \u2026 4', hint: 'the n in 4/(4+n)' },
+      { id: 'sync', type: 'text', default: '0x12', label: 'sync word',
+        placeholder: '0x12 private, 0x34 public' },
+    ],
+    args: ({ rate, params }) => [
+      '--rate', String(Math.round(rate)),
+      '--sf', String(params.sf || 7),
+      '--bw', String(params.bw || 125_000),
+      '--cr', String(params.cr || 1),
+      '--sync', String(params.sync || '0x12'),
+    ],
+    parse: 'jsonl',
+    title: ['text'],
+  },
 };
+
+/**
+ * What this adapter wants on stdin, for the settings it is about to run with.
+ *
+ * Static for almost all of them — rtl_433 takes cu8 at 250 kS/s and that is that. LoRa
+ * is the exception that made this a function: its sample rate is a whole multiple of its
+ * bandwidth, so choosing 250 kHz bandwidth changes what the decoder needs fed to it.
+ * Pinning `wants` to the default would have quietly starved every setting but one.
+ */
+export function wants(a, params = {}) {
+  return typeof a.wants === 'function' ? a.wants({ params }) : a.wants;
+}
+
+/** The settings an adapter starts with, which is what `wants` is reported against. */
+function defaults(a) {
+  const out = {};
+  for (const pm of a.params || []) out[pm.id] = pm.default;
+  return out;
+}
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+/** Flowgraphs that ship with the tool, run by whichever interpreter has the module. */
+const FLOWGRAPHS = path.join(HERE, 'flowgraphs');
 
 /**
  * Which of this adapter's candidate binaries is actually on the box, if any.
@@ -348,13 +415,55 @@ export function resolve(id) {
   return null;
 }
 
-/** Is the program this adapter needs on the box? */
+/**
+ * Is the program this adapter needs on the box?
+ *
+ * For an ordinary adapter that is a name on PATH. For a flowgraph it is not: the command
+ * is an interpreter, which is always there, and what actually has to exist is a module
+ * inside it. An adapter that answered "yes, python3 is installed" would offer a decoder
+ * that cannot run — the same failure as naming `dump1090` on a box that has
+ * `dump1090-mutability`, arrived at from the other direction.
+ *
+ * So a flowgraph adapter is probed: the interpreter is asked to import the module, and
+ * that is the answer. It costs about half a second and is cached for the life of the
+ * process, because the alternative is half a second per adapter on every connect.
+ * `warm()` pays it at startup instead of on somebody's first click.
+ */
+const PROBED = new Map();
+
 export function available(id) {
-  return resolve(id) != null;
+  const a = ADAPTERS[id];
+  if (!a) return false;
+  const command = resolve(id);
+  if (!command) return false;
+  if (!a.module) return true;
+
+  const key = `${command}|${a.module}`;
+  if (!PROBED.has(key)) {
+    // Synchronous on purpose: this answers a question the palette asks synchronously,
+    // it happens once, and an async cache that can be read before it is filled reports
+    // "not installed" for a decoder that is.
+    let ok = false;
+    try {
+      const r = spawnSync(command, ['-c', `import ${a.module}`], { timeout: 20_000, stdio: 'ignore' });
+      ok = r.status === 0;
+    } catch { ok = false; }
+    PROBED.set(key, ok);
+  }
+  return PROBED.get(key);
+}
+
+/** Probe every adapter now, so the first connection does not pay for it. */
+export function warm() {
+  for (const id of Object.keys(ADAPTERS)) available(id);
+  return Object.keys(ADAPTERS).filter(available).length;
 }
 
 /** What to call it when it is missing, which is the whole list rather than a guess. */
 function commandNames(a) {
+  // For a flowgraph the interpreter is never the missing piece, so naming it would send
+  // somebody to install Python. The module is what they actually have to build.
+  if (a.module) return `${a.module} (a GNU Radio module)`;
   return (Array.isArray(a.command) ? a.command : [a.command]).join(' / ');
 }
 
@@ -366,8 +475,9 @@ export function list() {
       id, name: a.name, group: a.group, in: a.in, out: a.out,
       // The name it will actually run under, when there is one — a box with
       // dump1090-mutability should say so rather than claim a binary it does not have.
-      command: found || commandNames(a), blurb: a.blurb, params: a.params,
-      sweep: a.sweep || null, wants: a.wants, available: found != null,
+      command: a.module ? commandNames(a) : (found || commandNames(a)),
+      blurb: a.blurb, params: a.params,
+      sweep: a.sweep || null, wants: wants(a, defaults(a)), available: found != null,
     };
   });
 }
@@ -550,9 +660,10 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
     return Promise.resolve({ records: [], error: `${commandNames(spec)} is not installed on this machine` });
   }
 
+  const need = wants(spec, params);
   let input;
   try {
-    input = convert(data, kind, sampleRate, spec.wants);
+    input = convert(data, kind, sampleRate, need);
   } catch (e) {
     return Promise.resolve({ records: [], error: e.message });
   }
@@ -565,7 +676,7 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
   try {
     if (spec.files) {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdrflex-'));
-      for (const file of spec.files({ rate: spec.wants.rate, centerHz, params })) {
+      for (const file of spec.files({ rate: need.rate, centerHz, params })) {
         fs.writeFileSync(path.join(dir, file.name), file.text);
       }
     }
@@ -573,7 +684,10 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
     return Promise.resolve({ records: [], error: `could not set up ${command}: ${e.message}` });
   }
 
-  const args = spec.args({ rate: spec.wants.rate, centerHz, params, dir });
+  const args = [
+    ...(spec.flowgraph ? [path.join(FLOWGRAPHS, spec.flowgraph)] : []),
+    ...spec.args({ rate: need.rate, centerHz, params, dir }),
+  ];
   const started = Date.now();
 
   return new Promise((done_) => {
@@ -592,12 +706,14 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
       // useful thing this tool could tell anybody.
       let told = null;
       if (!records.length && !error && spec.explain) {
-        told = await explain(spec, command, input.bytes, { rate: spec.wants.rate, centerHz, params });
+        told = await explain(spec, command, input.bytes, { rate: need.rate, centerHz, params });
       }
 
       done_({
         records, ms: Date.now() - started,
-        note: `${command} · ${input.note}${parseNote ? ` · ${parseNote}` : ''}`,
+        // Named by what ran, which for a flowgraph is the module rather than the
+        // interpreter: "python3.12 · cf32 at 250 kS/s" tells nobody anything.
+        note: `${spec.module || command} · ${input.note}${parseNote ? ` · ${parseNote}` : ''}`,
         // Also on its own, because a parser note is the only part of that string that
         // is about the *signal* rather than about the plumbing, and a report with room
         // for one line wants that line.
@@ -664,6 +780,9 @@ const CHATTER = [
   // a measurement, and reporting "### NOCARRIER ndata=8 ###" as the error when a decode
   // found nothing says less than saying nothing would.
   /^###/,
+  // rtl_433 announces its own release notes on stderr. Reporting that as the reason a
+  // decode found nothing is worse than reporting nothing.
+  /^New defaults active/i, /^Use "-Y classic/i, /^:\s*$/,
 ];
 
 function complaint(stderr) {

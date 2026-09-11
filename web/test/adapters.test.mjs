@@ -32,7 +32,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { ADAPTERS, available, resolve, list, run, convert } from '../../server/adapters.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { ADAPTERS, available, resolve, list, run, convert, wants as adapterWants } from '../../server/adapters.js';
 import * as mod from './support/modulate.mjs';
 
 const AUDIO_RATE = 48_000;                    // what the modulators produce; convert() resamples
@@ -57,7 +60,10 @@ test('every adapter declares what it needs and what it produces', () => {
     assert.ok(a.command, `${id} names a command`);
     assert.ok(['iq', 'real'].includes(a.in), `${id} takes samples`);
     assert.ok(['events', 'bits', 'bytes'].includes(a.out), `${id} produces records`);
-    assert.ok(a.wants && a.wants.format && a.wants.rate, `${id} says what it wants on stdin`);
+    // `wants` may be a function of the parameters — LoRa's rate follows its bandwidth —
+    // so it is asked rather than read.
+    const w = adapterWants(a, Object.fromEntries((a.params || []).map((p) => [p.id, p.default])));
+    assert.ok(w && w.format && w.rate, `${id} says what it wants on stdin`);
     assert.ok(typeof a.args === 'function', `${id} builds its own command line`);
     assert.ok(typeof a.parse === 'function' || ['jsonl', 'lines'].includes(a.parse),
               `${id} knows how to read its own output`);
@@ -81,6 +87,63 @@ test('a missing program is an error and not a crash', async () => {
   const out = await run('ext.nothing-like-this', { data: new Float32Array(16), kind: 'real', sampleRate: 48_000 });
   assert.match(out.error, /no adapter/);
   assert.equal(out.records.length, 0);
+});
+
+// ── an adapter that is not a program ────────────────────────────────────────
+
+test('a flowgraph adapter names the module, not the interpreter', () => {
+  const a = ADAPTERS['ext.lora'];
+  assert.ok(a.module, 'it says which GNU Radio module has to be there');
+  assert.ok(a.flowgraph, 'and which of our flowgraphs runs it');
+  assert.ok([].concat(a.command).includes('python3.12'),
+            'the interpreter is a candidate list: GNU Radio builds its bindings against ' +
+            'one CPython and a box can have five');
+  const row = list().find((r) => r.id === 'ext.lora');
+  assert.match(row.command, /gnuradio\.lora_sdr/,
+               'and a box without it is told to install the module, not Python');
+});
+
+test('the flowgraph ships with the tool and is on disk', () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const fg = path.join(here, '..', '..', 'server', 'flowgraphs', ADAPTERS['ext.lora'].flowgraph);
+  assert.ok(fs.existsSync(fg), `${fg} is missing`);
+  const src = fs.readFileSync(fg, 'utf8');
+  assert.match(src, /file_descriptor_source/, 'it reads the span off the pipe, not a temp file');
+  assert.match(src, /json\.dumps/, 'and writes records the jsonl parser already reads');
+});
+
+test('LoRa is the one adapter whose rate follows a parameter', () => {
+  const a = ADAPTERS['ext.lora'];
+  assert.equal(typeof a.wants, 'function');
+  // Sampled at a whole multiple of the bandwidth, so the bandwidth decides what the
+  // decoder is fed. A static `wants` would have starved every setting but the default.
+  assert.equal(adapterWants(a, { bw: '125000' }).rate, 250_000);
+  assert.equal(adapterWants(a, { bw: '250000' }).rate, 500_000);
+  assert.equal(adapterWants(a, {}).rate, 250_000, 'and it has a default');
+  assert.equal(list().find((r) => r.id === 'ext.lora').wants.rate, 250_000,
+               'which is what the table reports');
+});
+
+test('LoRa decodes its own transmitter, and only at the right spreading factor', async (t) => {
+  if (skip(t, 'ext.lora')) return;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const data = path.join(here, '..', '..', 'fixtures', 'lora-sf7', 'capture.sigmf-data');
+  if (!fs.existsSync(data)) { t.diagnostic('skipped: no LoRa fixture on disk'); return; }
+  const buf = fs.readFileSync(data);
+  const iq = new Float32Array(buf.length);              // cu8 back to float, as Capture does
+  for (let i = 0; i < buf.length; i++) iq[i] = (buf[i] - 127.5) / 127.5;
+
+  const at = (sf) => run('ext.lora', { data: iq, kind: 'iq', sampleRate: 250_000,
+                                       timeoutMs: 60_000, params: { sf, bw: '125000', cr: '1', sync: '0x12' } });
+  const good = await at('7');
+  assert.equal(good.error, undefined, good.error);
+  assert.ok(good.records.length >= 3, `SF7 found ${good.records.length} frames`);
+  assert.match(good.records[0].text, /sdrflex lora fixture/);
+  assert.match(good.note, /gnuradio\.lora_sdr/, 'the note names what ran, not python3.12');
+
+  // The control. A decoder that finds something at every setting has found nothing.
+  const wrong = await at('9');
+  assert.equal(wrong.records.length, 0, 'SF9 should read a SF7 frame as noise');
 });
 
 // ── the WAV wrapper, which is why minimodem works at all ────────────────────

@@ -1,0 +1,33 @@
+{
+  "name": "LoRa over a GNU Radio flowgraph",
+  "why": "The adapter kind that is not a program: a GNU Radio flowgraph, satisfying the same samples-in-records-out contract as rtl_433, with the difference that what must be installed is a module inside an interpreter rather than a name on PATH. It also pins the one adapter whose sample rate is not a constant \u2014 LoRa is sampled at a whole multiple of its bandwidth, so the bandwidth parameter decides what the decoder is fed, and a static `wants` would have starved every setting but the default.",
+  "capture": "capture.sigmf-data",
+  "needs": "ext.lora",
+  "chain": [
+    {
+      "op": "ext.lora",
+      "params": {
+        "sf": "7",
+        "bw": "125000",
+        "cr": "1",
+        "sync": "0x12"
+      }
+    }
+  ],
+  "expect": {
+    "noError": true,
+    "fieldContains": {
+      "text": [
+        "sdrflex lora fixture"
+      ],
+      "hex": [
+        "736472666c6578206c6f726120666978747572"
+      ]
+    },
+    "everyRecord": {
+      "sf": "^7$",
+      "cr": "^4/5$"
+    },
+    "note": "The frame count is not pinned and neither is the payload length. The capture is three transmissions, gr-lora_sdr finds each more than once at the tail of the zero padding, and the last one runs off the end of the span a byte or two short \u2014 all of which is its own frame detection doing its job on a span that was cut somewhere. What matters is that every record carries the same payload and the same parameters."
+  }
+}

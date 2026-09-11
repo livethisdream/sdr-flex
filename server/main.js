@@ -20,6 +20,7 @@ import { accept } from './wsserver.js';
 import { Session } from './session.js';
 import { Library } from './library.js';
 import { PluginDir } from './plugindir.js';
+import * as adapters from './adapters.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -151,6 +152,11 @@ export function createServer({ webDir, captureDir, quiet, ringDir, pluginDir } =
 }
 
 export function start(cfg = CONFIG) {
+  // Ask every decoder whether it is here, now, rather than on somebody's first click.
+  // Most answer instantly — a name on PATH — but a GNU Radio flowgraph has to be probed
+  // by asking an interpreter to import a module, which is half a second each, and the
+  // palette asks for this synchronously.
+  const decoders = adapters.warm();
   const hosts = pickAddresses(cfg.bind);
   // One listener per address, sharing one set of handlers. Node binds a server to a
   // single address, and the alternative — 0.0.0.0 — is every interface on the machine,
@@ -173,6 +179,9 @@ export function start(cfg = CONFIG) {
       const n = new PluginDir(cfg.pluginDir).list().length;
       log(`${n} plugin${n === 1 ? '' : 's'} in ${cfg.pluginDir}`);
     }
+    const all = adapters.list();
+    log(`${decoders} of ${all.length} external decoders installed: ` +
+        (all.filter((a) => a.available).map((a) => a.name).join(', ') || 'none'));
     const host = hosts[0].host;
     if (hosts.some((h) => h.host === '0.0.0.0')) {
       // Inside a container this is correct and says nothing about the host: what the

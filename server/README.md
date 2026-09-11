@@ -228,12 +228,42 @@ program and the decoder appears in the menu wherever its input type fits.
 | dump1090 | IQ | `dump1090`, `dump1090-mutability`, `dump1090-fa` | `dump1090-mutability` | ADS-B |
 | direwolf | audio | `direwolf` | `direwolf` | APRS / AX.25 |
 | minimodem | audio | `minimodem` | `minimodem` | RTTY, Bell 103/202, any N-baud FSK |
+| LoRa | IQ | a GNU Radio module | see below | LoRa — chirp spread spectrum, SF7 to SF12 |
 
-All five at once:
+The first five at once:
 
 ```sh
 sudo apt install rtl-433 multimon-ng dump1090-mutability direwolf minimodem
 ```
+
+### Decoders that are GNU Radio flowgraphs
+
+Most modern decoding in this field ships as a GNU Radio out-of-tree module rather than a
+standalone program — LoRa, M17, TEMPEST, satellite telemetry. Those are reached the same
+way as everything else: a flowgraph is a program, samples in on stdin and records out on
+stdout ([ADR-0032](../docs/adr/0032-a-flowgraph-is-a-program.md)). The flowgraphs ship in
+`server/flowgraphs/`.
+
+```sh
+sudo apt install gnuradio gnuradio-dev cmake g++ pybind11-dev python3-pil
+git clone https://github.com/tapparelj/gr-lora_sdr && cd gr-lora_sdr
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DPYTHON_EXECUTABLE=$(which python3.12)
+cmake --build build -j && sudo cmake --install build && sudo ldconfig
+```
+
+**Mind which Python.** GNU Radio builds its bindings against one CPython, and a machine
+can have five. If `python3 -c "import gnuradio.gr"` fails but `python3.12 -c ...` works,
+that is the reason — build the module with `-DPYTHON_EXECUTABLE` pointing at the one that
+works, and the adapter will find it. The adapter tries `python3.12`, `python3.11`,
+`python3.10`, `python3` in that order and reports the *module* as missing rather than the
+interpreter, because installing Python is never the fix.
+
+Checking the module is installed costs about half a second, so it is done once when the
+server starts rather than on the first click. The startup banner says how many decoders
+are actually here.
+
+The container images do not carry GNU Radio — it is about a gigabyte. A decoder whose
+module is missing is still listed, greyed, naming what to install.
 
 An adapter lists more than one binary where the program has more than one name: the
 same dump1090 is `dump1090-mutability` on Debian and `dump1090-fa` from FlightAware, and
