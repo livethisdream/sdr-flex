@@ -21,6 +21,7 @@ as they are, and the server is Node's own `http`, `net` and `crypto`. Node 22 or
 | `SDRFLEX_CAPTURES` | `./captures` | Directory of captures to offer |
 | `SDRFLEX_WEB` | `../web` | The client to serve |
 | `SDRFLEX_RINGS` | the system temp directory | Where live recordings are kept |
+| `SDRFLEX_PLUGINS` | `../web/plugins` | Decoders the box offers every tab |
 
 ## In a container, on a tailnet
 
@@ -171,6 +172,23 @@ particular is worth checking first:
   why — and the fix is a scale factor, not a redesign. `iio_attr -u ip:192.168.2.1 -c
   ad9361-phy voltage0` will tell you what the channel actually reports.
 
+## Decoders
+
+Two places a decoder can come from, with deliberately different trust stories:
+
+- **The box.** Every `.js` file in `SDRFLEX_PLUGINS` is sent to every tab that connects
+  and loaded there. Those are the operator's own files — the same trust as the capture
+  directory — and it is how a decoder that ships with the tool is actually in the tool.
+- **Your browser.** A file dropped on the window is kept in that browser and nowhere
+  else, so it survives a reload without putting code on a machine other people reach.
+
+Neither changes where a decoder *runs*: always in the tab, never on the server
+([ADR-0029](../docs/adr/0029-the-client-owns-the-clock.md)). Storing is not executing.
+
+A stored decoder that stops loading — edited into something broken, or rejected by a
+newer build — is forgotten rather than retried on every startup, with a notice saying
+what happened.
+
 ## Security posture, stated plainly
 
 There is no login. The network is the boundary. On a tailnet that is reasonable, because
@@ -184,6 +202,10 @@ Two things follow that are worth knowing:
 - **Plugins run in the browser, not on the server** ([ADR-0029](../docs/adr/0029-the-client-owns-the-clock.md)).
   Dropping a `.js` file executes it in your tab's sandbox. It does not execute on the
   box, and that is deliberate.
+- **Anything in `SDRFLEX_PLUGINS` runs in every connected browser.** It is a directory
+  of JavaScript that the tool hands to tabs and asks them to execute. Treat it the way
+  you would treat any directory whose contents run as you — which is to say, put your
+  own files in it.
 - **Anything that can reach the port can start a radio**, which means spawning one of
   the capture programs above and writing a ring to disk. The driver list is fixed and
   the arguments are built here rather than passed through, so this is not a way to run

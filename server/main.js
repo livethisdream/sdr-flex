@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { accept } from './wsserver.js';
 import { Session } from './session.js';
 import { Library } from './library.js';
+import { PluginDir } from './plugindir.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,6 +33,9 @@ export const CONFIG = {
   // box where /tmp is a small tmpfs, sixty seconds of 2.4 MS/s cu8 is 288 MB of RAM,
   // so this is worth being able to point at a disk.
   ringDir: process.env.SDRFLEX_RINGS || os.tmpdir(),
+  // Decoders the box offers every tab. The default is the directory in this repository,
+  // so what ships with the tool is actually in the tool.
+  pluginDir: process.env.SDRFLEX_PLUGINS || path.join(HERE, '..', 'web', 'plugins'),
 };
 
 const MIME = {
@@ -87,10 +91,12 @@ function serveStatic(req, res, webDir) {
   });
 }
 
-export function createServer({ webDir, captureDir, quiet, ringDir } = CONFIG) {
+export function createServer({ webDir, captureDir, quiet, ringDir, pluginDir } = CONFIG) {
   const log = quiet ? () => {} : (...a) => console.log('[sdr-flex]', ...a);
   const library = captureDir && fs.existsSync(captureDir) ? new Library(captureDir) : null;
   if (!library) log(`no capture directory at ${captureDir} — the synthetic scene only`);
+  const dir = pluginDir === undefined ? CONFIG.pluginDir : pluginDir;
+  const plugins = dir && fs.existsSync(dir) ? new PluginDir(dir) : null;
 
   const server = http.createServer((req, res) => serveStatic(req, res, webDir));
   // A malformed request or a client that hangs up mid-header is not news, and is
@@ -106,12 +112,13 @@ export function createServer({ webDir, captureDir, quiet, ringDir } = CONFIG) {
     if (!conn) return;
     conn.on('error', (e) => log(`socket: ${e.message}`));
     log('client connected');
-    const s = new Session(conn, { library, log, ringDir: ringDir || CONFIG.ringDir });
+    const s = new Session(conn, { library, log, pluginDir: plugins,
+                                  ringDir: ringDir || CONFIG.ringDir });
     conn.on('close', () => log('client gone'));
     return s;
   });
 
-  return { server, library, log };
+  return { server, library, plugins, log };
 }
 
 export function start(cfg = CONFIG) {
@@ -122,6 +129,10 @@ export function start(cfg = CONFIG) {
     if (library) {
       const n = library.list().length;
       log(`${n} capture${n === 1 ? '' : 's'} in ${cfg.captureDir}`);
+    }
+    if (cfg.pluginDir && fs.existsSync(cfg.pluginDir)) {
+      const n = new PluginDir(cfg.pluginDir).list().length;
+      log(`${n} plugin${n === 1 ? '' : 's'} in ${cfg.pluginDir}`);
     }
     if (host === '0.0.0.0') {
       // Inside a container this is correct and says nothing about the host: what the

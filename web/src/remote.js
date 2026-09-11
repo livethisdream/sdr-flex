@@ -144,6 +144,12 @@ export class RemoteEngine extends Graph {
     return r.captures;
   }
 
+  /** The decoder sources the box keeps, for this tab to load and run. */
+  async listPlugins() {
+    const r = await this.call('listPlugins');
+    return r.plugins;
+  }
+
   /** Every radio driver this build knows, and whether its program is installed. */
   async listRadios() {
     const r = await this.call('listRadios');
@@ -192,7 +198,12 @@ export class RemoteEngine extends Graph {
     const r = await this.call('palette', { nodeId });
     // A plugin loaded in this tab is an operation the server has never heard of, so
     // the two lists are merged here rather than there (see `runPlugin`).
+    //
+    // The node can be gone by the time the reply lands — a snapshot arrived with it
+    // removed, or it was never the server's to begin with — and a menu is not worth
+    // throwing over.
     const n = this.node(nodeId);
+    if (!n) return r.ops;
     const ext = plugins.forKind(n.out.kind)
       .map((p) => ({ id: p.id, name: p.name, group: p.group || 'Decode',
                      in: p.in, out: p.out, external: true }));

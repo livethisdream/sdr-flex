@@ -69,6 +69,7 @@ class App {
 
   async start() {
     await this.connectEngine();
+    await this.loadPlugins();
     const root = await this.engine.createSession();
     this.channel = root.id;        // where the breadcrumb is
     this.current = root.id;        // whose result is on screen
@@ -1004,12 +1005,37 @@ class App {
       this.remote = true;
       this.hasLibrary = !!hello.captures;
       this.hasRadios = !!hello.radios;
+      this.hasPluginDir = !!hello.plugins;
       remote.onStatus(({ connected }) => {
         if (!connected) this.notify('lost the engine — the page is showing its last frames', 12000);
       });
     } catch {
       // nothing there: the in-tab engine is a complete tool, not a degraded mode
     }
+  }
+
+  /**
+   * Every decoder that should already be here: the box's, then this browser's.
+   *
+   * A decoder that ships with the tool belongs in the tool, not in the repository
+   * waiting to be dropped on the window; and a file you dropped last time should not
+   * have to be dropped again because you reloaded. The box's come first so that a
+   * plugin you dropped yourself wins if the two share an id — your copy is the one you
+   * were working on.
+   */
+  async loadPlugins() {
+    const said = [];
+    if (this.hasPluginDir) {
+      try {
+        const got = await plugins.loadAll(await this.engine.listPlugins());
+        if (got.loaded.length) said.push(`${got.loaded.length} from the server`);
+        for (const f of got.failed) this.notify(`${f.filename}: ${f.error}`, 10000);
+      } catch (err) { this.notify(`could not read the server's decoders: ${err.message}`, 8000); }
+    }
+    const mine = await plugins.restore();
+    if (mine.loaded.length) said.push(`${mine.loaded.length} you dropped earlier`);
+    for (const f of mine.failed) this.notify(`${f.filename} no longer loads and was forgotten: ${f.error}`, 12000);
+    if (said.length) this.notify(`decoders ready — ${said.join(', ')}`);
   }
 
   /** The captures on the box, in the same menu everything else opens in. */
@@ -1117,10 +1143,16 @@ class App {
     if (js.length) {
       const names = [];
       for (const f of js) {
-        try { const p = await plugins.loadFile(f); names.push(p.name); }
-        catch (err) { this.notify(`${f.name}: ${err.message}`, 9000); return; }
+        try {
+          const p = await plugins.loadFile(f);
+          // Kept in this browser, not sent anywhere: a file you dropped is your choice
+          // and stays on your machine, and it is still here after a reload.
+          plugins.remember(p);
+          names.push(p.name);
+        } catch (err) { this.notify(`${f.name}: ${err.message}`, 9000); return; }
       }
-      this.notify(`loaded ${names.join(', ')} — it will appear in the menu wherever its input type fits`);
+      this.notify(`loaded ${names.join(', ')} — it is in the menu wherever its input type fits, ` +
+                  'and will still be here next time');
       this.refresh();
       return;
     }

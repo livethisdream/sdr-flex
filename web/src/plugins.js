@@ -28,6 +28,69 @@ const registry = new Map();
 export function loaded() { return [...registry.values()]; }
 export function get(id) { return registry.get(id) || null; }
 
+/**
+ * Where a plugin comes back from after a reload.
+ *
+ * There are two answers, and they have different trust stories, which is why there are
+ * two rather than one:
+ *
+ *  - **The box.** A directory on the server, listed on connect and loaded by every tab.
+ *    Those files are the operator's own — the same trust as the capture directory — and
+ *    they are how a decoder that ships with the tool is actually present in the tool
+ *    rather than sitting in the repository being nothing.
+ *  - **This browser.** A file dropped on the window is one viewer's choice, so it is
+ *    kept in that viewer's browser and nowhere else. It survives a reload without
+ *    uploading code to a machine other people can reach.
+ *
+ * Neither changes where a plugin *runs* — that is still this tab, and deliberately so
+ * (ADR-0029). Storing is not executing.
+ */
+const STORE = 'sdrflex.plugins.v1';
+
+function store() {
+  // Node, a private window, and a browser told to block site data all land here.
+  try { return globalThis.localStorage || null; } catch { return null; }
+}
+
+function readStore() {
+  try { return JSON.parse(store()?.getItem(STORE) || '[]'); } catch { return []; }
+}
+
+function writeStore(list) {
+  try { store()?.setItem(STORE, JSON.stringify(list)); } catch { /* quota, or no store */ }
+}
+
+/** Keep this one for next time. Dropped plugins only — the box keeps its own. */
+export function remember(entry) {
+  const list = readStore().filter((p) => p.id !== entry.id);
+  list.push({ id: entry.id, filename: entry.filename, source: entry.source });
+  writeStore(list);
+  return list.length;
+}
+
+export function forget(id) {
+  writeStore(readStore().filter((p) => p.id !== id));
+  registry.delete(id);
+}
+
+export function remembered() { return readStore(); }
+
+/**
+ * Load everything this browser was asked to keep.
+ *
+ * A stored plugin that no longer loads is dropped rather than retried forever: the
+ * file was edited into something broken, or a newer build rejects its manifest, and
+ * either way failing silently on every startup is worse than losing it once.
+ */
+export async function restore() {
+  const out = { loaded: [], failed: [] };
+  for (const p of readStore()) {
+    try { out.loaded.push(await loadSource(p.source, p.filename)); }
+    catch (err) { out.failed.push({ filename: p.filename, error: err.message }); forget(p.id); }
+  }
+  return out;
+}
+
 function validate(m, where) {
   const bad = (why) => { throw new Error(`${where}: ${why}`); };
   if (!m || typeof m !== 'object') bad('no manifest export');
@@ -65,6 +128,16 @@ export async function loadSource(source, filename = 'plugin.js') {
 
 export async function loadFile(file) {
   return loadSource(await file.text(), file.name);
+}
+
+/** The plugins a server keeps, loaded into this tab. Failures are reported, not thrown. */
+export async function loadAll(sources) {
+  const out = { loaded: [], failed: [] };
+  for (const s of sources || []) {
+    try { out.loaded.push(await loadSource(s.source, s.filename)); }
+    catch (err) { out.failed.push({ filename: s.filename, error: err.message }); }
+  }
+  return out;
 }
 
 /** Plugins that can sit after a node of this stream kind. */

@@ -149,9 +149,10 @@ detectors, pinned clips and auto-derived parameters all work on live signal unch
 
 ## Loose ends
 
-- Plugins do not survive a reload. `web/plugins/bbc.js` sits in the repo and nothing
-  loads it at startup. With a server this is worse than it was: a plugin now has to be
-  re-dropped in every tab, since it lives only in the tab.
+- ~~Plugins do not survive a reload.~~ Fixed: the box serves every `.js` in
+  `SDRFLEX_PLUGINS` (default `web/plugins`, so `bbc.js` is finally live) to every tab,
+  and a file dropped on the window is kept in that browser. Both still *run* in the
+  tab, never on the server.
 - That plugin has no ADR-0025 conformance fixture.
 - `web/test/plugin.mjs` (Playwright) depends on capture files that were removed in the
   security cleanup, so it fails for that reason rather than a regression. Needs

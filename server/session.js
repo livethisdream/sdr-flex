@@ -24,11 +24,12 @@ export const PROTOCOL = 1;
 const CHUNK_FLOATS = 1 << 20;
 
 export class Session {
-  constructor(conn, { library, log = () => {}, ringDir } = {}) {
+  constructor(conn, { library, log = () => {}, ringDir, pluginDir } = {}) {
     this.conn = conn;
     this.library = library;
     this.log = log;
     this.ringDir = ringDir;
+    this.pluginDir = pluginDir;
     this.engine = new Engine({ latency: false });
     this.radio = null;
     this.closed = false;
@@ -75,7 +76,8 @@ export class Session {
 
 const METHODS = {
   async hello() {
-    return { protocol: PROTOCOL, engine: 'node', captures: !!this.library, radios: true };
+    return { protocol: PROTOCOL, engine: 'node', captures: !!this.library, radios: true,
+             plugins: !!this.pluginDir };
   },
 
   async createSession() {
@@ -85,6 +87,17 @@ const METHODS = {
 
   async listCaptures() {
     return { captures: this.library ? this.library.list() : [] };
+  },
+
+  /**
+   * The plugin sources this box keeps, for the tab to load and run.
+   *
+   * Sent as text rather than served as a URL so there is one path into the loader and
+   * one place that validates a manifest, whether the file was dropped on the window or
+   * found in a directory.
+   */
+  async listPlugins() {
+    return { plugins: this.pluginDir ? this.pluginDir.list() : [] };
   },
 
   /** Every driver this build knows, and whether its program is on this box. */
