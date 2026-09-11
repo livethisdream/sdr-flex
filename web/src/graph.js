@@ -24,6 +24,10 @@ export class Graph {
     this.t = 0;            // playhead, seconds since scene start
     this.playing = true;
     this.ended = false;
+    // A pinned clip has always looped — that is what makes a 40 ms burst watchable at
+    // all. A whole capture stopping dead at its end was the odd one out, and on a
+    // fixture two thirds of a second long it is the only thing you ever see.
+    this.loop = true;
     this.capture = null;   // null means the synthetic scene
     this._last = performance.now();
   }
@@ -144,7 +148,15 @@ export class Graph {
         // and it cannot sit on a moment that has been overwritten
         if (this.t < first) this.t = first;
       } else if (this.t >= d) {
-        this.t = d; this.playing = false; this.ended = true;
+        // Looping is not the same as running past the end: the clock wraps to the
+        // start of the medium, so what scrolls past is the signal again rather than
+        // silence forever, which is the thing that looks like a stall.
+        if (this.loop && isFinite(d) && d > 0) {
+          this.t = this.t % d;
+          this.wrapped = (this.wrapped || 0) + 1;
+        } else {
+          this.t = d; this.playing = false; this.ended = true;
+        }
       }
       for (const n of this.nodes.values()) {
         const m = n.params && n.params.timeMode;

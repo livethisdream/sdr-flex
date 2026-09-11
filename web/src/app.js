@@ -77,6 +77,9 @@ class App {
   async start() {
     await this.connectEngine();
     await this.loadPlugins();
+    let want = true;
+    try { want = localStorage.getItem('sdrflex.loop') !== '0'; } catch { /* no store */ }
+    this.setLoop(want);
     const root = await this.engine.createSession();
     this.channel = root.id;        // where the breadcrumb is
     this.current = root.id;        // whose result is on screen
@@ -796,6 +799,22 @@ class App {
   notify(text, ms = 6000) {
     this._notice = { text, until: performance.now() + ms };
     this.setStageBadge(text);
+  }
+
+  /**
+   * Whether the clock wraps at the end of the capture.
+   *
+   * Remembered, because it is a working preference rather than a property of the
+   * capture: someone who wants to watch a burst over and over wants that for every
+   * capture they open next, and someone who wants the playhead to stop where the signal
+   * stopped wants that every time too.
+   */
+  setLoop(on) {
+    this.engine.loop = on;
+    if (on && this.engine.ended) { this.engine.ended = false; }
+    const b = $('#loop');
+    if (b) { b.classList.toggle('on', on); b.title = on ? 'looping — click to stop at the end' : 'stops at the end — click to loop'; }
+    try { localStorage.setItem('sdrflex.loop', on ? '1' : '0'); } catch { /* no store */ }
   }
 
   setPlaying(on) {
@@ -1706,6 +1725,8 @@ class App {
       this.metrics.render();
     };
 
+    const lb = $('#loop');
+    if (lb) lb.addEventListener('click', () => { this.setLoop(!this.engine.loop); this.metrics.interaction(); });
     $('#play').addEventListener('click', () => {
       // pressing play at the end of a file means "again", not "stay stopped"
       if (this.engine.ended && !this.engine.playing) {
@@ -1782,7 +1803,7 @@ class App {
           : `◉ ${behind.toFixed(1)} s behind live · ${held.toFixed(0)} s of history` +
             (this.engine.playing ? '' : ' · paused'));
       } else if (this.engine.ended) {
-        this.setStageBadge('⏹ end of capture — scrub back or press play to replay');
+        this.setStageBadge('⏹ end of capture — press ⟲ to loop, or scrub back');
       } else {
         this.setStageBadge(this.engine.playing ? '' : '▶ paused');
       }

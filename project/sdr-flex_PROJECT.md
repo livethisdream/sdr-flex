@@ -35,6 +35,7 @@ Working end to end:
 - Plugin framework: drop a `.js` file, it registers against a stream type (ADR-0028)
 - Dark / light / auto theme
 - Command palette with `/` search
+- Transport loops at the end of a capture by default, which a pinned clip always did
 - Wave 2 decoding: a Manchester slicer that derives its own symbol rate, differential
   (NRZ-M/S), and a framer that finds frames at any bit offset and identifies the CRC by
   trying the catalog against them
