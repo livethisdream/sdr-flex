@@ -19,7 +19,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const XML = path.join(HERE, 'support', 'pluto-context.xml');
 const PORT = 30431;               // libiio's `ip:` URI cannot carry a port
 
-/** Interleaved I/Q with a recognisable pattern, as 12-bit-in-16 words. */
+/** Interleaved I/Q with a recognizable pattern, as 12-bit-in-16 words. */
 function fakeSamples(n = 1 << 16) {
   const b = Buffer.alloc(n);
   for (let i = 0; i + 3 < n; i += 4) {

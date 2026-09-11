@@ -56,7 +56,7 @@ export class Strip {
       const shown = g.cells;
       if (!shown.length) return '';
 
-      // A run you can only read folds away entirely. The source's centre and rate are
+      // A run you can only read folds away entirely. The source's center and rate are
       // facts about the capture, not controls — they were taking a third of the bar
       // away from the things you actually turn. Nothing inline, and the facts are one
       // tap away. It keeps the shape every other run has — title, then a fold chip —

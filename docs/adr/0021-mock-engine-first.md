@@ -39,7 +39,7 @@ Concretely it buys:
 
 **This is the part that makes it honest.** A local JavaScript mock responds in
 microseconds. Tuning the interface against that produces something that feels worse
-the day it meets a real pipeline — you would have optimised against a backend that
+the day it meets a real pipeline — you would have optimized against a backend that
 cannot exist.
 
 So the mock deliberately spends the

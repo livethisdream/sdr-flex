@@ -299,10 +299,10 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   stroke-linecap:round; stroke-linejoin:round;
 }
 /* The slash is cut *out* of the icon rather than drawn over it. Laid on top it merged
-   with strokes of its own weight and colour, and at fourteen pixels the result was a
+   with strokes of its own weight and color, and at fourteen pixels the result was a
    blob rather than a crossed-out loop. The bar is translucent over a blur, so a
-   knock-out line in a background colour would be the wrong colour — a mask needs no
-   colour at all and stays right in both themes. */
+   knock-out line in a background color would be the wrong color — a mask needs no
+   color at all and stays right in both themes. */
 .tbtn.loop svg .slash { display:none; }
 .tbtn.loop:not(.on) svg g { mask:url(#noloop); }
 .tbtn.loop:not(.on) svg .slash { display:inline; }
@@ -367,6 +367,9 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .ctx-i.stub { color:var(--dim); cursor:default; }
 .ctx-i.stub:hover { background:transparent; color:var(--dim); font-weight:400; }
 .ctx-i .ext { margin-left:auto; font-family:var(--mono); font-size:.54rem; color:var(--warn); letter-spacing:.08em; }
+/* A decoder you added, rather than one that shipped. Same badge slot, different word —
+   because when one misbehaves, which of the two it is decides where to look. */
+.ctx-i .ext.mine { color:var(--accent); }
 .ctx-i .soon { margin-left:auto; font-family:var(--mono); font-size:.54rem; color:var(--faint); }
 .ctx-none { padding:.5rem .6rem; color:var(--dim); font-size:.72rem; }
 
@@ -583,7 +586,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .strip::-webkit-scrollbar { display:none; }
 /* the last pill fades out rather than being cut off mid-word */
 .strip.more-right { -webkit-mask-image:linear-gradient(90deg, #000 calc(100% - 26px), transparent); mask-image:linear-gradient(90deg, #000 calc(100% - 26px), transparent); }
-/* Baseline, not centre. The group title is a much smaller box than the pills beside
+/* Baseline, not center. The group title is a much smaller box than the pills beside
    it, so centring the boxes drops its text about two pixels below theirs — three
    different baselines in a row of type that is meant to read as one line. */
 .pgroup { display:flex; align-items:baseline; gap:.35rem; flex:none; }
@@ -600,7 +603,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   /* A shared baseline is correct and still reads wrong here. These are small caps
      beside figures half again their size: with no descenders and a short cap height,
      the label's visual mass sits lower than the numbers' and the eye reads it as
-     sagging. Optical centres differ by about a pixel at these sizes, so it is lifted
+     sagging. Optical centers differ by about a pixel at these sizes, so it is lifted
      by one. Units keep the true baseline — "50.0 kHz" is a number and its unit, and
      those belong on one line for real. */
   position:relative; top:-1px;

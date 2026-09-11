@@ -26,7 +26,7 @@ Three things language does that no menu can:
 2. **It solves the unknown-unknowns problem** — the exact discoverability gap the
    contextual menu has ([ADR-0018](0018-contextual-menus-and-view-tabs.md)). You can
    ask for something whose name you do not know. A menu can only show you things you
-   can already recognise.
+   can already recognize.
 3. **It answers questions, which is the genuinely new part.** *"Is that AM?"* is not a
    command. An analyst's real work is full of questions a GUI structurally cannot
    answer: what modulation is this, is this the same emitter as that one, why did my

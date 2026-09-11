@@ -9,7 +9,7 @@
 // What is implemented: the handshake, client-to-server frames including masking and
 // continuation, server-to-server-client frames unfragmented, ping/pong, close. What is
 // not: extensions (no permessage-deflate — these payloads are float samples and do not
-// compress), and subprotocol negotiation. Anything unrecognised closes the socket
+// compress), and subprotocol negotiation. Anything unrecognized closes the socket
 // rather than being guessed at.
 
 import crypto from 'node:crypto';

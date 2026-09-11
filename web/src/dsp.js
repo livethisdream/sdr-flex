@@ -1,7 +1,7 @@
 // Signal processing for the M0 mock engine.
 //
 // Everything here is honest DSP on real samples — the toy decodes an actual
-// bit pattern out of an actual OOK burst. It is small and unoptimised because
+// bit pattern out of an actual OOK burst. It is small and unoptimized because
 // the mock exists to test how the workflow feels, not to be fast (ADR-0021).
 
 // ── FFT ────────────────────────────────────────────────────────────────────
@@ -427,7 +427,7 @@ export function otsuThreshold(x) {
   // first bin. On a clean two-level signal the classes are separated by an empty
   // gap, every threshold inside that gap separates them equally well, and keeping
   // the first one puts the threshold at the bottom of the gap — hard against the
-  // noise floor, where every wiggle crosses it. The centre of the gap is the answer
+  // noise floor, where every wiggle crosses it. The center of the gap is the answer
   // a person would point at, and on noisy data where there is no plateau it is the
   // same bin the naive version picks.
   const score = new Float64Array(nb).fill(-1);
