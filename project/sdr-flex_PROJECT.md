@@ -240,6 +240,37 @@ installed skips rather than fails.
 - The flow rail. Built once, then removed: it complicated the interface without
   earning its space.
 
+- **Run it on an unfolded foldable, on the device itself.** Wanted; not planned yet.
+
+  Some of this already works and it is worth separating from the part that does not.
+  Browsing to the box from a phone works today over the tailnet, and the in-tab engine
+  is a complete tool with no server at all — so a phone can already open the tool,
+  drop a capture on it, and decode. What is new is two things.
+
+  **The screen is a shape nothing here was designed for.** The layout is responsive and
+  has been tested at 320, 390, 420, 1000 and 1100 px — all of them wide-and-short or
+  narrow-and-tall. An unfolded Pixel Fold is close to *square* and large, which is a
+  third case: the spectrum-over-waterfall split assumes vertical room is the scarce
+  thing, and the dock assumes horizontal room is. Neither assumption holds. There is
+  also the fold seam itself (`env(fold-*)`, the viewport-segments API) and the
+  fold/unfold transition, which is a live resize across a hinge rather than a rotation.
+
+  **"Locally" is the interesting half.** Two routes, and they answer different questions:
+
+  - *In-tab engine only.* Works now. No server, no install, limited to the synthetic
+    scene and files you hand it — no adapters, no radios, and the whole capture lives
+    in the tab, which is the ceiling ADR-0029 exists to remove.
+  - *Node under Termux.* The server is plain Node with no dependencies and no build
+    step, which is exactly the kind of thing that runs under Termux. That would give
+    the full engine on the phone: adapters, ring recording, and an RTL-SDR over USB
+    OTG. Untested, and the unknowns are whether `rtl_sdr` can claim a USB device under
+    Android's permission model and what Termux does about `/dev/bus/usb`.
+
+  This also changes the WebUSB calculus above. Android Chrome is the platform where
+  WebUSB has the fewest obstacles — no kernel driver to blacklist, and the permission
+  prompt is the normal way an app gets a device. If WebUSB is ever built, the phone is
+  the reason, not the laptop.
+
 ---
 
 ## Standing rules learned the hard way
