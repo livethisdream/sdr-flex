@@ -58,17 +58,46 @@ const MIME = {
  * else to begin with. Falling back to loopback if there is no tailnet is the same
  * reasoning — the safe default is the one that reaches fewest machines.
  */
-export function pickAddress(bind, interfaces = os.networkInterfaces()) {
-  if (bind && bind !== 'auto') return { host: bind, why: 'SDRFLEX_BIND' };
+/**
+ * Which addresses to answer on.
+ *
+ * Always loopback, and the tailnet too if there is one. Binding to *only* the tailnet
+ * address was the obvious reading of "do not expose this on the LAN" and it is wrong:
+ * it locks out the machine the server is running on. Under WSL, where Tailscale runs
+ * inside the distro and the browser is on Windows, that is not a corner case — it is
+ * the normal arrangement, and the symptom is a server you cannot reach from your own
+ * desktop.
+ *
+ * Loopback costs nothing. It reaches no other machine by definition, and Windows
+ * forwards its own localhost into WSL, so adding it is what makes the browser on the
+ * same computer work without opening anything up.
+ */
+export function pickAddresses(bind, interfaces = os.networkInterfaces()) {
+  if (bind && bind !== 'auto') {
+    return String(bind).split(',').map((h) => h.trim()).filter(Boolean)
+      .map((host) => ({ host, why: 'SDRFLEX_BIND' }));
+  }
+  const out = [{ host: '127.0.0.1', why: 'this machine' }];
   for (const [name, addrs] of Object.entries(interfaces)) {
     for (const a of addrs || []) {
       if (a.family !== 'IPv4' || a.internal) continue;
       // 100.64.0.0/10 is the CGNAT range Tailscale hands out
       const [o1, o2] = a.address.split('.').map(Number);
-      if (o1 === 100 && o2 >= 64 && o2 <= 127) return { host: a.address, why: `tailnet (${name})` };
+      if (o1 === 100 && o2 >= 64 && o2 <= 127) out.push({ host: a.address, why: `tailnet (${name})` });
     }
   }
-  return { host: '127.0.0.1', why: 'no tailnet found — loopback only' };
+  return out;
+}
+
+/** Kept for the single-address question: what one address would this bind to? */
+export function pickAddress(bind, interfaces = os.networkInterfaces()) {
+  const all = pickAddresses(bind, interfaces);
+  return all[all.length - 1];
+}
+
+/** Windows forwards its own localhost into the distro, which is worth saying once. */
+function underWSL() {
+  try { return /microsoft|wsl/i.test(fs.readFileSync('/proc/version', 'utf8')); } catch { return false; }
 }
 
 function serveStatic(req, res, webDir) {
@@ -122,10 +151,20 @@ export function createServer({ webDir, captureDir, quiet, ringDir, pluginDir } =
 }
 
 export function start(cfg = CONFIG) {
-  const { server, library, log } = createServer(cfg);
-  const { host, why } = pickAddress(cfg.bind);
-  server.listen(cfg.port, host, () => {
-    log(`http://${host}:${cfg.port}  — bound to ${why}`);
+  const hosts = pickAddresses(cfg.bind);
+  // One listener per address, sharing one set of handlers. Node binds a server to a
+  // single address, and the alternative — 0.0.0.0 — is every interface on the machine,
+  // which is the thing this is avoiding.
+  const servers = hosts.map(() => createServer(cfg));
+  const { library, log } = servers[0];
+  let listening = 0;
+
+  const banner = () => {
+    if (++listening < servers.length) return;
+    for (const { host, why } of hosts) log(`http://${host}:${cfg.port}  — ${why}`);
+    if (underWSL() && hosts.some((h) => h.host === '127.0.0.1')) {
+      log('under WSL: Windows reaches that first address as http://localhost:' + cfg.port);
+    }
     if (library) {
       const n = library.list().length;
       log(`${n} capture${n === 1 ? '' : 's'} in ${cfg.captureDir}`);
@@ -134,7 +173,8 @@ export function start(cfg = CONFIG) {
       const n = new PluginDir(cfg.pluginDir).list().length;
       log(`${n} plugin${n === 1 ? '' : 's'} in ${cfg.pluginDir}`);
     }
-    if (host === '0.0.0.0') {
+    const host = hosts[0].host;
+    if (hosts.some((h) => h.host === '0.0.0.0')) {
       // Inside a container this is correct and says nothing about the host: what the
       // host exposes is the port publish, and compose scopes that to one address.
       // Outside one it means every interface on the machine, which is a different
@@ -144,12 +184,14 @@ export function start(cfg = CONFIG) {
         log('is the port publish, so keep it scoped to the tailnet address');
       } else {
         log('WARNING: bound to every interface on this machine. There is no');
-        log('         authentication in front of this. On a tailnet, set SDRFLEX_BIND');
-        log('         to the 100.x address instead.');
+        log('         authentication in front of this. Leaving SDRFLEX_BIND unset');
+        log('         answers on loopback and the tailnet only.');
       }
     }
-  });
-  return server;
+  };
+
+  servers.forEach((s, i) => s.server.listen(cfg.port, hosts[i].host, banner));
+  return servers[0].server;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) start();

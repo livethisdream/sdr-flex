@@ -85,9 +85,11 @@ All of this is now in the tree and tested; it is written up as
 - **Captures stay on the box**: the library is a directory scan, the client names a
   capture by id, and a path outside the directory is refused. Dropping a capture file
   on a remote engine says so and opens the library instead.
-- **Bind defaults to the tailnet interface**, falling back to loopback — never to every
-  interface. The compose port publish is scoped to one host address so forgetting to
-  set it fails closed.
+- **Bind answers on loopback and the tailnet**, never the LAN and never every
+  interface. Binding to *only* the tailnet was the first attempt and locked the server
+  out of its own machine — under WSL, with Tailscale inside the distro and the browser
+  on Windows, that is the normal arrangement rather than a corner case. The compose
+  port publish is still scoped to one host address so forgetting to set it fails closed.
 
 Numbers, measured on loopback:
 

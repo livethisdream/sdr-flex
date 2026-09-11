@@ -22,7 +22,7 @@ as they are, and the server is Node's own `http`, `net` and `crypto`. Node 22 or
 | Variable | Default | What it does |
 |---|---|---|
 | `SDRFLEX_PORT` | `8722` | Port to listen on |
-| `SDRFLEX_BIND` | `auto` | Address to bind. `auto` picks the Tailscale interface if there is one, otherwise loopback — never every interface |
+| `SDRFLEX_BIND` | `auto` | Addresses to answer on. `auto` means loopback *and* the tailnet if there is one — never the LAN, never every interface. A comma-separated list is allowed |
 | `SDRFLEX_CAPTURES` | `./captures` | Directory of captures to offer |
 | `SDRFLEX_WEB` | `../web` | The client to serve |
 | `SDRFLEX_RINGS` | the system temp directory | Where live recordings are kept |
@@ -126,8 +126,14 @@ No WSL, no container, no namespace to cross. If Tailscale is running on Windows 
 also the only arrangement where the tailnet address is found automatically, because it
 is the machine that has one.
 
-**If you would rather run it in WSL**, the problem is that WSL2 sits behind its own NAT
-and cannot reach the Windows host's Pluto adapter. Pick the smallest fix that works:
+**Running the server in WSL with Tailscale inside WSL** works without anything special:
+it answers on loopback as well as the tailnet, and Windows forwards its own localhost
+into the distro, so Chrome on Windows reaches it at `http://localhost:8722` while your
+phone reaches it at the `100.x` address. It says both on startup.
+
+**If you would rather run it in WSL**, the remaining problem is the Pluto: WSL2 sits
+behind its own NAT and cannot reach the Windows host's Pluto adapter. Pick the smallest
+fix that works:
 
 - **Forward the port from Windows.** `iiod` listens on 30431, so one `netsh` rule makes
   it reachable without changing how anything else on the machine is networked:
