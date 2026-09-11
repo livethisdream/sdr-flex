@@ -774,11 +774,30 @@ export class MockEngine extends Graph {
   }
 
   // ── sample production ────────────────────────────────────────────────────
-  /** IQ samples out of `node`, `count` of them, ending at time `tEnd`. */
+  /**
+   * IQ samples out of `node`, `count` of them, ending at time `tEnd`.
+   *
+   * Ending at `tEnd` is the contract, and it has to hold even when the window reaches
+   * back before the start of the medium — a tuner asks for its filter's worth of extra
+   * samples ahead of every read, so the very first read of any capture reaches back
+   * past zero. Clamping the start to zero instead of padding the front silently returns
+   * a window that *ends* late by however much was clamped, and then only the first
+   * chunk of a long read is shifted while every later one is not. The seam that makes
+   * duplicates the filter's length in samples, which is under a millisecond and is
+   * enough to lose a packet that happens to straddle it: at 96 kS/s the boundary falls
+   * every 0.68 s, and a fixture with two APRS frames in it decoded exactly the one that
+   * did not sit on top of one.
+   */
   _readIQ(node, tEnd, count) {
     if (node.op === 'core.source') {
-      const start = Math.max(0, Math.floor(tEnd * node.out.sampleRate) - count);
-      return this.capture ? this.capture.read(start, count) : scene.read(start, count);
+      const start = Math.floor(tEnd * node.out.sampleRate) - count;
+      const read = (a, n) => (this.capture ? this.capture.read(a, n) : scene.read(a, n));
+      if (start >= 0) return read(start, count);
+      // before the beginning is silence, which is what past the end already is
+      const have = count + start;
+      const out = new Float32Array(count * 2);
+      if (have > 0) out.set(read(0, have).subarray(0, have * 2), -start * 2);
+      return out;
     }
     const p = this.node(node.parent);
 
