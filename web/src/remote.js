@@ -288,8 +288,29 @@ export class RemoteEngine extends Graph {
     const r = await this.call('sliceBytes',
       { nodeId, at: this.effectiveTime(nodeId) }, onProgress);
     if (!r) return null;
-    n._sliced = r.sliced;
-    return n._sliced;
+    // Re-resolve: the reply carried a snapshot, so the node this started on is not the
+    // node in the graph any more. Stashing on the old object loses it silently.
+    const live = this.node(nodeId);
+    if (!live) return null;
+    live._sliced = r.sliced;
+    return live._sliced;
+  }
+
+  /**
+   * Whatever produces records for this node.
+   *
+   * A plugin runs in this tab and always has (ADR-0029). A built-in like the framer
+   * runs on the server, where the bytes already are — the split is not "local versus
+   * remote", it is "code somebody dropped versus code that shipped".
+   */
+  async runRecords(nodeId, at) {
+    const n = this.node(nodeId);
+    if (!n) return null;
+    if (n.plugin) return this.runPlugin(nodeId);
+    const r = await this.call('runRecords', { nodeId, at: at != null ? at : this.effectiveTime(nodeId) });
+    const live = this.node(nodeId);
+    if (r && live) live._records = r;
+    return r;
   }
 
   /** The decoder runs here; only its input crosses the wire, and that is kilobytes. */

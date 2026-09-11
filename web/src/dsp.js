@@ -684,3 +684,209 @@ export function findLastBurst(env, sampleRate) {
   }
   return { start, end };
 }
+
+// ── wave 2: line codes ───────────────────────────────────────────────────
+//
+// NRZ says what a bit *is*; these say how a bit was *drawn*. A slicer gets you from
+// amplitude to symbols, and then there is usually one more layer between the symbols
+// and the bits — a layer that exists because a radio link needs transitions to stay
+// synchronized and cannot afford a run of two hundred zeros.
+
+/**
+ * Manchester: every bit is a transition in the middle of its symbol.
+ *
+ * Which transition means which bit is a convention, and the two conventions are exact
+ * inverses — so nothing in the signal can tell them apart. That is not a limitation to
+ * paper over with a guess: it is decided by what the packet says, and the honest way to
+ * decide it is a sync word appearing under one convention and not the other.
+ *
+ * What the signal *can* tell you is whether the symbol rate and phase are right, and
+ * it says so loudly: a correct Manchester decode has a transition in every symbol, so
+ * counting the symbols that do not is a direct measure of how wrong you are.
+ */
+export function manchesterSlice(env, threshold, sampleRate, symbolUs, opts = {}) {
+  const sps = (symbolUs * 1e-6) * sampleRate;
+  const half = sps / 2;
+  const empty = { bytes: new Uint8Array(0), bits: 0, violations: 0, symbols: 0,
+                  phase: 0, syncAt: -1, sps, polarity: opts.polarity || 'ieee' };
+  if (!(half >= 1) || !env.length) return empty;
+
+  const ieee0 = (opts.polarity || 'ieee') === 'ieee';
+  const sample = (i) => env[Math.max(0, Math.min(env.length - 1, Math.round(i)))] > threshold ? 1 : 0;
+
+  /** Decode on a grid starting at `off`, and count the symbols that broke the rule. */
+  const tryPhase = (off) => {
+    const bits = [];
+    let violations = 0;
+    for (let pos = off; pos + sps <= env.length; pos += sps) {
+      const a = sample(pos + half * 0.5), b = sample(pos + half * 1.5);
+      if (a === b) { violations++; bits.push(a); continue; }
+      bits.push(ieee0 ? (a === 0 ? 1 : 0) : (a === 0 ? 0 : 1));
+    }
+    return { bits, violations };
+  };
+
+  // Phase, chosen by counting violations rather than by how far the samples land from
+  // the threshold.
+  //
+  // There are two grids a half-symbol apart, and they are not equivalent: the wrong one
+  // pairs the back half of each symbol with the front half of the next, which decodes
+  // to nonsense. Scoring by distance from the threshold cannot tell them apart, because
+  // both sample the middle of a half-symbol either way — so it picked between them
+  // essentially at random, and the symptom was a decoder that recovered a packet at 30%
+  // noise and lost it at 10%.
+  //
+  // Violations *can* tell them apart, and decisively: the right grid has a transition
+  // in every symbol by construction, and the wrong one violates whenever consecutive
+  // bits differ — which is every symbol of an alternating preamble. Searching the full
+  // symbol period rather than half of it is the other half of the same bug.
+  const tries = Math.max(8, Math.min(64, Math.round(sps)));
+  let bestPhase = 0, best = null;
+  for (let k = 0; k < tries; k++) {
+    const off = (k / tries) * sps;
+    const got = tryPhase(off);
+    if (!got.bits.length) continue;
+    if (!best || got.violations < best.violations) { best = got; bestPhase = off; }
+  }
+  if (!best) return empty;
+
+  // Sampled in the middle of each half-symbol, on a fixed grid.
+  //
+  // A tracking loop was tried here and removed, and the removal is worth recording
+  // because the reasoning was wrong on the way in. The decoder was erratic — it
+  // recovered a payload at 30% noise and lost it at 10% — which looked like a timing
+  // problem, so an early-late gate went in. It did not help, because the fault was the
+  // phase search above choosing between two inequivalent grids at random. With that
+  // fixed the plain grid is stable from clean signal through 30% noise and survives a
+  // transmitter one percent fast; the loop was never needed and was never re-tried.
+  //
+  // Three percent fast still loses byte alignment. Real transmitters are crystal-locked
+  // to tens of parts per million, so that is a long way outside what hardware does; if
+  // it ever matters, the answer is a Gardner detector with tests that pin it down.
+  //
+  // The fixed grid is only as good as the symbol period it is given, which is why the
+  // estimator above refines rather than guesses: a percentile is biased low by exactly
+  // the clipping it was chosen to survive, and one sample in fifty is a two percent
+  // error that walks the sampling point out of the symbol within a hundred of them.
+  const bits = best.bits;
+  const violations = best.violations;
+
+  return { ...packBits(bits, opts), violations, symbols: bits.length,
+           phase: bestPhase, sps, polarity: ieee0 ? 'ieee' : 'thomas' };
+}
+
+/**
+ * The symbol period of a Manchester signal, from the fact that it has no long runs.
+ *
+ * A transition every symbol means a run is one half-symbol or two and never three, so
+ * the shortest run *is* the half-symbol and the distribution says whether you are
+ * looking at Manchester at all. A signal whose runs come in five different lengths is
+ * telling you it is something else.
+ */
+export function estimateManchesterSymbol(env, threshold, sampleRate) {
+  const runs = [];
+  let i = 0;
+  while (i < env.length) {
+    const high = env[i] > threshold;
+    let j = i;
+    while (j < env.length && (env[j] > threshold) === high) j++;
+    runs.push(j - i);
+    i = j;
+  }
+  // drop the first and last, which are clipped by where the window happened to start
+  const body = runs.slice(1, -1).filter((r) => r > 0);
+  if (body.length < 8) return { value: 0, confident: false, runs: body.length, agreement: 0 };
+
+  const sorted = body.slice().sort((a, b) => a - b);
+  // A first guess at the half-symbol: the 10th percentile rather than the single
+  // minimum, which one clipped edge would otherwise decide.
+  let unit = sorted[Math.floor(sorted.length * 0.1)];
+  if (!(unit > 0)) return { value: 0, confident: false, runs: body.length, agreement: 0 };
+
+  // Then refine it, because a percentile is biased low by exactly the clipping it was
+  // chosen to survive, and "low by one sample in fifty" is a two percent rate error —
+  // which over a hundred symbols walks the sampling point clean out of the symbol.
+  // The mean of the runs that *are* single units is unbiased and costs one more pass.
+  for (let pass = 0; pass < 3; pass++) {
+    let sum = 0, n = 0, sum2 = 0, n2 = 0;
+    const tol = Math.max(1, unit * 0.35);
+    for (const r of body) {
+      if (Math.abs(r - unit) <= tol) { sum += r; n++; }
+      else if (Math.abs(r - 2 * unit) <= 2 * tol) { sum2 += r; n2++; }
+    }
+    if (!n && !n2) break;
+    // Doubles carry the same information about the unit and there are usually plenty
+    // of them, so both populations vote.
+    unit = (sum + sum2 / 2) / (n + n2);
+  }
+
+  // Manchester's whole signature: every run is one unit or two, and nothing else.
+  let ones = 0, twos = 0;
+  for (const r of body) {
+    if (Math.abs(r - unit) <= Math.max(1, unit * 0.35)) ones++;
+    else if (Math.abs(r - 2 * unit) <= Math.max(1, unit * 0.35)) twos++;
+  }
+  const agreement = (ones + twos) / body.length;
+  return {
+    value: (2 * unit / sampleRate) * 1e6,      // two half-symbols, in microseconds
+    confident: agreement > 0.9 && twos > body.length * 0.05,
+    runs: body.length, agreement, unitSamples: unit,
+  };
+}
+
+/**
+ * Differential decoding: the bit is whether the line changed, not what it is.
+ *
+ * NRZ-M marks a 1 with a transition, NRZ-S marks a 0 with one. Either way the receiver
+ * stops caring which way round the wires are, which is exactly why it is used and
+ * exactly why a stream that decodes to noise sometimes decodes perfectly after this.
+ */
+export function differentialDecode(bytes, mode = 'nrz-m', opts = {}) {
+  const msbFirst = opts.msbFirst !== false;
+  const bits = unpackBits(bytes, msbFirst);
+  const out = new Array(bits.length);
+  let prev = opts.initial != null ? opts.initial : 0;
+  for (let i = 0; i < bits.length; i++) {
+    const changed = bits[i] !== prev;
+    out[i] = (mode === 'nrz-s') ? (changed ? 0 : 1) : (changed ? 1 : 0);
+    prev = bits[i];
+  }
+  return packBits(out, { msbFirst });
+}
+
+function unpackBits(bytes, msbFirst = true) {
+  const bits = new Array(bytes.length * 8);
+  for (let b = 0; b < bytes.length; b++) {
+    for (let k = 0; k < 8; k++) {
+      bits[b * 8 + k] = msbFirst ? (bytes[b] >> (7 - k)) & 1 : (bytes[b] >> k) & 1;
+    }
+  }
+  return bits;
+}
+
+/** Bits to bytes, finding a sync word first if one was given. Shared by the slicers. */
+function packBits(bits, opts = {}) {
+  const msbFirst = opts.msbFirst !== false;
+  let start = 0, syncAt = -1;
+  const sync = opts.syncBits;
+  if (sync && sync.length) {
+    outer: for (let i = 0; i + sync.length <= bits.length; i++) {
+      for (let j = 0; j < sync.length; j++) if (bits[i + j] !== sync[j]) continue outer;
+      syncAt = i;
+      start = i + sync.length;
+      break;
+    }
+  }
+  const out = new Uint8Array(Math.max(0, Math.floor((bits.length - start) / 8)));
+  for (let b = 0; b < out.length; b++) {
+    let v = 0;
+    for (let k = 0; k < 8; k++) {
+      const bit = bits[start + b * 8 + k];
+      v |= msbFirst ? (bit << (7 - k)) : (bit << k);
+    }
+    out[b] = v;
+  }
+  return { bytes: out, bits: bits.length, syncAt };
+}
+
+export { unpackBits, packBits };

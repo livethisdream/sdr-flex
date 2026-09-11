@@ -162,16 +162,23 @@ export class Graph {
   /**
    * Replace the mirrored graph with the server's, keeping what is only the client's.
    *
-   * `_t` is a clip's playhead and belongs to whoever is watching, so it survives the
-   * swap; a snapshot that reset it would jump every pinned view back to the start of
-   * its box on every parameter change.
+   * Everything `_`-prefixed is the client's own and never travels — a clip's playhead,
+   * a cached slice, a decoder's records. The snapshot deliberately omits those
+   * (`_snapshot` strips them), so a swap that did not carry them over would throw away
+   * state the server has no way to give back: a pinned view would jump to the start of
+   * its box on every parameter change, and a pane that had just finished slicing would
+   * find its results on an object nothing points at any more.
    */
   _adopt(snapshot) {
-    const keepT = new Map();
-    for (const [id, n] of this.nodes) if (n._t != null) keepT.set(id, n._t);
+    const mine = new Map();
+    for (const [id, n] of this.nodes) {
+      const priv = {};
+      for (const k of Object.keys(n)) if (k[0] === '_') priv[k] = n[k];
+      if (Object.keys(priv).length) mine.set(id, priv);
+    }
     this.nodes = new Map();
     for (const n of snapshot.nodes) {
-      if (keepT.has(n.id)) n._t = keepT.get(n.id);
+      if (mine.has(n.id)) Object.assign(n, mine.get(n.id));
       this.nodes.set(n.id, n);
     }
     this.root = snapshot.root ? this.nodes.get(snapshot.root) : null;

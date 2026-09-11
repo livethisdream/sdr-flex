@@ -35,6 +35,9 @@ Working end to end:
 - Plugin framework: drop a `.js` file, it registers against a stream type (ADR-0028)
 - Dark / light / auto theme
 - Command palette with `/` search
+- Wave 2 decoding: a Manchester slicer that derives its own symbol rate, differential
+  (NRZ-M/S), and a framer that finds frames at any bit offset and identifies the CRC by
+  trying the catalog against them
 - The engine over a WebSocket, in a container, reading captures off the box's disk —
   the page picks the server engine when one answers and the in-tab engine otherwise
 - Live radio: a capture program writes a ring recording, the engine reads it exactly as
@@ -125,6 +128,25 @@ detectors, pinned clips and auto-derived parameters all work on live signal unch
 - **The ring is scratch** — sized up front, deleted with the tab. `SDRFLEX_RINGS` points
   it at a real disk when `/tmp` is a tmpfs.
 
+## Wave 2, as built
+
+- **Manchester** derives its symbol period from the one thing a transition-per-symbol
+  line code cannot hide: runs come in exactly two lengths and never a third. It reports
+  violations, which is how a wrong rate announces itself.
+- **Polarity is not derivable** and is not pretended to be — the two conventions are
+  exact inverses, so nothing in the signal distinguishes them. A sync word does, and
+  the honest workflow is to try both and see which one finds it.
+- **The framer searches bit by bit.** Nothing makes a second packet start a whole
+  number of bytes after the first, so a byte-aligned search finds one frame in a
+  capture full of them.
+- **The CRC is derived, not configured.** Nine variants, both byte orders, against
+  every frame; an answer only counts if it validates all of them. Where frames are
+  separated by dead air it also works out where each one ends — shortest-wins, because
+  most of these CRCs check out as zero once the remainder is appended, so a frame
+  trailed by nulls validates at its true length and every pair beyond it.
+- **Length search is refused below 16 bits.** Forty trials against an 8-bit CRC finds
+  one in almost anything.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the
@@ -182,7 +204,7 @@ detectors, pinned clips and auto-derived parameters all work on live signal unch
   context, so it would force the `tailscale serve` TLS setup.
 
 - Slot-map overlay — until the CTF has been played blind.
-- Remainder of decoder wave 2: Manchester, differential, framer, CRC.
+
 - External process adapters.
 - The flow rail. Built once, then removed: it complicated the interface without
   earning its space.
@@ -190,6 +212,14 @@ detectors, pinned clips and auto-derived parameters all work on live signal unch
 ---
 
 ## Standing rules learned the hard way
+
+- **A control loop that works better with more noise is not a control loop.** An
+  early-late gate went into the Manchester slicer to fix erratic decoding; the fault
+  was actually the phase search choosing between two inequivalent grids at random.
+  Measure the thing you added against the thing you think it fixed.
+- **Node identity is not node identity once there is a server.** A snapshot replaces
+  every object, so `this.node() !== n` is always true afterwards. Compare ids, and keep
+  client-only `_` state across a swap.
 
 - **The session boundary is not a trust boundary.** Recovered flag values were once
   written into a public roadmap file and staged; symlinks naming a private repo path

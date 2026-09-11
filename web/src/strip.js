@@ -74,6 +74,7 @@ export class Strip {
   _mode(c) {
     if (c.type === 'action') return 'action';
     if (c.type === 'ro') return 'ro';
+    if (c.type === 'text') return c.canAuto ? (c.mode || 'manual') : 'plain';
     return c.canAuto ? (c.mode || 'manual') : 'plain';
   }
 
@@ -201,6 +202,14 @@ export class Strip {
     if (spec.type === 'enum') {
       body = `<div class="popopts">${spec.values.map((v) =>
         `<button class="opt${String(v) === String(spec.value) ? ' on' : ''}" data-v="${v}">${v}</button>`).join('')}</div>`;
+    } else if (spec.type === 'text') {
+      // A sync word is something you know and type, not something you slide to. It
+      // had been falling through to the numeric control, which put a range slider
+      // under a string of hex.
+      body = `<div class="poptext">
+          <input type="text" spellcheck="false" autocomplete="off"
+                 placeholder="${spec.placeholder || ''}" value="${String(spec.value ?? '')}">
+        </div>` + (spec.hint ? `<div class="popnote">${spec.hint}</div>` : '');
     } else if (spec.type === 'num') {
       const lo = spec.min != null ? spec.min : spec.value / 4;
       const hi = spec.max != null ? spec.max : spec.value * 4;
@@ -227,6 +236,13 @@ export class Strip {
 
     for (const b of this.pop.querySelectorAll('.opt')) {
       b.addEventListener('click', () => { commit(b.dataset.v); this.closePop(); });
+    }
+    const text = this.pop.querySelector('.poptext input');
+    if (text) {
+      text.addEventListener('input', () => commit(text.value));
+      text.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.closePop(); });
+      // the caret belongs here the moment it opens; there is nothing else to do in it
+      setTimeout(() => { text.focus(); text.select(); }, 0);
     }
     const range = this.pop.querySelector('input[type=range]');
     if (range) {

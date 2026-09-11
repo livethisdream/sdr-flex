@@ -9,6 +9,7 @@ import * as dsp from './dsp.js';
 import * as scene from './scene.js';
 import * as plugins from './plugins.js';
 import { Graph } from './graph.js';
+import * as frames from './frames.js';
 
 export const LATENCY = {
   paramMs: 40,        // hot parameter → visible effect
@@ -61,6 +62,21 @@ export const OPS = {
   // declared and nothing had needed until a plugin wanted somewhere to plug in.
   'core.nrz_slicer': {
     name: 'NRZ slicer', group: 'Decode', in: 'real', out: 'bytes',
+  },
+  // The third slicer, and the one whose parameters are most nearly derivable: a line
+  // code that guarantees a transition every symbol tells you its own symbol rate.
+  'core.manchester': {
+    name: 'Manchester slicer', group: 'Decode', in: 'real', out: 'bytes',
+  },
+  // A line code on top of a line code. Cheap to try, and a stream that sliced to noise
+  // sometimes reads perfectly on the other side of it.
+  'core.differential': {
+    name: 'Differential decode', group: 'Decode', in: 'bytes', out: 'bytes',
+  },
+  // Where a guess becomes a fact: a CRC that validates every frame is the only thing
+  // in the chain that answers "is this the packet" rather than "here are some bytes".
+  'core.framer': {
+    name: 'Frames & CRC', group: 'Decode', in: 'bytes', out: 'events',
   },
   // A sink is a node. A view renders what a node produced; a sink consumes it and
   // the data leaves the graph there, which is exactly what a terminal block is
@@ -276,8 +292,16 @@ export class MockEngine extends Graph {
     const n = this.node(nodeId);
     if (!n || n.out.kind !== 'bytes') return null;
     const p = this.node(n.parent);
-    const keyOf = () => ['threshold', 'symbolUs', 'syncHex', 'bitOrder']
-      .map((k) => n.params[k].value).join('|');
+
+    // Three things produce bytes now, and one of them eats bytes rather than samples.
+    // Dispatching here rather than in three near-identical methods keeps the caching,
+    // the span selection and the progress reporting in one place.
+    if (n.op === 'core.differential') return this._sliceDifferential(n, p, onProgress, at);
+
+    const keys = n.op === 'core.manchester'
+      ? ['threshold', 'symbolUs', 'polarity', 'syncHex', 'bitOrder']
+      : ['threshold', 'symbolUs', 'syncHex', 'bitOrder'];
+    const keyOf = () => keys.map((k) => n.params[k].value).join('|');
     if (n._sliced && n._sliced.key === keyOf()) return n._sliced;
 
     const fs = p.out.sampleRate;
@@ -296,24 +320,123 @@ export class MockEngine extends Graph {
       n.params.threshold = { ...n.params.threshold, value: otsu.value,
         auto: { from: `Otsu over all ${(t1 - t0).toFixed(1)} s`, hist: otsu.hist } };
     }
+    const manchester = n.op === 'core.manchester';
     if (n.params.symbolUs.mode === 'auto') {
-      const sym = dsp.estimateNrzSymbol(got.data, n.params.threshold.value, fs);
+      const sym = manchester
+        ? dsp.estimateManchesterSymbol(got.data, n.params.threshold.value, fs)
+        : dsp.estimateNrzSymbol(got.data, n.params.threshold.value, fs);
       n.params.symbolUs = { ...n.params.symbolUs,
         value: sym.value > 0 ? +sym.value.toFixed(2) : n.params.symbolUs.value,
         auto: {
-          from: sym.confident
-            ? `every run is a multiple of ${sym.value.toFixed(1)} µs (${(sym.agreement * 100).toFixed(0)}% of ${sym.runs} runs)`
-            : `shortest run over ${sym.runs} runs — they do not agree, so this is a guess`,
+          from: manchester
+            ? (sym.confident
+                // The signature of a line code with a transition every symbol: runs
+                // come in exactly two lengths and never a third.
+                ? `every run is one or two half-symbols of ${(sym.value / 2).toFixed(1)} \u00b5s ` +
+                  `(${(sym.agreement * 100).toFixed(0)}% of ${sym.runs} runs)`
+                : `runs come in more than two lengths over ${sym.runs} of them — ` +
+                  'this may not be Manchester')
+            : (sym.confident
+                ? `every run is a multiple of ${sym.value.toFixed(1)} \u00b5s (${(sym.agreement * 100).toFixed(0)}% of ${sym.runs} runs)`
+                : `shortest run over ${sym.runs} runs — they do not agree, so this is a guess`),
           confident: sym.confident,
         } };
     }
 
     const msb = n.params.bitOrder.value !== 'lsb';
     const sync = dsp.syncBitsOf(n.params.syncHex.value, msb);
-    const r = dsp.nrzSlice(got.data, n.params.threshold.value, fs, n.params.symbolUs.value,
-                           { msbFirst: msb, syncBits: sync });
+    const r = manchester
+      ? dsp.manchesterSlice(got.data, n.params.threshold.value, fs, n.params.symbolUs.value,
+                            { msbFirst: msb, syncBits: sync, polarity: n.params.polarity.value })
+      : dsp.nrzSlice(got.data, n.params.threshold.value, fs, n.params.symbolUs.value,
+                     { msbFirst: msb, syncBits: sync });
     n._sliced = { key: keyOf(), ...r, t0, t1, sampleRate: fs };
     return n._sliced;
+  }
+
+  /** Differential sits on bytes, so its input is whatever the node above it sliced. */
+  async _sliceDifferential(n, p, onProgress, at) {
+    const keyOf = () => [n.params.mode.value, n.params.bitOrder.value].join('|');
+    if (n._sliced && n._sliced.key === keyOf()) return n._sliced;
+    const src = await this.sliceBytes(p.id, onProgress, at);
+    if (!src) return null;
+    const r = dsp.differentialDecode(src.bytes, n.params.mode.value,
+                                     { msbFirst: n.params.bitOrder.value !== 'lsb' });
+    n._sliced = { key: keyOf(), ...r, t0: src.t0, t1: src.t1, sampleRate: src.sampleRate };
+    return n._sliced;
+  }
+
+  /**
+   * Frames, and the CRC that says whether they are frames at all.
+   *
+   * The CRC is derived by trying the catalog rather than configured, because it is the
+   * one check in the chain that can *confirm* a guess. Every variant against every
+   * frame is microseconds, and an answer only counts if it validates all of them — one
+   * short frame agreeing with an 8-bit CRC happens one time in 256 and means nothing.
+   */
+  async runFrames(n, at) {
+    const p = this.node(n.parent);
+    const src = await this.sliceBytes(p.id, null, at);
+    if (!src) return { records: [], error: 'nothing upstream has produced bytes yet' };
+    const t0 = performance.now();
+
+    const sync = frames.bytesOfHex(n.params.syncHex.value);
+    const found = frames.findFrames(src.bytes, {
+      syncBytes: sync, frameBytes: Math.max(0, Math.round(n.params.frameBytes.value)),
+    });
+    if (!found.length) {
+      return { records: [], ms: performance.now() - t0,
+               error: sync.length ? 'that sync word does not appear in the bytes' : 'no bytes to frame' };
+    }
+
+    let spec = null;
+    const want = n.params.crc.value;
+    if (want === 'auto') {
+      const got = frames.detectCrc(found.map((f) => f.bytes));
+      spec = got;
+      n.params.crc = { ...n.params.crc, value: 'auto',
+        auto: got
+          ? { from: got.from, confident: got.confident }
+          : { from: `nothing in the catalog validates all ${found.length} frames`, confident: false } };
+    } else if (want !== 'none') {
+      const c = frames.crcById(want);
+      if (c) spec = { ...c, littleEndian: false };
+    }
+
+    const records = found.map((f, i) => {
+      // A detected CRC can also have found where each frame really ends; the bytes
+      // after that are the gap before the next one, not part of the packet.
+      const chk = frames.checkFrame(f.bytes, spec, spec && spec.lengths ? spec.lengths[i] : 0);
+      const body = chk.checked ? f.bytes.subarray(0, chk.bodyEnd) : f.bytes;
+      const rec = {
+        text: [...body].map((x) => x.toString(16).padStart(2, '0')).join(' '),
+        at: `bit ${f.bit}`,
+        bytes: body.length,
+      };
+      // Hex is what the frame is; text is what it says. Shown when the frame is mostly
+      // printable, because when it is, that is the whole answer and reading it out of
+      // the hex by hand is a chore nobody should be doing twice.
+      const printable = [...body].filter((v) => v >= 32 && v < 127).length;
+      if (body.length && printable / body.length >= 0.75) {
+        rec.reads = [...body].map((v) => (v >= 32 && v < 127 ? String.fromCharCode(v) : '·')).join('');
+      }
+      if (chk.checked && chk.tail > 0) rec.then = `${chk.tail} B of dead air`;
+      if (chk.checked) {
+        rec.crc = chk.ok
+          ? `ok (${chk.got.toString(16).padStart(spec.width / 4, '0')})`
+          : `BAD — reads ${chk.want.toString(16).padStart(spec.width / 4, '0')}, ` +
+            `computes ${chk.got.toString(16).padStart(spec.width / 4, '0')}`;
+      }
+      return rec;
+    });
+
+    const good = spec ? records.filter((r) => /^ok/.test(r.crc || '')).length : 0;
+    return {
+      records, ms: performance.now() - t0,
+      note: spec
+        ? `${good} of ${records.length} pass ${spec.name}`
+        : `${records.length} frames, no CRC identified`,
+    };
   }
 
   /**
@@ -323,6 +446,17 @@ export class MockEngine extends Graph {
    * already computed for the view above, and the output is a handful of records. No
    * rate to negotiate, no format to convert, nothing to supervise.
    */
+  async runRecords(nodeId, at = null) {
+    const n = this.node(nodeId);
+    if (!n) return null;
+    if (n.op === 'core.framer') {
+      const out = await this.runFrames(n, at);
+      n._records = out;
+      return out;
+    }
+    return this.runPlugin(nodeId, at);
+  }
+
   async runPlugin(nodeId, at = null) {
     const n = this.node(nodeId);
     if (!n || !n.plugin) return null;
@@ -434,6 +568,37 @@ export class MockEngine extends Graph {
       };
       node.out = { kind: 'bytes', sampleRate: fs, centerHz: p.out.centerHz };
       node.label = 'NRZ';
+    } else if (op === 'core.manchester') {
+      // Same reasoning as the NRZ slicer: estimating from whatever window a display
+      // happens to be showing is estimating from the wrong samples. Derived in
+      // `sliceBytes`, over exactly the span that gets sliced.
+      node.params = {
+        threshold: param(0.5, 'auto', { from: 'not yet measured — derived when the capture is sliced' }),
+        symbolUs: param(400, 'auto', { from: 'not yet measured — derived when the capture is sliced' }),
+        // The two conventions are exact inverses, so nothing in the signal decides
+        // between them. A sync word does, and until there is one this is a coin the
+        // user flips — which is why it arrives manual rather than pretending.
+        polarity: param('ieee'),
+        syncHex: param(''),
+        bitOrder: param('msb'),
+      };
+      node.out = { kind: 'bytes', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = 'Manchester';
+    } else if (op === 'core.differential') {
+      node.params = {
+        mode: param('nrz-m'),
+        bitOrder: param('msb'),
+      };
+      node.out = { kind: 'bytes', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = 'Differential';
+    } else if (op === 'core.framer') {
+      node.params = {
+        syncHex: param(''),
+        frameBytes: param(0, 'auto', { from: 'to the next sync word' }),
+        crc: param('auto', 'auto', { from: 'not yet measured — derived from the frames' }),
+      };
+      node.out = { kind: 'events', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = 'Frames';
     } else if (plugins.get(op)) {
       const spec2 = plugins.get(op);
       node.params = {};

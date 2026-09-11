@@ -201,6 +201,12 @@ const METHODS = {
     return r ? { sliced: strip(r) } : null;
   },
 
+  /** Frames and their CRC. A built-in, so it runs where the bytes are. */
+  async runRecords({ nodeId, at }) {
+    const r = await this.engine.runRecords(nodeId, at);
+    return r || null;
+  },
+
   async readAudio({ nodeId, t0, count }) {
     return await this.engine.readAudio(nodeId, t0, count);
   },

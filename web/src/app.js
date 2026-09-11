@@ -15,6 +15,7 @@ import * as plugins from './plugins.js';
 import { AudioMixer, meterLevel } from './audio.js';
 import { COLORMAPS, cssGradient, floorColor } from './colormap.js';
 import { WINDOWS } from './dsp.js';
+import { CRCS } from './frames.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const fmtHz = (hz) => (hz / 1e6).toFixed(4);
@@ -502,6 +503,19 @@ class App {
           volume: { label: 'volume', unit: '', fmt: (v) => (v * 100).toFixed(0) + '%', step: 0.004, min: 0, max: 1, type: 'num' },
           squelch: { label: 'squelch', unit: '', fmt: (v) => (v > 0 ? v.toFixed(3) : 'off'), step: 0.0004, min: 0, max: 0.4, type: 'num' },
           gain: { label: 'gain', unit: '×', fmt: (v) => (v < 10 ? v.toFixed(1) : String(Math.round(v))), step: 0.02, min: 0.1, max: 60, type: 'num' },
+          // A sync word is typed, not slid to.
+          syncHex: { label: 'sync word', unit: '', type: 'text', placeholder: 'aa 55',
+                     hint: 'hex, as you would write it down — the bytes the packet starts with',
+                     fmt: (v) => (v ? String(v) : 'none') },
+          bitOrder: { label: 'bit order', unit: '', type: 'enum', values: ['msb', 'lsb'], fmt: String },
+          polarity: { label: 'convention', unit: '', type: 'enum', values: ['ieee', 'thomas'], fmt: String },
+          mode: { label: 'encoding', unit: '', type: 'enum', values: ['nrz-m', 'nrz-s'], fmt: String },
+          // No unit when the value is a phrase rather than a number: "to next syncB"
+          // is what a unit appended to a sentence looks like.
+          frameBytes: { label: 'frame length', unit: '', type: 'num', step: 0.2, min: 0, max: 2048,
+                        integer: true, fmt: (v) => (v > 0 ? `${v} B` : 'to next sync') },
+          crc: { label: 'CRC', unit: '', type: 'enum', fmt: String,
+                 values: ['auto', 'none', ...CRCS.map((c) => c.id)] },
         }[key] || { label: key, unit: '', fmt: String, type: 'num', step: 1 };
         nodeCells.push({
           key, ...meta, value: pr.value, mode: pr.mode, canAuto: !!pr.auto,
@@ -1192,7 +1206,11 @@ class App {
     if (!sliced || force) {
       el.innerHTML = '<div class="empty">slicing the capture…</div>';
       await this.engine.sliceBytes(n.id, () => {});
-      if (this.node() !== n) return;
+      // By id, not by identity. A remote engine replaces every node object whenever a
+      // snapshot lands (ADR-0029), so the node you were rendering is never the same
+      // object afterwards — and comparing objects meant the pane sat on "running…"
+      // forever with the answer already in hand.
+      if (!this.node() || this.node().id !== n.id) return;
     }
     const r = n._sliced;
     if (!r) { el.innerHTML = '<div class="empty">nothing to slice yet</div>'; return; }
@@ -1235,15 +1253,19 @@ class App {
     const n = this.node();
     if (!n || n.out.kind !== 'events') return;
     const el = $('#pane-events');
-    if (!n.plugin) {
+    if (!n.plugin && n.op !== 'core.framer') {
       el.innerHTML = '<div class="empty">Event streams from the built-in analyzers arrive at M4.5.</div>';
       return;
     }
     if (!n._records || force) {
       el.innerHTML = '<div class="empty">running ' + n.label + '…</div>';
       await new Promise((r) => setTimeout(r, 0));
-      await this.engine.runPlugin(n.id);
-      if (this.node() !== n) return;
+      await this.engine.runRecords(n.id);
+      // By id, not by identity. A remote engine replaces every node object whenever a
+      // snapshot lands (ADR-0029), so the node you were rendering is never the same
+      // object afterwards — and comparing objects meant the pane sat on "running…"
+      // forever with the answer already in hand.
+      if (!this.node() || this.node().id !== n.id) return;
     }
     const r = n._records || { records: [] };
     const rows = r.records.map((rec, i) => {
@@ -1256,7 +1278,7 @@ class App {
       <div class="evwrap">
         <div class="evhead">
           <b>${r.records.length} record${r.records.length === 1 ? '' : 's'}</b>
-          <span>${n.label}${r.ms != null ? ` · ${r.ms.toFixed(0)} ms` : ''}</span>
+          <span>${r.note ? r.note + ' · ' : ''}${n.label}${r.ms != null ? ` · ${r.ms.toFixed(0)} ms` : ''}</span>
           <button class="exgo" id="evrun">Run again</button>
         </div>
         ${r.error ? `<div class="everr">${r.error}</div>` : ''}
