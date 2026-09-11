@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-08 (the container, then hardware) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-11 (the third-party decoders, checked against the real programs) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
 ---
 
@@ -44,8 +44,9 @@ Working end to end:
 - Live radio: a capture program writes a ring recording, the engine reads it exactly as
   it reads a file, and you can scrub back into what already went past
 
-Tests: four Node suites (`web/test/*.test.mjs`) for pure logic, plus Playwright
-suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
+Tests: 139 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+socket, mock-versus-server parity, and every external decoder against the real program;
+plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
 
 ## Validated against the CTF captures
@@ -189,17 +190,54 @@ M4.5, and the roadmap was right that it is the best ratio in the plan.
 
 - **An adapter is a table row** in `server/adapters.js`: what to run, what samples it
   wants on stdin, how to read its output. `rtl_433`, `multimon-ng`, `dump1090`,
-  `direwolf` — four rows.
+  `direwolf`, `minimodem` — five rows.
 - **Format negotiation is derived and reported.** The engine resamples and converts the
   span to what the program wants, and the record pane says which, because it changes
   what the decoder sees.
 - **These nodes are opaque** (ADR-0013) and the tab is drawn differently for it.
 - **Adapters ship with the tool, not dropped in** — an adapter is a command line, so a
   droppable one is code execution on the box. Same line ADR-0029 drew for plugins.
-- **Verified against the real programs.** `rtl_433` and `multimon-ng` are installed in
-  the build environment, so the adapter path is tested end to end against actual
-  third-party software rather than a mock — the first piece in a while where "tested"
-  means that.
+
+### Every adapter is now checked against the real program
+
+The first four rows were written from documentation. Every one of them was wrong, and
+every one of them was wrong in a way that produces *silence* rather than an error —
+which is the worst possible failure for a decoder, because silence is also what a
+signal it does not recognize looks like:
+
+- `dump1090` is installed as `dump1090-mutability` on Debian and `dump1090-fa` from
+  FlightAware. Naming only the upstream binary meant the adapter reported "not
+  installed" on every machine that actually had it. `command` is now a list of
+  candidates and the menu names whichever one is there.
+- `--quiet` on dump1090 does not suppress the banner, it suppresses **stdout** — where
+  `--raw` puts the decodes. The shipped arguments asked for output and then turned it off.
+- `-` is not stdin to direwolf; getopt eats it and the program is left with no file
+  argument at all. The word is `stdin`.
+- direwolf opens a sound card unless a config file says otherwise, and exits with
+  "Pointless to continue without audio device" on anything headless — which is every
+  machine this runs on. The adapter now writes a per-run config (`ADEVICE stdin null`,
+  and `AGWPORT 0` / `KISSPORT 0` so a decode does not start listening on 8000 and 8001).
+- `-q hd` on direwolf suppresses exactly the decoded lines we run it for.
+- multimon-ng prints an AX.25 packet as two lines — a header and then the payload —
+  so reading it as plain lines produced one record with no message and one with no sender.
+
+`minimodem` is new, and it is the most CTF-relevant of the five: RTTY, Bell 103/202, and
+any N-baud FSK with an arbitrary tone pair. It reads through libsndfile, which refuses
+headerless samples on a pipe ("Format not recognised"), so `convert()` grew a `container`
+option that puts a WAV header in front. The header can carry a truthful length rather
+than the streaming fiction of `0xffffffff`, because the whole span is in hand before the
+program starts.
+
+**How they are checked.** `web/test/support/modulate.mjs` holds modulators that are the
+*inverse* of the decoders they feed: AX.25 with HDLC bit stuffing, NRZI and a CRC-16/X.25
+frame check; Bell 202 as an async serial line; Mode S pulse-position with a correct
+24-bit parity; DTMF; Morse. `web/test/adapters.test.mjs` builds a signal, runs the
+adapter's own `run()` on it, and asserts the text comes back. The check is two-sided: if
+a modulator drifts, the real program stops agreeing with it and says so. A program that
+is not installed is skipped, loudly.
+
+Nothing here is a protocol implementation for the tool to use. It exists so the adapters
+can be *tested* rather than assumed.
 
 **The conformance harness is in** (ADR-0025), and it covers native and external chains
 alike: `fixtures/<name>/` holds a capture, a `fixture.json` saying what it must produce
@@ -207,6 +245,36 @@ and which parameters must be *derived*, and a README with license and provenance
 captures are synthesized by `fixtures/make.mjs` from fixed seeds — CC0, byte-identical
 on regeneration, no question about who transmitted them. A fixture whose program is not
 installed skips rather than fails.
+
+Four fixtures now: `rtl433-ook-pwm`, `manchester-crc`, `aprs-afsk1200` (AX.25 over FM —
+spectrum, tuner, discriminator, direwolf, so it fails if the tuner or the decimator
+regresses) and `adsb-modes` (Mode S straight off the root with no tuner at all, 3 kB).
+`needs` in a `fixture.json` now names an *adapter* rather than a binary, since a binary
+is not one name.
+
+### The bug the APRS fixture found
+
+Worth recording, because nothing else would have found it and it was silently eating
+packets.
+
+`readSpan` walks a capture in 65536-sample chunks so the frame loop can breathe between
+them, and each chunk is an independent read that ends at its own moment. A tuner asks
+its parent for the filter's length of extra samples ahead of every read, so the *first*
+read of any capture reaches back past sample zero — and the source clamped that to zero
+rather than padding the front. A clamped read ends *late* by however much was clamped.
+So chunk one was shifted and every later chunk was not, and the seam between them
+repeated the filter's length in samples.
+
+Sixty-five samples is 0.68 ms: nothing to look at, and most of a symbol at 1200 baud.
+The APRS fixture has two frames in it and the graph decoded exactly the one that did not
+sit on top of a chunk boundary. No error anywhere, because as far as any single read
+knew, nothing had gone wrong. At 96 kS/s a boundary falls every 0.68 s; at 250 kS/s,
+every 0.26 s. Any decode of a capture longer than that was affected.
+
+Fixed in `_readIQ`: before the beginning is silence, the same way past the end already
+was. `web/test/span.test.mjs` is the regression — a tone whose phase advance is constant,
+so a repeat or a gap is a measurable step rather than something to eyeball. Reverting the
+fix fails three of its four tests.
 
 ## Wanted later
 
@@ -230,9 +298,14 @@ installed skips rather than fails.
   distro on the machine and is not worth reaching for. Written up in
   `server/README.md`.
 - **The image has never been built.** There is no Docker daemon in the environment this
-  was written in, so the `Dockerfile` and `docker-compose.yml` are unverified. The
-  runtime they describe was verified by running the server with the same environment
-  variables and capture directory. First thing to try on a real box.
+  was written in, so `Dockerfile`, `Dockerfile.radio`, `Dockerfile.decoders` and
+  `docker-compose.yml` are unverified. The runtime they describe was verified by running
+  the server with the same environment variables and capture directory, and the five
+  decoder package names were verified on Ubuntu 24.04 (all five installed and driven).
+  First thing to try on a real box.
+- **`Dockerfile.decoders` is the image for working on recordings** — the five external
+  decoders and no radio programs. `Dockerfile.radio` now carries both, because a radio
+  with nothing to decode what it hears is half a tool.
 - **History rewrite.** A commit in pushed history contains a symlink target naming a
   private repository path. The symlinks were removed in a follow-up commit and are
   gitignored, but the string remains in history. Not yet decided whether to rewrite.

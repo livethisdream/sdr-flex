@@ -1,9 +1,13 @@
-# The engine, plus the programs radios need.
+# The engine, plus the programs radios need and the decoders that read what they hear.
 #
 # The default image is Alpine and about as small as a Node image gets, because a server
 # that only reads captures needs nothing but Node. A radio needs its vendor's capture
 # program, and those live in Debian packages — so this variant trades roughly 400 MB of
 # image for the ability to plug something in.
+#
+# It carries the external decoders as well, because a radio with nothing to decode what
+# it hears is half a tool. Dockerfile.decoders has those and no radio programs, for
+# working on recordings.
 #
 #   docker compose build --build-arg ...   no: pick the file instead
 #   SDRFLEX_DOCKERFILE=Dockerfile.radio docker compose up -d --build
@@ -24,11 +28,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
+# And one package per adapter in server/adapters.js. An adapter whose program is missing
+# is still listed in the menu, greyed, naming the program it wants — so dropping any of
+# these costs a decoder rather than breaking the image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      rtl-433 \
+      multimon-ng \
+      dump1090-mutability \
+      direwolf \
+      minimodem \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --system --create-home --shell /usr/sbin/nologin sdrflex
 WORKDIR /app
 
 COPY web ./web
 COPY server ./server
+COPY fixtures ./fixtures
+COPY seed-captures.mjs ./
 
 VOLUME /captures
 ENV SDRFLEX_CAPTURES=/captures \

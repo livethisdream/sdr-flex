@@ -1,0 +1,16 @@
+{
+  "global": {
+    "core:datatype": "cu8",
+    "core:sample_rate": 96000,
+    "core:description": "Synthetic AX.25 UI frames, Bell 202 AFSK at 1200 baud, narrowband FM with 3 kHz deviation. Two frames from different callsigns. Nobody transmitted this.",
+    "core:license": "CC0-1.0",
+    "core:recorder": "sdr-flex fixtures/make.mjs (synthesized, not recorded)"
+  },
+  "captures": [
+    {
+      "core:sample_start": 0,
+      "core:frequency": 144390000
+    }
+  ],
+  "annotations": []
+}

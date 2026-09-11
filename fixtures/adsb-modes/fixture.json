@@ -1,0 +1,25 @@
+{
+  "name": "dump1090 over Mode S",
+  "why": "The one adapter that takes IQ straight off the root with no tuner and no demodulator in front of it, at a sample rate it will not negotiate. It pins two things that were wrong when the adapter was written from documentation: the program is installed as dump1090-mutability or dump1090-fa on the distributions that ship it, and --quiet does not mean 'no banner', it means 'no stdout' — which is where --raw puts the decodes.",
+  "capture": "capture.sigmf-data",
+  "needs": "ext.dump1090",
+  "chain": [
+    { "op": "ext.dump1090" }
+  ],
+  "expect": {
+    "records": 2,
+    "noError": true,
+    "texts": [
+      "8d4840d6204c448630562001163a",
+      "8dabcdef204c4486318ca0177949"
+    ],
+    "fieldContains": {
+      "icao": ["4840D6", "ABCDEF"]
+    },
+    "everyRecord": {
+      "df": "^17$",
+      "bits": "^112$"
+    },
+    "note": "Both frames carry a correct 24-bit Mode S parity, which dump1090 checks before it will believe either of them — so this is also a check that the fixture generator's CRC is right."
+  }
+}

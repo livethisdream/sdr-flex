@@ -58,6 +58,22 @@ function engineWithAdapters() {
   return e;
 }
 
+/**
+ * Is what this fixture needs on the box?
+ *
+ * `needs` names an adapter rather than a binary, because a binary is not one name: the
+ * same dump1090 is `dump1090-mutability` on Debian and `dump1090-fa` from FlightAware,
+ * and a fixture that named the upstream binary skipped itself on every machine that
+ * could actually have run it. The adapter knows its own candidates.
+ */
+function have(needs) {
+  if (adapters.ADAPTERS[needs]) return adapters.available(needs);
+  // An older fixture may still name the program. Match it against every candidate name
+  // any adapter declares, rather than against the one that happened to be found.
+  return Object.keys(adapters.ADAPTERS).some((id) =>
+    [].concat(adapters.ADAPTERS[id].command).includes(needs) && adapters.available(id));
+}
+
 const dirs = fs.existsSync(FIXTURES)
   ? fs.readdirSync(FIXTURES).filter((d) => fs.existsSync(path.join(FIXTURES, d, 'fixture.json')))
   : [];
@@ -74,7 +90,7 @@ for (const name of dirs) {
     // A fixture for a program this machine does not have is skipped rather than failed:
     // the adapter is still correct, it just cannot be exercised here, and a red suite
     // on a laptop without rtl_433 teaches people to ignore the suite.
-    if (spec.needs && !adapters.list().some((a) => a.command === spec.needs && a.available)) {
+    if (spec.needs && !have(spec.needs)) {
       t.skip(`${spec.needs} is not installed on this machine`);
       return;
     }
@@ -170,7 +186,7 @@ test('a decoder that recognizes nothing says what it saw', async (t) => {
   // made-up protocol rather than a real device, which is deliberate for the adapter
   // test and a dead end for a person. rtl_433 can measure what it saw and name the
   // decoder that would read it, which is the same answer this tool gives everywhere.
-  if (!adapters.list().some((a) => a.command === 'rtl_433' && a.available)) {
+  if (!have('ext.rtl433')) {
     t.skip('rtl_433 is not installed on this machine');
     return;
   }

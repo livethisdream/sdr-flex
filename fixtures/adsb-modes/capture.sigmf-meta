@@ -1,0 +1,16 @@
+{
+  "global": {
+    "core:datatype": "cu8",
+    "core:sample_rate": 2400000,
+    "core:description": "Synthetic Mode S extended squitter (DF17, aircraft identification) for two made-up ICAO addresses, pulse-position modulated at 1 Mbit/s with a correct 24-bit parity. Nobody transmitted this and no aircraft exists.",
+    "core:license": "CC0-1.0",
+    "core:recorder": "sdr-flex fixtures/make.mjs (synthesized, not recorded)"
+  },
+  "captures": [
+    {
+      "core:sample_start": 0,
+      "core:frequency": 1090000000
+    }
+  ],
+  "annotations": []
+}

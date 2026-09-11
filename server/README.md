@@ -221,16 +221,42 @@ External programs are run as decoders, fed a span of samples on stdin and read b
 records ([ADR-0013](../docs/adr/0013-external-decoders-as-subprocesses.md)). Install the
 program and the decoder appears in the menu wherever its input type fits.
 
-| Adapter | Needs | From | Covers |
-|---|---|---|---|
-| rtl_433 | `rtl_433` | `rtl-433` | 250+ ISM device protocols |
-| multimon-ng | `multimon-ng` | `multimon-ng` | POCSAG, FLEX, AFSK, DTMF, ZVEI |
-| dump1090 | `dump1090` | `dump1090-mutability` | ADS-B |
-| direwolf | `direwolf` | `direwolf` | APRS / AX.25 |
+| Adapter | Takes | Binary | Debian/Ubuntu package | Covers |
+|---|---|---|---|---|
+| rtl_433 | IQ | `rtl_433` | `rtl-433` | 250+ ISM device protocols |
+| multimon-ng | audio | `multimon-ng` | `multimon-ng` | POCSAG, FLEX, AFSK, DTMF, ZVEI |
+| dump1090 | IQ | `dump1090`, `dump1090-mutability`, `dump1090-fa` | `dump1090-mutability` | ADS-B |
+| direwolf | audio | `direwolf` | `direwolf` | APRS / AX.25 |
+| minimodem | audio | `minimodem` | `minimodem` | RTTY, Bell 103/202, any N-baud FSK |
+
+All five at once:
+
+```sh
+sudo apt install rtl-433 multimon-ng dump1090-mutability direwolf minimodem
+```
+
+An adapter lists more than one binary where the program has more than one name: the
+same dump1090 is `dump1090-mutability` on Debian and `dump1090-fa` from FlightAware, and
+the menu names whichever one is actually here.
+
+The ones that take audio go after a demodulator — tune the channel, drop an FM or AM
+demod on it, and they appear. The ones that take IQ go straight on the spectrum.
 
 The engine converts and resamples the span to whatever the program wants — `rtl_433`
-takes cu8 at 250 kS/s, `multimon-ng` takes signed 16-bit at 22.05 kHz — and the record
-pane says what it fed it, because that changes what the decoder sees.
+takes cu8 at 250 kS/s, `multimon-ng` takes signed 16-bit at 22.05 kHz, `minimodem`
+insists on a WAV header because it reads through libsndfile — and the record pane says
+what it fed it, because that changes what the decoder sees.
+
+Every one of these is checked against the real program rather than against its
+documentation. `node --test web/test/adapters.test.mjs` builds a signal with the
+matching modulator in `web/test/support/modulate.mjs` — AX.25 with HDLC bit stuffing and
+NRZI, Bell 202 as an async serial line, Mode S pulse-position with a correct parity —
+runs the adapter on it and asserts the text comes back. A program that is not installed
+is skipped, loudly. This is not ceremony: every one of these adapters was first written
+from documentation and every one of them was wrong in a way that produced silence
+rather than an error — a binary under a different name, a `--quiet` that turns off
+stdout rather than the banner, a `-` that getopt eats, a config file without which
+direwolf will not start on a machine with no sound card.
 
 Three things are worth knowing:
 

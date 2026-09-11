@@ -15,6 +15,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// The modulators live with the tests because that is what they are for — they are the
+// inverse of somebody else's decoder, written so an adapter can be checked rather than
+// assumed. Importing them here rather than copying them means a fixture and the test
+// that generated its signal cannot drift apart.
+import * as mod from '../web/test/support/modulate.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -142,7 +147,66 @@ function manchesterCrc() {
   return { dir, bytes, samples: n, rate };
 }
 
-for (const make of [ookPwm, manchesterCrc]) {
+// ── 3. AX.25 over FM, for direwolf and multimon-ng ───────────────────────
+// The whole external-decoder path as a person actually walks it: a span of spectrum,
+// a tuner, an FM demodulator, and then somebody else's packet decoder on the audio.
+// Everything before the adapter is this tool's own code, so the fixture fails if the
+// tuner, the decimator or the discriminator regress — and it fails by the decoder
+// saying nothing, which is exactly how it would fail for a user.
+function aprsAfsk() {
+  const rate = 96_000, centerHz = 144_390_000;   // the APRS channel in North America
+  const audioRate = 48_000, deviation = 3_000;
+  const frames = [
+    mod.ax25('N0CALL', 'APRS', '=4903.50N/07201.75W-sdrflex fixture'),
+    mod.ax25('KC1ABC', 'APRS', 'sdrflex-ax25-over-fm'),
+  ];
+  const audio = mod.afsk1200(frames, { rate: audioRate, seed: 0xa9c5 });
+
+  // Narrowband FM: the audio is the instantaneous frequency, so the phase is its
+  // integral. Upsampled by holding, which is crude and is fine — the deviation is
+  // 3 kHz against a 48 kS/s audio rate, so there is nothing up there to alias.
+  const ratio = rate / audioRate;
+  const n = Math.floor(audio.length * ratio);
+  const iq = new Float32Array(n * 2);
+  const rand = rng(0x4f19);
+  let phase = 0;
+  for (let i = 0; i < n; i++) {
+    const a = audio[Math.floor(i / ratio)] || 0;
+    phase += (2 * Math.PI * deviation * a) / rate;
+    if (phase > Math.PI) phase -= 2 * Math.PI;
+    if (phase < -Math.PI) phase += 2 * Math.PI;
+    iq[i * 2] = 0.6 * Math.cos(phase) + (rand() - 0.5) * 0.01;
+    iq[i * 2 + 1] = 0.6 * Math.sin(phase) + (rand() - 0.5) * 0.01;
+  }
+
+  const dir = path.join(HERE, 'aprs-afsk1200');
+  const bytes = writeSigmf(dir, 'capture', iq, {
+    sampleRate: rate, centerHz,
+    note: 'Synthetic AX.25 UI frames, Bell 202 AFSK at 1200 baud, narrowband FM with ' +
+          '3 kHz deviation. Two frames from different callsigns. Nobody transmitted this.',
+  });
+  return { dir, bytes, samples: n, rate };
+}
+
+// ── 4. Mode S, for dump1090 ──────────────────────────────────────────────
+// Not audio and not a tuner: dump1090 takes IQ straight off the root at the rate it
+// insists on. The fixture is tiny because Mode S is — 112 bits at a megabit is 112 µs,
+// so two frames and the air between them is a few thousand samples.
+function adsbModeS() {
+  const rate = 2_400_000, centerHz = 1_090_000_000;
+  const iq = mod.modeS([mod.adsbIdent(0x4840d6, 'SDRFLEX'), mod.adsbIdent(0xabcdef, 'SDRFLX2')],
+                       { rate, seed: 0x3a71 });
+  const dir = path.join(HERE, 'adsb-modes');
+  const bytes = writeSigmf(dir, 'capture', iq, {
+    sampleRate: rate, centerHz,
+    note: 'Synthetic Mode S extended squitter (DF17, aircraft identification) for two ' +
+          'made-up ICAO addresses, pulse-position modulated at 1 Mbit/s with a correct ' +
+          '24-bit parity. Nobody transmitted this and no aircraft exists.',
+  });
+  return { dir, bytes, samples: iq.length / 2, rate };
+}
+
+for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS]) {
   const r = make();
   console.log(`${path.basename(r.dir).padEnd(20)} ${String(r.samples).padStart(8)} samples  ` +
               `${(r.bytes / 1024).toFixed(0).padStart(4)} kB  ${(r.rate / 1e3).toFixed(0)} kS/s`);

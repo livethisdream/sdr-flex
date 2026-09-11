@@ -1,0 +1,61 @@
+# The engine, plus the decoders somebody else wrote.
+#
+# The default image is Alpine and has nothing in it but Node, because a server that
+# reads captures needs nothing else. This variant adds the five external programs the
+# adapter table in `server/adapters.js` knows how to drive — which is what turns "open
+# a capture and look at it" into "open a capture and find out what it says".
+#
+#   SDRFLEX_DOCKERFILE=Dockerfile.decoders docker compose up -d --build
+#
+# No radio programs here: this is the image for working on recordings. Dockerfile.radio
+# has both, because a radio with nothing to decode what it hears is half a tool.
+#
+# The tool still installs nothing of its own and links against none of this. Each one is
+# a program run at arm's length over a pipe, which is what keeps a GPL decoder's license
+# its own business (ADR-0015) and a segfaulting one a broken pipe rather than a dead
+# session (ADR-0013).
+
+FROM node:22-bookworm-slim
+
+# One package per adapter. Drop any of them: an adapter whose program is missing is
+# still listed in the menu, greyed, naming the program it wants.
+#
+#   rtl-433              250+ ISM device protocols, on IQ
+#   multimon-ng          POCSAG, FLEX, AFSK, DTMF, ZVEI, on audio
+#   dump1090-mutability  ADS-B, on IQ at 2.4 MS/s
+#   direwolf             APRS / AX.25, on audio
+#   minimodem            RTTY, Bell 103/202, any N-baud FSK, on audio
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      rtl-433 \
+      multimon-ng \
+      dump1090-mutability \
+      direwolf \
+      minimodem \
+      ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --system --create-home --shell /usr/sbin/nologin sdrflex
+WORKDIR /app
+
+COPY web ./web
+COPY server ./server
+COPY fixtures ./fixtures
+COPY seed-captures.mjs ./
+
+VOLUME /captures
+ENV SDRFLEX_CAPTURES=/captures \
+    SDRFLEX_PORT=8722 \
+    SDRFLEX_BIND=0.0.0.0
+
+# direwolf will not start without a config file on a machine with no sound card, and a
+# container is always that machine. The adapter writes one per run into a temp
+# directory, so this needs a writable TMPDIR and nothing else.
+ENV TMPDIR=/tmp
+
+EXPOSE 8722
+USER sdrflex
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=3s \
+  CMD node -e "fetch('http://127.0.0.1:8722/index.html').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "server/main.js"]
