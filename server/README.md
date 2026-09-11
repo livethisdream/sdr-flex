@@ -228,6 +228,7 @@ program and the decoder appears in the menu wherever its input type fits.
 | dump1090 | IQ | `dump1090`, `dump1090-mutability`, `dump1090-fa` | `dump1090-mutability` | ADS-B |
 | direwolf | audio | `direwolf` | `direwolf` | APRS / AX.25 |
 | minimodem | audio | `minimodem` | `minimodem` | RTTY, Bell 103/202, any N-baud FSK |
+| M17 | audio | `m17-demod` | build it, see below | M17 — 4FSK digital voice and data |
 | LoRa | IQ | a GNU Radio module | see below | LoRa — chirp spread spectrum, SF7 to SF12 |
 
 The first five at once:
@@ -235,6 +236,26 @@ The first five at once:
 ```sh
 sudo apt install rtl-433 multimon-ng dump1090-mutability direwolf minimodem
 ```
+
+### M17
+
+Not packaged anywhere yet, but it builds in a couple of minutes:
+
+```sh
+sudo apt install libcodec2-dev libboost-program-options-dev cmake g++
+git clone --recursive https://github.com/mobilinkd/m17-cxx-demod && cd m17-cxx-demod
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j && sudo cmake --install build
+```
+
+M17 is 4FSK on the discriminator output rather than on IQ, so it goes after an FM demod —
+tune the channel, drop an FM demod on it, and M17 appears. The record is the **link setup
+frame**: source and destination callsigns, stream type, channel access number, CRC.
+
+**It decodes the voice too, and this node does not carry it.** `m17-demod` writes 8 kHz
+audio to stdout, and the record says how many seconds of it there were. If you need to
+hear it, run `m17-demod` yourself against an exported channel. Carrying decoded audio back
+into the graph is a real gap and not a small one — see
+[ADR-0013](../docs/adr/0013-external-decoders-as-subprocesses.md).
 
 ### Decoders that are GNU Radio flowgraphs
 

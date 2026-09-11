@@ -320,6 +320,60 @@ export const ADAPTERS = {
     },
     title: ['text'],
   },
+  'ext.m17': {
+    name: 'M17', group: 'Decode', in: 'real', out: 'events',
+    command: ['m17-demod'],
+    blurb: 'M17 — 4FSK digital voice and data',
+    // M17 is 4FSK at 4800 symbols a second, and its decoder wants the discriminator
+    // output rather than IQ — so this goes after an FM demod, the way direwolf does.
+    wants: { format: 's16', rate: 48_000 },
+    params: [
+      { id: 'invert', type: 'enum', default: 'no', values: ['no', 'yes'],
+        label: 'inverted',
+        hint: 'a receiver that inverts the discriminator turns every symbol upside down; ' +
+              'if nothing decodes, this is the first thing to try' },
+      { id: 'blanker', type: 'enum', default: 'no', values: ['no', 'yes'],
+        label: 'noise blanker', hint: 'silences audio it believes is corrupt' },
+    ],
+    args: ({ params }) => [
+      '-l',                                    // the link setup frame, which is the record
+      ...(params.invert === 'yes' ? ['-i'] : []),
+      ...(params.blanker === 'yes' ? ['-b'] : []),
+    ],
+    // The one adapter whose records are not on stdout. stdout is decoded voice — 8 kHz
+    // signed 16-bit — and the link setup frame goes to stderr.
+    recordsOn: 'stderr',
+    parse: (stdout, stderr, spec, meta) => {
+      const out = [];
+      for (const raw of String(stderr).split('\n')) {
+        const line = raw.trim();
+        if (!line) continue;
+        // "SRC: AB1CDE, DEST: N0CALL, STR:V/V CAN:10, NONCE: 0000…, CRC: 4adf"
+        const m = /^SRC:\s*(\S+?),\s*DEST:\s*(\S+?),\s*(.*)$/.exec(line);
+        if (!m) continue;                      // LICH, EOS and the rest are progress
+        const rec = { text: `${m[1]} → ${m[2]}`, src: m[1], dest: m[2] };
+        for (const field of m[3].split(',')) {
+          const kv = /^\s*([A-Za-z ]+):\s*(.+?)\s*$/.exec(field);
+          if (kv) rec[kv[1].trim().toLowerCase().replace(/\s+/g, '')] = kv[2];
+        }
+        out.push(rec);
+      }
+      // A transmission with no link setup in the span is still a transmission, and an
+      // empty report would say the opposite.
+      const seconds = (meta.outBytes || 0) / 2 / 8000;
+      if (!out.length && seconds > 0.05) {
+        return { records: [], note: `${seconds.toFixed(1)} s of voice decoded, but no link ` +
+                                    'setup frame in this span — widen it to catch the start' };
+      }
+      if (out.length && seconds > 0.05) {
+        // Said rather than dropped: the voice is real and this node does not carry it.
+        out[0].voiceS = +seconds.toFixed(2);
+      }
+      return out;
+    },
+    title: ['text'],
+  },
+
   // ── and one that is not a program at all ──────────────────────────────────
   //
   // A GNU Radio flowgraph satisfies the same contract every other row does: samples in
@@ -656,8 +710,8 @@ function fmtTitle(title, o) {
  * decoded characters to stdout and the carrier report to stderr, and the report is
  * the evidence for the decode rather than noise beside it.
  */
-function readRecords(spec, stdout, stderr) {
-  const r = typeof spec.parse === 'function' ? spec.parse(stdout, stderr, spec)
+function readRecords(spec, stdout, stderr, meta = {}) {
+  const r = typeof spec.parse === 'function' ? spec.parse(stdout, stderr, spec, meta)
     : spec.parse === 'jsonl' ? parseJsonl(stdout, spec)
     : parseLines(stdout);
   // A parser may hand back a note as well as records, for the case where it *rejected*
@@ -724,14 +778,14 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
 
   return new Promise((done_) => {
     const proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '', stderr = '', done = false;
+    let stdout = '', stderr = '', outBytes = 0, done = false;
 
     const finish = async (error) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* it is a temp dir */ } }
-      const { records, note: parseNote } = readRecords(a, stdout, stderr);
+      const { records, note: parseNote } = readRecords(a, stdout, stderr, { outBytes });
 
       // Nothing recognized is a result, not a failure — but a result with no account of
       // itself is a dead end, and "I ran a decoder and it said nothing" is the least
@@ -762,11 +816,15 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
 
     const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* gone */ } finish(`${command} did not finish within ${timeoutMs / 1000}s`); }, timeoutMs);
 
-    proc.stdout.on('data', (b) => { stdout += b; });
+    // Most of these put their records on stdout. `m17-demod` puts *audio* there and its
+    // records on stderr — and a few seconds of 8 kHz audio coerced into a JavaScript
+    // string is both wrong and a way to run a server out of memory on a long capture. So
+    // an adapter can say where its records are, and the other stream is counted, not kept.
+    proc.stdout.on('data', (b) => { if (a.recordsOn === 'stderr') outBytes += b.length; else stdout += b; });
     proc.stderr.on('data', (b) => { stderr += b; });
     proc.on('error', (e) => finish(e.code === 'ENOENT'
       ? `${command} is not installed on this machine` : e.message));
-    proc.on('close', (code) => finish(code && code !== 0 && !stdout
+    proc.on('close', (code) => finish(code && code !== 0 && !stdout && !outBytes
       ? `${command} exited ${code}: ${firstLine(stderr)}` : undefined));
 
     // A decoder that stops reading — dump1090 quits once it has what it wants — closes

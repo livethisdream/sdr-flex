@@ -29,6 +29,7 @@ The mechanisms the format needs were each forced by a real adapter rather than g
 | a config file written per run | `direwolf`, which will not start without one |
 | a rate that follows a parameter | LoRa, sampled at a multiple of its bandwidth |
 | a flag omitted along with its value | `rtl_433 -R`, where "no protocol" is not "all protocols" |
+| records on stderr, because stdout is audio | `m17-demod` |
 | four different ways of reading output | all of them |
 
 One question this ADR expected to have to answer **did not come up**: how a socket

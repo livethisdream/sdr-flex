@@ -37,6 +37,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ADAPTERS, available, resolve, list, run, convert, wants as adapterWants } from '../../server/adapters.js';
 import * as mod from './support/modulate.mjs';
+import { demodulate } from '../src/engine.js';
 
 const AUDIO_RATE = 48_000;                    // what the modulators produce; convert() resamples
 
@@ -144,6 +145,56 @@ test('LoRa decodes its own transmitter, and only at the right spreading factor',
   // The control. A decoder that finds something at every setting has found nothing.
   const wrong = await at('9');
   assert.equal(wrong.records.length, 0, 'SF9 should read a SF7 frame as noise');
+});
+
+// ── the adapter whose records are not on stdout ─────────────────────────────
+
+test('M17 puts its records on stderr, because stdout is voice', () => {
+  const a = ADAPTERS['ext.m17'];
+  assert.equal(a.recordsOn, 'stderr');
+  assert.equal(typeof a.parse, 'function');
+  assert.equal(a.in, 'real', 'it reads the discriminator output, not IQ');
+  assert.equal(adapterWants(a, {}).rate, 48_000);
+  assert.ok(a.args({ params: {} }).includes('-l'), 'the link setup frame is the record');
+  assert.ok(a.args({ params: { invert: 'yes' } }).includes('-i'));
+  assert.ok(!a.args({ params: { invert: 'no' } }).includes('-i'));
+});
+
+test('M17 reads a link setup frame out of its own modulator', async (t) => {
+  if (skip(t, 'ext.m17')) return;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const data = path.join(here, '..', '..', 'fixtures', 'm17-lsf', 'capture.sigmf-data');
+  if (!fs.existsSync(data)) { t.diagnostic('skipped: no M17 fixture on disk'); return; }
+
+  // The fixture is FM-modulated IQ, so the discriminator has to run first — the same
+  // two steps the graph would build.
+  const buf = fs.readFileSync(data);
+  const iq = new Float32Array(buf.length);
+  for (let i = 0; i < buf.length; i++) iq[i] = (buf[i] - 127.5) / 127.5;
+  const audio = demodulate('core.fm_discriminator', iq, iq.length / 2, 96_000).data;
+
+  const out = await run('ext.m17', { data: audio, kind: 'real', sampleRate: 96_000,
+                                     params: { invert: 'no', blanker: 'no' }, timeoutMs: 60_000 });
+  assert.equal(out.error, undefined, out.error);
+  assert.equal(out.records.length, 1, `one transmission, one link setup: got ${out.records.length}`);
+  const r = out.records[0];
+  assert.equal(r.src, 'AB1CDE');
+  assert.equal(r.dest, 'N0CALL');
+  assert.match(r.text, /AB1CDE → N0CALL/);
+  assert.ok(r.crc, 'and the frame check it reported');
+  // The voice is real and this node does not carry it, which is said rather than dropped.
+  assert.ok(r.voiceS > 0.5, `${r.voiceS} s of voice decoded alongside it`);
+});
+
+test('M17 given something that is not M17 finds nothing, and does not error', async (t) => {
+  if (skip(t, 'ext.m17')) return;
+  const rand = mod.rng(0xbeef);
+  const noise = new Float32Array(48_000);
+  for (let i = 0; i < noise.length; i++) noise[i] = (rand() - 0.5) * 0.8;
+  const out = await run('ext.m17', { data: noise, kind: 'real', sampleRate: 48_000,
+                                     params: {}, timeoutMs: 30_000 });
+  assert.equal(out.records.length, 0);
+  assert.equal(out.error, undefined, `noise is a result, not a failure: ${out.error}`);
 });
 
 // ── the WAV wrapper, which is why minimodem works at all ────────────────────

@@ -93,6 +93,7 @@ Everything required, with `rtl_433` as the example:
 | `parse` | `jsonl` — one JSON object per line — or `lines` |
 | `title` | which field is the headline of a record, in order of preference |
 | `sweep` | what "try everything" means for this decoder, used by **Identify** |
+| `recordsOn` | `"stderr"`, for a program whose stdout is not records — see below |
 
 **A flag whose value is empty is left out, with its flag.** That is what the `if` form is
 for: "restrict to one protocol" and "restrict to no protocol" are different command
@@ -106,6 +107,27 @@ lines, and `-R ''` is neither of them.
 
 That is LoRa: sampled at a whole multiple of its bandwidth, so the bandwidth knob decides
 what the decoder is fed.
+
+## When the records are not on stdout
+
+`m17-demod` writes decoded **voice** to stdout and its link setup frame to stderr. Set
+`"recordsOn": "stderr"` and the engine stops keeping stdout — it counts the bytes and
+hands the count to your parser instead. That is not tidiness: a few seconds of 8 kHz audio
+coerced into a JavaScript string is wrong, and on a long capture it is a way to run the
+server out of memory.
+
+```js
+recordsOn: 'stderr',
+parse: (stdout, stderr, spec, meta) => {
+  const seconds = meta.outBytes / 2 / 8000;
+  // …read the records out of stderr…
+}
+```
+
+**Say what you dropped.** The M17 adapter puts the decoded duration on the record, because
+"there were two seconds of voice here and this node does not carry it" is useful and
+silence is not. Carrying decoded audio back into the graph is a real gap; an adapter
+produces records today.
 
 ## When a manifest is not enough
 

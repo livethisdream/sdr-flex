@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-11 (decoders checked for real, `Identify`, GNU Radio, local adapters) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-11 (decoders checked for real, `Identify`, GNU Radio, local adapters, M17) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
 ---
 
@@ -43,14 +43,14 @@ Working end to end:
   the page picks the server engine when one answers and the in-tab engine otherwise
 - Live radio: a capture program writes a ring recording, the engine reads it exactly as
   it reads a file, and you can scrub back into what already went past
-- Six external decoders — rtl_433, multimon-ng, dump1090, direwolf, minimodem, and LoRa
-  as a GNU Radio flowgraph — each checked against the real program, not its documentation
+- Seven external decoders — rtl_433, multimon-ng, dump1090, direwolf, minimodem, M17, and
+  LoRa as a GNU Radio flowgraph — each checked against the real program, not its docs
 - `Identify`: one button runs every decoder that could read this stream and says what
   each found, what it declined to try, and what it decoded but refuses to count
 - Decoders you add yourself: a directory of manifests in `SDRFLEX_ADAPTERS`, badged
   "yours" in the menu — `docs/10-adding-a-decoder.md` is the contract
 
-Tests: 184 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 190 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -394,6 +394,37 @@ draw, and which would make this tool the GUI gr-tempest is missing. Not done. Th
 alternative is the native raster fold, which was tried far enough to show structure and
 not a picture.
 
+## M17, as built
+
+The third adapter shape, and the one that forced a change to the contract.
+
+`m17-cxx-demod` builds in a couple of minutes from source — not packaged anywhere, but
+it needs only libcodec2 and boost. It is a plain CLI, so no GNU Radio involved. M17 is
+4FSK on the **discriminator output** rather than on IQ, so it goes after an FM demod, the
+way direwolf does. The record is the link setup frame: source and destination callsigns,
+stream type, channel access number, CRC.
+
+**The contract change:** `m17-demod` writes decoded *voice* to stdout and its records to
+**stderr**. Every other adapter is the other way around. So a row may now say
+`recordsOn: 'stderr'`, and the engine stops accumulating stdout — it counts the bytes and
+hands the count to the parser. That is not tidiness: a few seconds of 8 kHz audio coerced
+into a JavaScript string is wrong, and on a long capture it is a way to run the server out
+of memory.
+
+**The gap this exposes, stated rather than hidden:** the voice is real and the node does
+not carry it. The record says how many seconds there were, which is better than dropping
+it silently, but carrying decoded audio back into the graph is a real missing feature and
+not a small one. An adapter produces records today.
+
+`fixtures/m17-lsf` is `m17-mod`'s own output, FM-modulated — same reasoning as LoRa, since
+the alternative is implementing M17's convolutional coding, interleaving, scrambling and
+Golay-protected link setup in JavaScript to test somebody else's M17 decoder. The vocoder
+input is a tone pattern, not speech: ADR-0025 exists to keep recordings of people out of
+the repository. Controls: noise decodes to nothing without erroring, and the chain runs
+spectrum → tuner → discriminator → decoder, so it fails the way a user would see it.
+
+`Identify` finds it behind the FM demod and ranks it first, in 862 ms.
+
 ## Local adapters, as built
 
 ADR-0026, which had been Proposed since the beginning and deferred "until three adapters
@@ -442,9 +473,9 @@ house rule.
 - **The CTF's remaining modulations.** The 2026 challenge list is NBFM, WBFM, USB/LSB, CW,
   FHSS, OFDM, FSK, M17, AFSK1200, APRS, ADS-B, BBC (gr-bbc), the AOL handshake, CDMA,
   FLEX/POCSAG, LoRa and TEMPEST (gr-tempest). Covered and verified: AFSK1200/APRS, ADS-B,
-  FLEX/POCSAG, CW, FSK, LoRa. Have a node but never tested against a real signal of that
+  FLEX/POCSAG, CW, FSK, LoRa, M17. Have a node but never tested against a real signal of that
   kind: NBFM, USB/LSB, WBFM — and WBFM has no de-emphasis, so broadcast audio will sound
-  wrong. Nothing at all: M17, BBC, TEMPEST, CDMA, OFDM, FHSS, the AOL handshake.
+  wrong. Nothing at all: BBC, TEMPEST, CDMA, OFDM, FHSS, the AOL handshake.
 - **Fold a signal into a grid.** FHSS (time × channel), OFDM (symbol × subcarrier) and
   TEMPEST (line × frame) are one operation: estimate a period, fold at it, render. The
   period auto-derived, showing its evidence (ADR-0017). FHSS then needs de-hopping —
@@ -452,6 +483,11 @@ house rule.
   chain decodes the payload, so the hop sequence and the bits come out of one capability.
   What the author wants from each: FHSS the sequence *and* the bits, OFDM a time/frequency
   grid used as a battleship board, TEMPEST the image, CDMA the bits.
+- **An adapter cannot hand audio back to the graph.** M17 decodes voice and the node
+  throws it away, saying how much there was. Every decoder that produces audio rather than
+  records — M17, and anything vocoded — is half-connected until this exists. It wants an
+  adapter whose `out` is `real` or `audio`, samples read back off stdout, and a rate
+  declared the way `wants` declares the input rate.
 - **CDMA is unscoped.** Despreading needs the PN code. If it is a standard m-sequence or
   Gold code it can be searched the way the framer searches the CRC catalog; if it is
   arbitrary, that is a different problem. Waiting on how the challenge is generated.

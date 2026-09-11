@@ -1,0 +1,26 @@
+{
+  "name": "M17 over FM",
+  "why": "The third adapter shape, and the one that forced a change to the contract: m17-demod writes decoded voice to stdout and its link setup frame to stderr, so an adapter can say where its records are and the other stream is counted rather than kept — a few seconds of audio coerced into a JavaScript string is both wrong and a way to run a server out of memory on a long capture. It also exercises the same spectrum-tuner-discriminator chain the APRS fixture does, on a signal that is 4FSK rather than AFSK.",
+  "capture": "capture.sigmf-data",
+  "needs": "ext.m17",
+  "chain": [
+    {
+      "op": "core.tuner",
+      "selection": { "f0": 144788000, "f1": 144812000 }
+    },
+    { "op": "core.fm_discriminator" },
+    { "op": "ext.m17", "params": { "invert": "no", "blanker": "no" } }
+  ],
+  "expect": {
+    "records": 1,
+    "noError": true,
+    "fieldContains": {
+      "src": ["AB1CDE"],
+      "dest": ["N0CALL"]
+    },
+    "everyRecord": {
+      "text": "AB1CDE"
+    },
+    "note": "One link setup frame per transmission, which is what M17 sends: the LSF goes out once at the start and is then repeated a fragment at a time in the LICH of every voice frame. The record carries how many seconds of voice were decoded alongside it, because this node does not carry the audio and saying so is better than dropping it silently."
+  }
+}
