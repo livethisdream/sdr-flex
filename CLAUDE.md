@@ -29,6 +29,8 @@ Then, as needed:
 
 - In a browser: serve `web/` statically, or open `web/index.html`.
 - With the engine on a box: `node server/main.js`, or see `server/README.md`.
+  `node seed-captures.mjs` first puts the shipped fixtures where the library looks,
+  so a first run has something to open.
 - With no SDR to hand: open a radio and pick "Synthetic signal" — a real process,
   paced to real time, which is how the live path is tested.
 - `?engine=mock` forces the in-tab engine. The browser tests rely on this.

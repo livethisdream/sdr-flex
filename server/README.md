@@ -8,8 +8,13 @@ mixed content and no other symptom. Same origin means there is nothing to config
 ## Directly
 
 ```
+node seed-captures.mjs     # optional: the two synthetic captures this repo ships
 node server/main.js
 ```
+
+It prints the address it bound to and why, how many captures it found, and how many
+decoders. If it says `no tailnet found — loopback only`, that is the safe default doing
+its job, not a failure.
 
 No install step. There are no dependencies — the client is ES modules the browser loads
 as they are, and the server is Node's own `http`, `net` and `crypto`. Node 22 or newer.
