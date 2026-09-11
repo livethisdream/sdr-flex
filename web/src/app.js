@@ -1293,11 +1293,19 @@ class App {
     const e = r.explained;
     if (!e) return '<div class="empty">nothing decoded — the parameters below are the thing to move</div>';
     const esc = (x) => String(x).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+    // A measurement and a guess are not the same claim and must not look the same.
+    // The pulse widths were counted; the modulation was inferred, and an inference that
+    // decodes to something is the most convincing way to be wrong.
     return `<div class="nodec">
-      <p><b>Nothing it recognizes</b>${e.summary ? ` — but it saw ${esc(e.summary)}.` : '.'}</p>
-      ${e.suggestion ? `<p class="nodec-sug">It suggests reading them with
-        <code>${esc(e.suggestion)}</code></p>
-        <button class="exgo" id="usesug">Use this decoder</button>` : ''}
+      <p><b>None of its built-in decoders matched</b>${e.measured ? ` — it measured ${esc(e.measured)}.` : '.'}</p>
+      ${e.suggestion ? `<p class="nodec-sug">${e.guess
+          ? `It <em>guesses</em> ${esc(e.guess)} and would read that with`
+          : 'It offers'}
+        <code>${esc(e.suggestion)}</code>
+        <span class="nodec-warn">A guess at the modulation that decodes to something is
+        still a guess — if what comes back is one long run of bits rather than repeating
+        packets, the modulation is wrong rather than the timings.</span></p>
+        <button class="exgo" id="usesug">Try this decoder</button>` : ''}
     </div>`;
   }
 

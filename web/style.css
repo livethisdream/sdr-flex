@@ -590,6 +590,8 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   overflow-wrap:anywhere;
 }
 .nodec .exgo { margin-top:.3rem; }
+.nodec em { font-style:normal; color:var(--bright); border-bottom:1px dotted var(--dim); }
+.nodec-warn { display:block; margin-top:.45rem; color:var(--dim); font-size:.78rem; line-height:1.45; }
 
 .pop {
   position:fixed; z-index:60; min-width:190px; max-width:260px;

@@ -184,7 +184,9 @@ test('a decoder that recognizes nothing says what it saw', async (t) => {
   const r = await e.runRecords(n.id, 0.05);
   assert.equal(r.records.length, 0, 'with no flex spec it should recognize nothing');
   assert.ok(r.explained, 'and it should still have something to say');
-  assert.match(r.explained.summary, /pulses at/);
+  assert.match(r.explained.measured, /pulses at/);
+  // the modulation is reported as the guess it is, separately from the measurements
+  assert.ok(r.explained.guess, 'it should say what it guessed, not fold it into the facts');
   assert.ok(r.explained.suggestion && r.explained.suggestion.includes('m=OOK'),
     `no usable suggestion: ${JSON.stringify(r.explained)}`);
 

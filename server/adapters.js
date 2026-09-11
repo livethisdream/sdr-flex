@@ -82,11 +82,14 @@ export const ADAPTERS = {
           .map((m) => `${m[2]} µs ×${m[1]}`);
         const guess = /Guessing modulation:\s*(.+)/.exec(clean);
         if (!pulses.length && !suggestion) return null;
+        // Two different kinds of claim, kept apart on purpose. The pulse widths are
+        // measurements and can be relied on. The modulation is an inference — rtl_433
+        // says "Guessing modulation" and it is right to — and on a signal that is PWM
+        // it will happily guess Manchester, produce a decode, and the decode will not
+        // be the message. Presenting both as "it suggests" was overstating half of it.
         return {
-          summary: [
-            pulses.length ? `pulses at ${[...new Set(pulses)].slice(0, 4).join(', ')}` : null,
-            guess ? `it guesses ${guess[1].trim()}` : null,
-          ].filter(Boolean).join('; '),
+          measured: pulses.length ? `pulses at ${[...new Set(pulses)].slice(0, 4).join(', ')}` : null,
+          guess: guess ? guess[1].trim() : null,
           suggestion: suggestion ? suggestion[1] : null,
         };
       },
