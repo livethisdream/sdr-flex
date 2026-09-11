@@ -17,6 +17,7 @@
 import { MockEngine as Engine } from '../web/src/engine.js';
 import { encode, decode } from '../web/src/proto.js';
 import { Radio, list as listDrivers } from './radio.js';
+import * as adapters from './adapters.js';
 
 export const PROTOCOL = 1;
 
@@ -31,11 +32,43 @@ export class Session {
     this.ringDir = ringDir;
     this.pluginDir = pluginDir;
     this.engine = new Engine({ latency: false });
+    // Somebody else's decoders, offered to the graph. Only the server can know which of
+    // them are installed, and only the server can run one (ADR-0013).
+    this.engine.adapters = adapters.list();
+    this.engine.adapter = (id) => (adapters.ADAPTERS[id] ? { id, ...adapters.ADAPTERS[id] } : null);
+    this.engine.runAdapter = (n, at) => this._runAdapter(n, at);
     this.radio = null;
     this.closed = false;
 
     conn.on('message', (buf) => this._onMessage(buf));
     conn.on('close', () => { this.closed = true; this.dispose(); });
+  }
+
+  /**
+   * Feed an external decoder the span its parent can see.
+   *
+   * The whole span, not a display window: these programs are written to read a file to
+   * the end and exit, and a decoder given the two hundred milliseconds that happen to
+   * be on screen finds nothing and says nothing about why.
+   */
+  async _runAdapter(n, at) {
+    const e = this.engine;
+    const p = e.node(n.parent);
+    if (!p) return { records: [], error: 'nothing upstream' };
+    const pin = e.isPinned(p.id);
+    const now = at != null ? at : e.t;
+    const t0 = pin ? pin.params.t0.value : 0;
+    const t1 = pin ? pin.params.t1.value : (isFinite(e.duration()) ? e.duration() : now);
+    const got = await e.readSpan(p.id, t0, t1);
+    if (!got) return { records: [], error: 'nothing upstream has produced samples yet' };
+
+    const params = {};
+    for (const [k, v] of Object.entries(n.params)) params[k] = v.value;
+    const out = await adapters.run(n.adapter, {
+      data: got.data, kind: got.kind, sampleRate: got.sampleRate,
+      centerHz: p.out.centerHz, params,
+    });
+    return { ...out, note: `${out.note} · ${(t1 - t0).toFixed(1)} s` };
   }
 
   dispose() {
@@ -77,7 +110,8 @@ export class Session {
 const METHODS = {
   async hello() {
     return { protocol: PROTOCOL, engine: 'node', captures: !!this.library, radios: true,
-             plugins: !!this.pluginDir };
+             plugins: !!this.pluginDir,
+             adapters: adapters.list().filter((a) => a.available).length };
   },
 
   async createSession() {

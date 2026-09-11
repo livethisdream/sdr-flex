@@ -1,0 +1,16 @@
+{
+  "global": {
+    "core:datatype": "cu8",
+    "core:sample_rate": 200000,
+    "core:description": "Synthetic OOK-modulated Manchester, 500 µs symbols, 0x2dd4 sync, CRC-16/CCITT-FALSE, three payloads repeated three times, with dead air between.",
+    "core:license": "CC0-1.0",
+    "core:recorder": "sdr-flex fixtures/make.mjs (synthesized, not recorded)"
+  },
+  "captures": [
+    {
+      "core:sample_start": 0,
+      "core:frequency": 433920000
+    }
+  ],
+  "annotations": []
+}

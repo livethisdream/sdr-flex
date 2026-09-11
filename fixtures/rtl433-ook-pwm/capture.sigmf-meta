@@ -1,0 +1,16 @@
+{
+  "global": {
+    "core:datatype": "cu8",
+    "core:sample_rate": 250000,
+    "core:description": "Synthetic OOK PWM: 250 µs pulse = 0, 500 µs = 1, 250 µs gap, 6 ms between packets. Two 24-bit words repeated four times.",
+    "core:license": "CC0-1.0",
+    "core:recorder": "sdr-flex fixtures/make.mjs (synthesized, not recorded)"
+  },
+  "captures": [
+    {
+      "core:sample_start": 0,
+      "core:frequency": 433920000
+    }
+  ],
+  "annotations": []
+}

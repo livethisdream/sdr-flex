@@ -189,6 +189,35 @@ A stored decoder that stops loading — edited into something broken, or rejecte
 newer build — is forgotten rather than retried on every startup, with a notice saying
 what happened.
 
+## Decoders somebody else wrote
+
+External programs are run as decoders, fed a span of samples on stdin and read back as
+records ([ADR-0013](../docs/adr/0013-external-decoders-as-subprocesses.md)). Install the
+program and the decoder appears in the menu wherever its input type fits.
+
+| Adapter | Needs | From | Covers |
+|---|---|---|---|
+| rtl_433 | `rtl_433` | `rtl-433` | 250+ ISM device protocols |
+| multimon-ng | `multimon-ng` | `multimon-ng` | POCSAG, FLEX, AFSK, DTMF, ZVEI |
+| dump1090 | `dump1090` | `dump1090-mutability` | ADS-B |
+| direwolf | `direwolf` | `direwolf` | APRS / AX.25 |
+
+The engine converts and resamples the span to whatever the program wants — `rtl_433`
+takes cu8 at 250 kS/s, `multimon-ng` takes signed 16-bit at 22.05 kHz — and the record
+pane says what it fed it, because that changes what the decoder sees.
+
+Three things are worth knowing:
+
+- **These nodes are opaque.** You cannot drill into somebody else's decoder, adjust its
+  slicer, or annotate a stage inside it, and the tab is drawn differently to say so.
+  That is the trade for 250 protocols; the native chain is there for when you need to
+  *understand* a decode rather than get one.
+- **Adapters ship with the tool.** They are a table in `server/adapters.js`, not
+  something you drop in. An adapter is a command line, so a droppable one would be
+  arbitrary code execution on the box — the same reason dropped plugins run in your
+  browser instead.
+- **A missing program is still listed**, greyed, naming what it wants.
+
 ## Security posture, stated plainly
 
 There is no login. The network is the boundary. On a tailnet that is reasonable, because

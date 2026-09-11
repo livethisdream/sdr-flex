@@ -15,8 +15,13 @@ Then, as needed:
 
 - **American spelling** in code, comments, docs and UI.
 - No build step in the web client. Plain ES modules, static hosting.
-- **Never commit capture files, flag values, or paths naming a private repository.**
+- **Never commit recorded captures, flag values, or paths naming a private repository.**
   `.githooks/pre-commit` rejects flag-shaped strings; it is a backstop, not the control.
+  The one exception is `fixtures/`, which ADR-0025 requires: those captures are
+  *synthesized* by `fixtures/make.mjs` from fixed seeds, carry a license and a
+  provenance note, and are capped at a few hundred kB. Nobody transmitted them, so
+  there is nothing in one that could have been overheard. A capture off the air does
+  not go in the repository — it goes in the capture directory, which is gitignored.
 - Measure before adjusting anything visual. Element rectangles are not baselines.
 - Every auto-derived parameter shows the evidence for its value (ADR-0017).
 

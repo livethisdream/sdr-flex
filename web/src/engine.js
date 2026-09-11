@@ -89,10 +89,10 @@ export const OPS = {
   'core.export': {
     name: 'Export', group: 'Export', in: '*', out: 'file',
   },
-  'ext.rtl433': {
-    name: 'rtl_433', group: 'Decode', in: 'iq', out: 'events',
-    external: true, stub: true,
-  },
+  // The external decoders are not listed here. Which of them exist depends on what is
+  // installed on the box, which only the engine can know, so `palette` asks the adapter
+  // table rather than this one — and a decoder whose program is missing is still shown,
+  // saying which program (ADR-0013).
   'core.burst_detector': {
     name: 'Burst detector', group: 'Analyze', in: 'iq', out: 'events',
     stub: true,
@@ -454,6 +454,11 @@ export class MockEngine extends Graph {
       n._records = out;
       return out;
     }
+    if (n.adapter && this.runAdapter) {
+      const out = await this.runAdapter(n, at);
+      n._records = out;
+      return out;
+    }
     return this.runPlugin(nodeId, at);
   }
 
@@ -477,13 +482,21 @@ export class MockEngine extends Graph {
     const built = Object.entries(OPS)
       .filter(([, o]) => o.in === '*' || o.in === n.out.kind)
       .map(([id, o]) => ({ id, ...o }));
+    // Somebody else's decoders, if this build has a table of them. Marked external and
+    // opaque: you cannot see inside one, and the UI says so rather than implying you
+    // could have (ADR-0013).
+    const ext = (this.adapters || [])
+      .filter((a) => a.in === '*' || a.in === n.out.kind)
+      .map((a) => ({ id: a.id, name: a.name, group: a.group, in: a.in, out: a.out,
+                     external: true, opaque: true, blurb: a.blurb,
+                     stub: !a.available, needs: a.command }));
     // A loaded plugin is an operation like any other — same menu, same filter on
     // stream type, marked so you can see it came from outside (ADR-0013's opacity
     // rule, applied to a kind that is not opaque at all).
-    const ext = plugins.forKind(n.out.kind)
+    const pl = plugins.forKind(n.out.kind)
       .map((p) => ({ id: p.id, name: p.name, group: p.group || 'Decode',
                      in: p.in, out: p.out, external: true }));
-    return built.concat(ext);
+    return built.concat(ext, pl);
   }
 
   // ── nodes ────────────────────────────────────────────────────────────────
@@ -496,7 +509,9 @@ export class MockEngine extends Graph {
     const p = this.node(parent);
     // Everything below that estimates from the signal estimates at this moment.
     const now = at != null ? at : this.effectiveTime(parent);
-    const spec = OPS[op] || plugins.get(op);
+    // Three places an operation can come from: built in, somebody else's program, or a
+    // file dropped on the window.
+    const spec = OPS[op] || (this.adapter && this.adapter(op)) || plugins.get(op);
     if (!spec) throw new Error(`no operation ${op}`);
     const node = {
       id: nid('n'), parent, op, label: '', params: {}, out: null, stub: !!spec.stub,
@@ -599,6 +614,25 @@ export class MockEngine extends Graph {
       };
       node.out = { kind: 'events', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'Frames';
+    } else if (this.adapter && this.adapter(op)) {
+      const a = this.adapter(op);
+      node.params = {};
+      // The knobs travel with the node rather than living in a table the client would
+      // have to keep in step: an adapter's parameters are its own business, and the
+      // strip should be able to draw one it has never heard of.
+      node.paramMeta = {};
+      for (const pm of a.params || []) {
+        node.params[pm.id] = param(pm.default, 'manual');
+        node.paramMeta[pm.id] = { label: pm.label || pm.id, type: pm.type || 'text',
+                                  placeholder: pm.placeholder, hint: pm.hint, values: pm.values };
+      }
+      node.out = { kind: a.out, sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = a.name;
+      node.adapter = op;
+      // Opaque on purpose: there is no drilling into somebody else's decoder, its
+      // provenance is approximate, and the UI is required to look different because of
+      // it. That is the price of 250 protocols for 60 lines (ADR-0013).
+      node.opaque = true;
     } else if (plugins.get(op)) {
       const spec2 = plugins.get(op);
       node.params = {};

@@ -147,6 +147,31 @@ detectors, pinned clips and auto-derived parameters all work on live signal unch
 - **Length search is refused below 16 bits.** Forty trials against an 8-bit CRC finds
   one in almost anything.
 
+## Third-party decoders, as built
+
+M4.5, and the roadmap was right that it is the best ratio in the plan.
+
+- **An adapter is a table row** in `server/adapters.js`: what to run, what samples it
+  wants on stdin, how to read its output. `rtl_433`, `multimon-ng`, `dump1090`,
+  `direwolf` — four rows.
+- **Format negotiation is derived and reported.** The engine resamples and converts the
+  span to what the program wants, and the record pane says which, because it changes
+  what the decoder sees.
+- **These nodes are opaque** (ADR-0013) and the tab is drawn differently for it.
+- **Adapters ship with the tool, not dropped in** — an adapter is a command line, so a
+  droppable one is code execution on the box. Same line ADR-0029 drew for plugins.
+- **Verified against the real programs.** `rtl_433` and `multimon-ng` are installed in
+  the build environment, so the adapter path is tested end to end against actual
+  third-party software rather than a mock — the first piece in a while where "tested"
+  means that.
+
+**The conformance harness is in** (ADR-0025), and it covers native and external chains
+alike: `fixtures/<name>/` holds a capture, a `fixture.json` saying what it must produce
+and which parameters must be *derived*, and a README with license and provenance. All
+captures are synthesized by `fixtures/make.mjs` from fixed seeds — CC0, byte-identical
+on regeneration, no question about who transmitted them. A fixture whose program is not
+installed skips rather than fails.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the
@@ -204,8 +229,11 @@ detectors, pinned clips and auto-derived parameters all work on live signal unch
   context, so it would force the `tailscale serve` TLS setup.
 
 - Slot-map overlay — until the CTF has been played blind.
+- **`Identify`** — every applicable decoder in parallel over the span, with progressive
+  results. Nearly free now that one adapter works, and it is the headline interaction
+  M4.5 was aiming at. Deliberately left for its own pass.
 
-- External process adapters.
+
 - The flow rail. Built once, then removed: it complicated the interface without
   earning its space.
 

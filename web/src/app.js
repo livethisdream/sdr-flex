@@ -43,6 +43,12 @@ const defaultViewParams = () => ({
   zoomLo: 0, zoomHi: 1,
 });
 
+/** What a long free-text value looks like on a bar that has room for about twenty. */
+function shorten(v, max = 22) {
+  const s = v == null || v === '' ? 'default' : String(v);
+  return s.length <= max ? s : s.slice(0, max - 1) + '\u2026';
+}
+
 class App {
   constructor() {
     this.engine = new MockEngine();
@@ -293,7 +299,11 @@ class App {
     const items = [{ k: 'spectrum', label: 'Spectrum' }]
       .concat(blocks.map((b) => ({ k: b.id, label: this.tag(b), kind: b.out.kind, del: b.id,
                                    live: b.out.kind === 'audio' && this.mixer.has(b.id),
-                                   ext: OPS[b.op] && OPS[b.op].external })))
+                                   // ADR-0013 requires a node you cannot see inside to
+                                   // look different from one you can. `opaque` is set
+                                   // by the engine when the work happens in somebody
+                                   // else's program.
+                                   ext: !!b.opaque || !!b.plugin || !!(OPS[b.op] && OPS[b.op].external) })))
       .concat([{ k: 'flow', label: 'Flow' }]);
 
     const el = $('#tabs');
@@ -516,7 +526,14 @@ class App {
                         integer: true, fmt: (v) => (v > 0 ? `${v} B` : 'to next sync') },
           crc: { label: 'CRC', unit: '', type: 'enum', fmt: String,
                  values: ['auto', 'none', ...CRCS.map((c) => c.id)] },
-        }[key] || { label: key, unit: '', fmt: String, type: 'num', step: 1 };
+        // An adapter's parameters come with the node, since the client has no table of
+        // somebody else's decoder's knobs and should not need one.
+        }[key] || (n.paramMeta && n.paramMeta[key]
+          // A decoder's own knob, drawn from what the node carries. Long text is
+          // summarized here and read in full in the popover — an rtl_433 flex spec is
+          // sixty characters and would be the entire bar.
+          ? { unit: '', fmt: (v) => shorten(v), ...n.paramMeta[key] }
+          : { label: key, unit: '', fmt: String, type: 'num', step: 1 });
         nodeCells.push({
           key, ...meta, value: pr.value, mode: pr.mode, canAuto: !!pr.auto,
           autoNote: pr.auto ? pr.auto.from : null,
@@ -1253,7 +1270,7 @@ class App {
     const n = this.node();
     if (!n || n.out.kind !== 'events') return;
     const el = $('#pane-events');
-    if (!n.plugin && n.op !== 'core.framer') {
+    if (!n.plugin && !n.adapter && n.op !== 'core.framer') {
       el.innerHTML = '<div class="empty">Event streams from the built-in analyzers arrive at M4.5.</div>';
       return;
     }
@@ -1278,7 +1295,7 @@ class App {
       <div class="evwrap">
         <div class="evhead">
           <b>${r.records.length} record${r.records.length === 1 ? '' : 's'}</b>
-          <span>${r.note ? r.note + ' · ' : ''}${n.label}${r.ms != null ? ` · ${r.ms.toFixed(0)} ms` : ''}</span>
+          <span>${r.note || n.label}${r.ms != null ? ` · ${r.ms.toFixed(0)} ms` : ''}</span>
           <button class="exgo" id="evrun">Run again</button>
         </div>
         ${r.error ? `<div class="everr">${r.error}</div>` : ''}

@@ -1,0 +1,25 @@
+{
+  "name": "rtl_433 over OOK PWM",
+  "why": "The external adapter path end to end: a span of IQ out of the graph, converted and resampled to what rtl_433 wants on stdin, its JSON read back as records. Protects against an upstream flag change, a format-negotiation mistake, and an output parser that quietly drops the part that matters.",
+  "capture": "capture.sigmf-data",
+  "needs": "rtl_433",
+  "chain": [
+    {
+      "op": "ext.rtl433",
+      "params": {
+        "flex": "n=sdrflex_fixture,m=OOK_PWM,s=252,l=500,g=800,r=6248"
+      }
+    }
+  ],
+  "expect": {
+    "records": 2,
+    "fieldContains": {
+      "codes": [
+        "{24}4cca99",
+        "{24}3559a6"
+      ]
+    },
+    "noError": true,
+    "note": "rtl_433 groups the repeats into two OOK packages of four rows each, not one of eight. That is its own packet detection, and pinning what it actually does is the point: if a future version groups differently, this says so rather than a user discovering it."
+  }
+}

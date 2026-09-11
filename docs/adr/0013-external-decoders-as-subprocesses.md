@@ -1,6 +1,8 @@
 # ADR-0013: External decoders are first-class subprocess plugins
 
-**Status:** Accepted
+**Status:** Accepted — implemented for `rtl_433`, `multimon-ng`, `dump1090` and
+`direwolf` in `server/adapters.js`; see the note at the end for what the implementation
+settled that this record left open
 
 ## Decision
 
@@ -61,3 +63,34 @@ narrowness; offering only the opaque path is a launcher, not an analysis tool.
 
 If opaque nodes turn out to confuse users about what the tool can do, the answer is
 better UI marking, not removing the capability.
+
+---
+
+## What the implementation settled
+
+Written before there was a server. Building it changed three things worth recording.
+
+**The pipe is simpler than the manifest imagined.** Every one of these programs reads
+raw samples from stdin given a format token, and `rtl_433` in particular parses its
+input format out of the *filename or pipe spec* — `-r cu8:-`. There is no negotiation
+protocol to speak of: the adapter states what the program wants, the engine converts and
+resamples to it, and both steps are reported because both change what the decoder sees.
+"Why does rtl_433 find nothing here and everything in the same signal saved to a file"
+is otherwise a bad afternoon.
+
+**Adapters ship with the tool and are not user-supplied.** This ADR did not say either
+way. It has to: an adapter is a command line, so a droppable one is arbitrary code
+execution as the server, at the invitation of anything that can reach the port. That is
+the same line [ADR-0029](0029-the-client-owns-the-clock.md) drew when it kept dropped
+plugins running in the browser. A table in the repository, like the radio drivers.
+
+**Opacity is a flag on the node, not a separate kind of node.** `opaque` is set when the
+work happens in somebody else's program, and the tab is drawn differently for it. That
+is the whole treatment, and it is enough — the thing a person needs to know is that
+there is nothing to drill into, not that a different subsystem produced it.
+
+Two costs this record predicted turned out to be real and are worth confirming: a
+decoder's stderr is where it says the useful things, so it needs surfacing when nothing
+came back and suppressing when something did; and version drift is live from day one —
+the same fixture pins *what this version actually does*, including packet grouping we
+would not have guessed.
