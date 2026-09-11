@@ -137,20 +137,39 @@ Steps 1–2 identical. Then, on node **A**, one button: **Identify**.
 
 The engine runs every [external decoder](07-reuse.md) whose rate and format
 constraints fit this stream — `rtl_433`, `multimon-ng`, `dump1090`, and friends —
-speculatively, in parallel, over the last N seconds of ring. Then it reports which
-ones produced output:
+speculatively, in parallel, over eight seconds ending at the playhead. An audio decoder
+on a channel of IQ is tried behind each demodulator, because which one is right is the
+question being asked. Rows fill in as each one finishes:
 
 ```
-  Identify — 8 s window, 6 decoders tried
-  ─────────────────────────────────────────────────────────
-  ✓ rtl_433          41 records   Acurite-609TXC, Nexus-TH
-    multimon-ng       0 records   POCSAG1200, FLEX
-    dump1090          0 records
-  ─────────────────────────────────────────────────────────
-  [ Add rtl_433 as a node ]        [ Build a chain instead ]
+  Identify                          1.0 s of spectrum · 7 decoders
+  ──────────────────────────────────────────────────────────────────
+▎ direwolf      via FM demod                             2 records
+  N0CALL>APRS:=4903.50N/07201.75W-sdrflex fixture
+▎ multimon-ng   via FM demod                             2 records
+  =4903.50N/07201.75W-sdrflex fixture
+  direwolf      via AM demod                             0 records
+  minimodem     via FM demod                             0 records
+    locked on (1188.63 bps, confidence 3.741) but the bytes are not
+    text — a modem will find structure in almost anything
+  rtl_433                                                0 records
+  ──────────────────────────────────────────────────────────────────
+  2 decoders read something here.
+  NOT TRIED
+  dump1090  wants 2.40 MS/s and this stream is 96 kS/s — resampling
+            up 25× cannot put back bandwidth the capture never had
 ```
+
+Clicking a row builds what it describes — the demodulator, then the decoder, configured
+the way the run that answered was configured — and lands on its records.
 
 **Three interactions**, cold launch to a named device. No DSP knowledge required.
+
+Three things in that report are the whole design, and
+[ADR-0031](adr/0031-identify-says-what-it-will-not-claim.md) is about all three: what it
+declined to try and why, what it decoded but refuses to count, and how much signal it
+looked at. A ranked list with a false positive at the top is worse than no list, because
+it sends you somewhere.
 
 `Identify` is the hobbyist path, and it is deliberately a *shortcut through* the
 analyst product rather than a separate mode: it is one action on an ordinary node,

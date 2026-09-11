@@ -110,6 +110,12 @@ export const ADAPTERS = {
               'DTMF, MORSE_CW, ZVEI1/2/3, EAS, X10. Each one costs CPU, so it is a ' +
               'list rather than everything' },
     ],
+    // What "try everything" means here. `Identify` asks each adapter for the settings
+    // that make it cast the widest net it usefully can, because only the adapter knows:
+    // for multimon-ng that is a long -a list, each entry costing CPU, which is exactly
+    // the trade a speculative pass should make and a default should not.
+    sweep: { modes: 'POCSAG512 POCSAG1200 POCSAG2400 FLEX AFSK1200 AFSK2400 FSK9600 ' +
+                    'DTMF MORSE_CW ZVEI1 EAS X10' },
     args: ({ params }) => [
       '-t', 'raw',
       ...String(params.modes || 'POCSAG1200').trim().split(/\s+/).filter(Boolean).flatMap((m) => ['-a', m]),
@@ -281,10 +287,30 @@ export const ADAPTERS = {
           }
         }
       }
-      if (!text) return [];
-      // One record per line of decoded text, each carrying what the modem measured.
       const stats = ev[0] || {};
-      return text.split('\n').map((line) => ({
+      const measured = [stats.bps ? `${stats.bps} bps` : null,
+                        stats.confidence ? `confidence ${stats.confidence}` : null]
+        .filter(Boolean).join(', ');
+      if (!text) return [];
+
+      // A modem will lock onto anything. Given FM audio carrying AX.25, or noise, this
+      // one reports a carrier, a plausible bit rate and a respectable confidence, and
+      // hands back bytes — the false positive on APRS scored 3.8 against 4.9 for a real
+      // Bell 202 decode, so confidence does not separate them and nothing else it
+      // reports does either. What separates them is that one is text and the other is
+      // not, and this adapter is running in text mode, so that is a fair test.
+      //
+      // Dropping them silently would be worse than the false positive: "minimodem found
+      // nothing" and "minimodem locked on and the bytes are not text" point at different
+      // next moves. So the records go and the reason stays.
+      const lines = text.split('\n');
+      const readable = lines.filter(printableEnough);
+      if (!readable.length) {
+        return { records: [],
+                 note: `locked on (${measured || 'no statistics'}) but the bytes are not text — ` +
+                       'a modem will find structure in almost anything' };
+      }
+      return readable.map((line) => ({
         text: line,
         ...(stats.markHz ? { carrierHz: stats.markHz } : {}),
         ...(stats.confidence ? { confidence: stats.confidence } : {}),
@@ -341,7 +367,7 @@ export function list() {
       // The name it will actually run under, when there is one — a box with
       // dump1090-mutability should say so rather than claim a binary it does not have.
       command: found || commandNames(a), blurb: a.blurb, params: a.params,
-      wants: a.wants, available: found != null,
+      sweep: a.sweep || null, wants: a.wants, available: found != null,
     };
   });
 }
@@ -458,6 +484,24 @@ function parseJsonl(text, spec) {
   return out;
 }
 
+/**
+ * Is this a line of text, or a line of bytes?
+ *
+ * Printable ASCII, tab and the replacement character standing in for whatever could not
+ * be decoded as UTF-8. Four in five has to be readable; below that it is a byte dump
+ * wearing a string, and a text-mode decoder reporting it as a message is a false
+ * positive dressed as an answer.
+ */
+function printableEnough(line) {
+  if (!line.length) return false;
+  let ok = 0;
+  for (const ch of line) {
+    const c = ch.codePointAt(0);
+    if (c === 9 || (c >= 32 && c < 127)) ok++;
+  }
+  return ok / [...line].length >= 0.8;
+}
+
 function fmtTitle(title, o) {
   if (Array.isArray(title)) return title.join(' ');
   if (title != null) return String(title);
@@ -472,9 +516,13 @@ function fmtTitle(title, o) {
  * the evidence for the decode rather than noise beside it.
  */
 function readRecords(spec, stdout, stderr) {
-  if (typeof spec.parse === 'function') return spec.parse(stdout, stderr, spec);
-  if (spec.parse === 'jsonl') return parseJsonl(stdout, spec);
-  return parseLines(stdout);
+  const r = typeof spec.parse === 'function' ? spec.parse(stdout, stderr, spec)
+    : spec.parse === 'jsonl' ? parseJsonl(stdout, spec)
+    : parseLines(stdout);
+  // A parser may hand back a note as well as records, for the case where it *rejected*
+  // something the program said. Rejecting quietly would turn an informative failure back
+  // into an uninformative one.
+  return Array.isArray(r) ? { records: r, note: null } : r;
 }
 
 /** Everything else: one record per non-empty line, banners and chatter dropped. */
@@ -537,7 +585,7 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
       done = true;
       clearTimeout(timer);
       if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* it is a temp dir */ } }
-      const records = readRecords(spec, stdout, stderr);
+      const { records, note: parseNote } = readRecords(spec, stdout, stderr);
 
       // Nothing recognised is a result, not a failure — but a result with no account of
       // itself is a dead end, and "I ran a decoder and it said nothing" is the least
@@ -549,7 +597,11 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
 
       done_({
         records, ms: Date.now() - started,
-        note: `${command} · ${input.note}`,
+        note: `${command} · ${input.note}${parseNote ? ` · ${parseNote}` : ''}`,
+        // Also on its own, because a parser note is the only part of that string that
+        // is about the *signal* rather than about the plumbing, and a report with room
+        // for one line wants that line.
+        ...(parseNote ? { rejected: parseNote } : {}),
         // stderr is where these programs say the useful things — what they enabled,
         // what they could not parse — and it is only worth surfacing when nothing came
         // back, where it is usually the reason. Their banners and advice are not
@@ -608,6 +660,10 @@ const CHATTER = [
   /^rtl_433 version/i, /^Use "-F log"/i, /^\[\w+\]/, /^Registered \d+ out of/i,
   /^multimon-ng/i, /^\(C\)/, /^Available demodulators/i, /^Enabled demodulators/i,
   /^Directory .* does not exist/i, /^dump1090/i, /^Dire ?Wolf/i,
+  // minimodem frames everything it says in hashes — the carrier report is a banner and
+  // a measurement, and reporting "### NOCARRIER ndata=8 ###" as the error when a decode
+  // found nothing says less than saying nothing would.
+  /^###/,
 ];
 
 function complaint(stderr) {

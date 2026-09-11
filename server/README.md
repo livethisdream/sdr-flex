@@ -258,6 +258,32 @@ rather than an error — a binary under a different name, a `--quiet` that turns
 stdout rather than the banner, a `-` that getopt eats, a config file without which
 direwolf will not start on a machine with no sound card.
 
+### Identify — try all of them at once
+
+One button, next to the `+` on the tab strip, on any node carrying IQ or audio. It runs
+every decoder that could read the stream in front of it, over eight seconds ending at
+the playhead (or the pinned clip, if there is one), and reports what each one found.
+Rows fill in as the decoders finish. Clicking one that found something builds the chain
+it describes — the demodulator, then the decoder, with the settings that produced the
+result — and lands on its records.
+
+An audio decoder on a channel of IQ is tried behind an FM demodulator *and* an AM one,
+because which is right is the question being asked.
+
+Two parts of the report matter more than the list of hits:
+
+- **What was not tried, and why.** Not installed, wrong kind of stream, or wanting more
+  bandwidth than the capture ever had. "Nothing decoded this" and "nothing that could
+  decode this was tried" are opposite answers.
+- **What it decoded and refuses to count.** Told to try everything, multimon-ng's Morse
+  demodulator reads a noise blip as `E`, and minimodem will lock onto almost any audio
+  and hand back bytes. Both are shown with what they produced and why it does not count,
+  rather than ranked next to a real decode. See
+  [ADR-0031](../docs/adr/0031-identify-says-what-it-will-not-claim.md).
+
+It costs about 1.8 s for eight seconds at 250 kS/s and 4.8 s at 2.4 MS/s, with the first
+row back in roughly half that.
+
 Three things are worth knowing:
 
 - **These nodes are opaque.** You cannot drill into somebody else's decoder, adjust its

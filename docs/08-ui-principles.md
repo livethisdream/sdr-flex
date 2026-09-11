@@ -401,7 +401,7 @@ number below is a hard target, measured end to end, at 2.4 MS/s on a mid-range l
 | Open a 4 GB capture → overview | **< 2 s** | Pyramid read, not a scan ([ADR-0012](adr/0012-server-side-display-rendering.md)) |
 | Zoom to a new time window | **< 120 ms** | Server round trip; cached pyramid levels make small zooms instant |
 | Seek to a burst from an event row | **< 200 ms** | |
-| `Identify` over an 8 s window | **< 3 s** | Decoders run in parallel over ring data at faster-than-real-time. Progressive results — each decoder reports as it finishes, no all-or-nothing wait. |
+| `Identify` over an 8 s window | **< 3 s** | Met at channel rates and not at dongle rate: **1.8 s** for eight seconds at 250 kS/s, **4.8 s** at 2.4 MS/s (seven and eight decoders, first row back in about half that). Decoders run in parallel, the IQ is narrowed once before the audio ones see it, and results are progressive — each reports as it finishes, no all-or-nothing wait. The measured number is written down rather than rounded ([ADR-0031](adr/0031-identify-says-what-it-will-not-claim.md)). |
 | Audio glitch on a sibling edit | **0** | Fragment isolation ([ADR-0004](adr/0004-flowgraph-splitting-at-taps.md)) — this is a correctness bug, not a performance one |
 
 ### Where the 50 ms goes

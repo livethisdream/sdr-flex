@@ -2,11 +2,13 @@
 // contextual menu on drag-release, cell strip. The engine behind it is the mock
 // (ADR-0021) — the client cannot tell, which is the point.
 
-import { MockEngine, OPS, LATENCY } from './engine.js';
+import { MockEngine, OPS, LATENCY, demodsFor } from './engine.js';
 import { RemoteEngine } from './remote.js';
 import { Waterfall } from './waterfall.js';
 import { SpectrumTrace, TimeSeries, BitRaster } from './views.js';
 import { ContextMenu } from './menu.js';
+import { IdentifyPanel } from './identview.js';
+import { plan as identifyPlan } from './identify.js';
 import { Strip } from './strip.js';
 import { Metrics } from './metrics.js';
 import { fromFiles, FORMATS } from './capture.js';
@@ -57,6 +59,7 @@ class App {
     this.selection = null;
     this.metrics = new Metrics($('#metrics'));
     this.menu = new ContextMenu(document.body);
+    this.ident = new IdentifyPanel(document.body);
     this.strip = new Strip($('#strip'), $('#tip'));
     this.waterfall = new Waterfall($('#wf'), 260);
     this.trace = new SpectrumTrace($('#sp'));
@@ -318,6 +321,10 @@ class App {
       (it.del && it.k === this.tabKey()
         ? `<i class="x" data-del="${it.del}" role="button" tabindex="0" title="remove ${it.label} and everything after it">✕</i>` : '') +
       `</button>`).join('') +
+      // `+` is choosing a decoder by hand; Identify is the auto mode of the same
+      // choice (ADR-0017). They belong next to each other, and Identify has to be one
+      // click from here or UC-1' does not fit in its three interactions.
+      (this.canIdentify() ? '<button class="tab ident-btn" title="try every decoder that could read this stream">Identify</button>' : '') +
       '<button class="tab plus" title="operations valid here">+</button>';
 
     this.wireRemove(el);
@@ -334,6 +341,75 @@ class App {
       this.metrics.beginOp();
       this.openMenu(r.left, r.bottom + 4, null);
     });
+    const idb = el.querySelector('.ident-btn');
+    if (idb) idb.addEventListener('click', (e) => {
+      const r = e.target.getBoundingClientRect();
+      this.openIdentify(r.left, r.bottom + 4);
+    });
+  }
+
+  /** Is there anything here to identify, and anything on the box to do it with? */
+  canIdentify() {
+    const n = this.node();
+    if (!n || (n.out.kind !== 'iq' && n.out.kind !== 'real')) return false;
+    return (this.engine.adapters || []).some((a) => a.available);
+  }
+
+  /**
+   * Try every decoder that could read this stream.
+   *
+   * The plan is drawn before anything runs — the client has the adapter list and the
+   * planner is shared, so it can say what is about to happen rather than showing an
+   * empty box that grows. Results arrive one at a time and land in the rows already on
+   * screen.
+   */
+  async openIdentify(x, y) {
+    const n = this.node();
+    if (!n) return;
+    this.metrics.beginOp();
+    const kind = n.out.kind;
+    const plan = identifyPlan(this.engine.adapters || [],
+      { kind, sampleRate: n.out.sampleRate, demods: demodsFor(kind) });
+    const at = this.engine.effectiveTime(n.id);
+    const win = this.engine.identifyWindow(n.id, at);
+    this.ident.open({ x, y }, plan,
+      { windowS: win.t1 - win.t0, kind, sampleRate: n.out.sampleRate },
+      (row) => this.buildFromIdentify(n.id, row));
+
+    let report;
+    try {
+      report = await this.engine.identify(n.id, { at, onResult: (r) => this.ident.result(r) });
+    } catch (e) {
+      report = { error: e.message };
+    }
+    if (!this.ident.isOpen) return;            // closed while it ran, which is allowed
+    // The final reply carries every row again. Rows that arrived on the progress
+    // channel are already in place; this is what catches an engine that answered all at
+    // once — the mock one does — and it is why the panel keys rows rather than counting.
+    for (const r of (report && report.results) || []) this.ident.result(r);
+    this.ident.finish(report);
+  }
+
+  /**
+   * Build what a row describes: the demodulator if it needed one, then the decoder,
+   * configured the way the run that answered was configured.
+   */
+  async buildFromIdentify(parentId, row) {
+    const sel = this.defaultSelection();
+    let parent = parentId;
+    if (row.via) {
+      const d = await this.engine.addNode({ parent, op: row.via, selection: sel });
+      parent = d.id;
+    }
+    const node = await this.engine.addNode({ parent, op: row.id, selection: sel });
+    for (const [k, v] of Object.entries(row.params || {})) {
+      if (node.params && k in node.params) await this.engine.setParam(node.id, k, v, 'manual');
+    }
+    this.vp(node.id);
+    this.setTab(node.id);
+    this._tsCache = null;
+    this.metrics.endOp();
+    this.refresh();
   }
 
   renderStage() {

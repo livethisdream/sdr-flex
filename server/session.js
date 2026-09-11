@@ -37,6 +37,10 @@ export class Session {
     this.engine.adapters = adapters.list();
     this.engine.adapter = (id) => (adapters.ADAPTERS[id] ? { id, ...adapters.ADAPTERS[id] } : null);
     this.engine.runAdapter = (n, at) => this._runAdapter(n, at);
+    // The same programs, addressed by samples rather than by node. `Identify` runs
+    // decoders over speculative demodulations of one span, none of which is a node and
+    // none of which should become one just to be tried.
+    this.engine.runAdapterData = (a) => adapters.run(a.adapter, a);
     this.radio = null;
     this.closed = false;
 
@@ -109,9 +113,15 @@ export class Session {
 
 const METHODS = {
   async hello() {
+    const table = adapters.list();
     return { protocol: PROTOCOL, engine: 'node', captures: !!this.library, radios: true,
              plugins: !!this.pluginDir,
-             adapters: adapters.list().filter((a) => a.available).length };
+             adapters: table.filter((a) => a.available).length,
+             // The whole table, not just the count. It is a few hundred bytes, it is
+             // sent once, and the client needs it to work out what `Identify` is about
+             // to try *before* the first decoder answers — a panel that can only grow
+             // as results land reads as "nothing found" for the first second.
+             adapterTable: table };
   },
 
   async createSession() {
@@ -233,6 +243,22 @@ const METHODS = {
       this._send({ id, t: 'progress', v: frac });
     }, at);
     return r ? { sliced: strip(r) } : null;
+  },
+
+  /**
+   * Every decoder that could read this stream, run over one span.
+   *
+   * Each result goes back the moment it lands, on the same per-call progress channel
+   * the waterfall and the exporter already use. Eight subprocesses is several seconds
+   * even when they all succeed, and a report that fills in row by row is the difference
+   * between watching it work and wondering whether it has hung.
+   */
+  async identify({ nodeId, at }, id) {
+    const r = await this.engine.identify(nodeId, {
+      at,
+      onResult: (row) => this._send({ id, t: 'progress', v: row }),
+    });
+    return r || null;
   },
 
   /** Frames and their CRC. A built-in, so it runs where the bytes are. */

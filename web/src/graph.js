@@ -16,6 +16,11 @@
 // server therefore keeps no clock, which is why two clients cannot drag each other's
 // playhead around and why a dropped connection loses nothing but pixels.
 
+// Eight seconds, which is the number the workflow note has always used. Long enough for
+// a packet protocol to repeat itself and short enough that trying every decoder is a
+// wait rather than an errand.
+const IDENTIFY_WINDOW_S = 8;
+
 export class Graph {
   constructor() {
     this.nodes = new Map();
@@ -52,6 +57,33 @@ export class Graph {
     // Same graph code runs against both, so it accepts either.
     const w = typeof c.windowS === 'function' ? c.windowS() : c.windowS;
     return w || [0, c.durationS];
+  }
+
+  /**
+   * How much signal `Identify` looks at.
+   *
+   * A pinned channel is a clip and the clip is the question, so that wins outright.
+   * Otherwise a bounded window ending at the playhead, because this runs every decoder
+   * that fits rather than one — eight resamples of a hundred seconds at 2 MS/s is
+   * minutes of waiting for an answer the first eight seconds would have given. A
+   * medium shorter than the window is taken whole, and the window is reported alongside
+   * the results so a negative is readable: "nothing in these eight seconds" is a
+   * different claim from "nothing in this capture", and only one of them is true.
+   *
+   * To ask about a different eight seconds, move the playhead — or pin the part you
+   * mean, which is the gesture the tool already teaches.
+   */
+  identifyWindow(nodeId, now, seconds = IDENTIFY_WINDOW_S) {
+    const pin = this.isPinned(nodeId);
+    if (pin) return { t0: pin.params.t0.value, t1: pin.params.t1.value, pinned: true };
+    const d = this.duration();
+    if (isFinite(d)) {
+      const t1 = Math.min(d, Math.max(now, seconds));
+      return { t0: Math.max(0, t1 - seconds), t1, pinned: false };
+    }
+    // Live: the past is however far back the ring still goes (ADR-0005).
+    const [first] = this.span();
+    return { t0: Math.max(isFinite(first) ? first : 0, now - seconds), t1: now, pinned: false };
   }
 
   /** Is the source still being written? */

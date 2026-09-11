@@ -8,8 +8,22 @@
 import * as dsp from './dsp.js';
 import * as scene from './scene.js';
 import * as plugins from './plugins.js';
+import { plan as identifyPlan } from './identify.js';
 import { Graph } from './graph.js';
 import * as frames from './frames.js';
+
+/**
+ * What can be put in front of an audio decoder when the stream is IQ.
+ *
+ * Exported because the panel draws the plan before the first result lands — it has the
+ * adapter list and `identify.js` is shared, so it can work out what is about to be tried
+ * without asking. That only stays true if both sides agree on this list, so there is one.
+ */
+export function demodsFor(kind) {
+  if (kind !== 'iq') return [];
+  return [{ op: 'core.fm_discriminator', label: OPS['core.fm_discriminator'].name },
+          { op: 'core.am_envelope', label: OPS['core.am_envelope'].name }];
+}
 
 export const LATENCY = {
   paramMs: 40,        // hot parameter → visible effect
@@ -103,6 +117,31 @@ export const OPS = {
 };
 
 /**
+ * IQ to a real-valued stream, given an operation and nothing else.
+ *
+ * The same code a demodulator node runs, reachable without building one — which is what
+ * `Identify` needs, because it speculatively demodulates a span several different ways
+ * and throws away all but the ones that decoded something. Building four nodes and
+ * deleting three of them would leave the graph as the record of a guess.
+ *
+ * Parameters are derived from the samples in hand when none are supplied, so the answer
+ * comes with the evidence for how it was produced (ADR-0017) even when nobody chose it.
+ */
+export function demodulate(op, iq, count, fs, params = null) {
+  const d = DETECTORS[op];
+  if (d) {
+    const p = params || d.derive(iq, count, fs);
+    return { data: d.detect(iq, count, fs, p), params: p, label: d.label };
+  }
+  // AM: the rectifier, then the post-detection low-pass every real receiver has
+  return {
+    data: dsp.smooth(dsp.amEnvelope(iq, count), dsp.envelopeWindow(fs)),
+    params: {},
+    label: 'AM demod',
+  };
+}
+
+/**
  * The detectors, as a table rather than a switch: each says how to derive its
  * parameters from the signal, and how to turn IQ into a real-valued stream. Adding
  * the fourth one should be a row here and a line in OPS, not an edit in five places.
@@ -184,6 +223,68 @@ const DETECTORS = {
 export function accepts(want, kind) {
   if (want === '*') return true;
   return Array.isArray(want) ? want.includes(kind) : want === kind;
+}
+
+/**
+ * The same filter-and-decimate a tuner runs, at whatever whole ratio gets close to four
+ * times the fastest audio rate any candidate wants.
+ *
+ * Four times, not one: the decoder does its own resampling on the other side and a
+ * margin above its rate costs almost nothing here, while cutting it fine would throw
+ * away the transition band the decoder is about to need. A span already at or below
+ * that rate is passed through, which is the common case — most channels are narrow by
+ * the time anybody asks what they are.
+ */
+function decimateFor(got, fs, audioRate) {
+  const target = audioRate * 4;
+  const decim = Math.max(1, Math.floor(fs / target));
+  if (decim === 1) return { data: got.data, count: got.count, rate: fs };
+  const taps = dsp.lowPassTaps(65, fs / (2 * decim), fs);
+  const count = Math.floor(got.count / decim);
+  // xlateFilterDecimate reads `count * decim + taps.length` samples, so the tail of the
+  // span has to be there to be read; one filter length short of the end is nothing at
+  // these rates and the alternative is reading past the array.
+  const room = Math.floor((got.count - taps.length) / decim);
+  const n = Math.max(1, Math.min(count, room));
+  return {
+    data: dsp.xlateFilterDecimate(got.data, taps, 0, fs, decim, n, 0).samples,
+    count: n,
+    rate: fs / decim,
+  };
+}
+
+// Below this many characters across all of a decoder's records, a speculative pass does
+// not call it a decode. Three: enough to rule out a single symbol found in noise, few
+// enough to keep a short but real answer — eight DTMF digits are eight characters.
+const MIN_DECODE_CHARS = 3;
+
+const textLength = (records) =>
+  records.reduce((n, r) => n + String(r.text ?? '').trim().length, 0);
+
+/** Solid first, thin next, silent last; then by how much, then by name. */
+function rank(a, b) {
+  const tier = (r) => (r.records > 0 && !r.thin ? 0 : r.records > 0 ? 1 : 2);
+  return tier(a) - tier(b) || b.records - a.records ||
+         a.name.localeCompare(b.name) || String(a.viaLabel).localeCompare(String(b.viaLabel));
+}
+
+/**
+ * Run `work` over every item, at most `limit` at a time, in the order they finish.
+ *
+ * The cap is because each of these is a subprocess: eight decoders at once on a laptop
+ * is eight resamples and eight programs competing for the same cores, and the report
+ * fills in more slowly than it would with three. Rejections are the caller's to handle
+ * — here every unit already resolves with its own error.
+ */
+async function inParallel(items, limit, work) {
+  let next = 0;
+  const runner = async () => {
+    while (next < items.length) {
+      const i = next++;
+      await work(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runner));
 }
 
 function param(value, mode = 'manual', auto = null) {
@@ -522,6 +623,119 @@ export class MockEngine extends Graph {
     return this.runPlugin(nodeId, at);
   }
 
+  /**
+   * Try every decoder that could read this stream, and say what each one found.
+   *
+   * The plan comes from `identify.js` and the running happens here, because only the
+   * engine can read a span and only the engine knows what a demodulator is. Three
+   * things about the shape are deliberate:
+   *
+   * **One span read, many decoders.** Reading the span per candidate would be eight
+   * reads of the same seconds of signal, and on a long capture that is most of the wall
+   * clock. The demodulated versions are computed once each and shared too.
+   *
+   * **Results arrive as they land.** `onResult` is called per decoder rather than the
+   * whole report returning at the end, because the first one to answer is usually the
+   * answer and a list that fills in is the difference between "this is working" and
+   * "this has hung". Over the wire that rides the existing per-call progress channel.
+   *
+   * **What was not tried is part of the answer.** A decoder that is not installed, that
+   * takes the wrong kind of stream, or that wants bandwidth the capture never had comes
+   * back with its reason. An empty list is otherwise unreadable: you cannot tell a
+   * signal nothing recognised from a signal nothing was even asked about.
+   */
+  async identify(nodeId, { at = null, onResult = null, timeoutMs = 20_000, concurrency = 3 } = {}) {
+    const n = this.node(nodeId);
+    if (!n) return null;
+    if (n.out.kind !== 'iq' && n.out.kind !== 'real') {
+      return { tried: [], skipped: [], results: [], error: `nothing to identify on a ${n.out.kind} stream` };
+    }
+    // An adapter runs as a process, so this needs the engine on a box. Said plainly
+    // rather than shown as an empty report, which would read as "nothing matched".
+    if (!this.runAdapterData || !(this.adapters || []).length) {
+      return { tried: [], skipped: [], results: [],
+               error: 'external decoders run on the engine; this tab has no engine on a box to run them' };
+    }
+
+    const fs = n.out.sampleRate;
+    const now = at != null ? at : this.t;
+    const { t0, t1 } = this.identifyWindow(nodeId, now);
+
+    const { tried, skipped } = identifyPlan(this.adapters,
+      { kind: n.out.kind, sampleRate: fs, demods: demodsFor(n.out.kind) });
+
+    const got = tried.length ? await this.readSpan(nodeId, t0, t1) : null;
+    if (tried.length && !got) {
+      return { tried, skipped, results: [], error: 'nothing upstream has produced samples yet' };
+    }
+
+    // Narrow the IQ once before demodulating it, if anything is going to be.
+    //
+    // An audio decoder wants 48 kHz at most. Demodulating a 2.4 MS/s span and handing
+    // that to it means a discriminator over fifty times more samples than the answer
+    // needs, and then a fifty-to-one resample per decoder on the far side — eight
+    // seconds of a real capture took seventeen and most of a gigabyte. Decimating
+    // first is what the chain being proposed would do anyway: this *is* the tuner,
+    // run once and shared, and a discriminator that is not listening to 2.4 MHz of
+    // noise is a better discriminator too.
+    const audioRate = Math.max(...tried.filter((c) => c.via).map((c) => c.wants.rate), 0);
+    const narrow = audioRate ? decimateFor(got, fs, audioRate) : null;
+
+    // Demodulate once per way of demodulating, not once per decoder behind one.
+    const audio = new Map();
+    const feed = (via) => {
+      if (!via) return { data: got.data, kind: got.kind, rate: fs };
+      if (!audio.has(via)) audio.set(via, demodulate(via, narrow.data, narrow.count, narrow.rate).data);
+      return { data: audio.get(via), kind: 'real', rate: narrow.rate };
+    };
+
+    const results = [];
+    const started = Date.now();
+    await inParallel(tried, concurrency, async (cand) => {
+      const { data, kind, rate } = feed(cand.via);
+      const out = await this.runAdapterData({
+        adapter: cand.id, data, kind, sampleRate: rate, centerHz: n.out.centerHz,
+        params: cand.params, timeoutMs,
+      });
+      const row = {
+        id: cand.id, name: cand.name, via: cand.via, viaLabel: cand.viaLabel,
+        // The settings it answered with, so the node built from this row is the run
+        // that produced it rather than a fresh guess at the same decoder.
+        params: cand.params,
+        records: out.records.length, ms: out.ms, note: out.note, error: out.error,
+        ...(out.rejected ? { rejected: out.rejected } : {}),
+        // A decode with almost nothing in it is not a decode. Given OOK bursts and told
+        // to try everything, multimon-ng's Morse demodulator returns "E" — one dit,
+        // which is what a single noise blip looks like to it — and a report that ranks
+        // that alongside two APRS frames and says "1 decoder read something here" is
+        // worse than one that found nothing, because it sends you somewhere.
+        //
+        // The threshold is a judgment and belongs here rather than in the adapter: a
+        // one-letter transmission is a real thing and a decoder is right to report it,
+        // but a speculative pass across every decoder at once cannot take it seriously.
+        // The row still shows what it said, so nothing is hidden — it just does not get
+        // to be the headline.
+        thin: out.records.length > 0 && textLength(out.records) < MIN_DECODE_CHARS,
+        // Enough of what it said to recognize the answer, not the whole decode: the
+        // point of the report is choosing a decoder, and the decoder's own pane is
+        // three characters away once one is chosen.
+        sample: out.records.slice(0, 3).map((r) => r.text),
+        ...(out.explained ? { explained: out.explained } : {}),
+      };
+      results.push(row);
+      if (onResult) onResult(row);
+    });
+
+    // Whatever found the most, first, with the thin results below anything solid and
+    // above the silent ones. A decoder that found nothing is still listed, because
+    // ruling out 250 known protocols in one action is a real answer.
+    results.sort(rank);
+    return {
+      tried, skipped, results,
+      t0, t1, windowS: t1 - t0, sampleRate: fs, kind: n.out.kind, ms: Date.now() - started,
+    };
+  }
+
   async runPlugin(nodeId, at = null) {
     const n = this.node(nodeId);
     if (!n || !n.plugin) return null;
@@ -841,10 +1055,7 @@ export class MockEngine extends Graph {
     const p = this.node(node.parent);
     const fs = node.out.sampleRate;
     const iq = this._readIQ(p, tEnd, count);
-    const d = DETECTORS[node.op];
-    if (d) return d.detect(iq, count, fs, node.params);
-    // AM: the rectifier, then the post-detection low-pass every real receiver has
-    return dsp.smooth(dsp.amEnvelope(iq, count), dsp.envelopeWindow(fs));
+    return demodulate(node.op, iq, count, fs, node.params).data;
   }
 
   /**

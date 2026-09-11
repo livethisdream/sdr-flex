@@ -370,6 +370,65 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .ctx-i .soon { margin-left:auto; font-family:var(--mono); font-size:.54rem; color:var(--faint); }
 .ctx-none { padding:.5rem .6rem; color:var(--dim); font-size:.72rem; }
 
+/* ── Identify: the auto mode of choosing a decoder (ADR-0017) ── */
+/* `+` picks one by hand and sits at the right; Identify is the same choice made for
+   you, so it sits beside it and takes over the margin that pushes the pair over. */
+.tab.ident-btn { margin-left:auto; color:var(--accent); font-weight:600; }
+.tab.ident-btn:hover { color:var(--bright); background:var(--accent-lo); }
+.tab.ident-btn + .tab.plus { margin-left:0; }
+
+.ident {
+  position:fixed; z-index:40; width:392px; max-height:min(70vh,620px); overflow-y:auto;
+  background:var(--panel); border:1px solid var(--rule); border-radius:4px;
+  box-shadow:0 18px 44px -14px var(--shadow-hard); font-size:.78rem;
+}
+.ident[hidden] { display:none; }
+.idhead {
+  display:flex; align-items:baseline; gap:.5rem; padding:.5rem .7rem .45rem;
+  border-bottom:1px solid var(--rule); position:sticky; top:0; background:var(--panel);
+}
+.idhead b { color:var(--bright); font-size:.86rem; }
+.idhead span { margin-left:auto; font-family:var(--mono); font-size:.64rem; color:var(--dim); }
+
+.idlist { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+.idr { padding:.42rem .7rem; border-left:2px solid transparent; border-bottom:1px solid var(--rule-lo); }
+.idr:last-child { border-bottom:0; }
+/* Only a row that found something is a thing to click, and it is the only one that
+   looks like one. A hover state on a row with nothing behind it is a lie. */
+.idr.hit { border-left-color:var(--accent); cursor:pointer; }
+.idr.hit:hover { background:var(--accent-lo); }
+.idr.waiting { opacity:.5; }
+/* Enough to look at, not enough to believe. */
+.idr.thin { cursor:pointer; }
+.idr.thin:hover { background:var(--raised); }
+.idsay.thin { color:var(--dim); }
+.idtop { display:flex; align-items:baseline; gap:.45rem; }
+.idtop b { color:var(--body); font-weight:500; }
+.idr.hit .idtop b { color:var(--bright); font-weight:600; }
+.idvia { font-size:.64rem; color:var(--dim); }
+.idn { margin-left:auto; font-family:var(--mono); font-size:.64rem; color:var(--faint); }
+.idn.hit { color:var(--ok); }
+.idwait { margin-left:auto; font-family:var(--mono); font-size:.64rem; color:var(--dim); }
+.idsay {
+  font-family:var(--mono); font-size:.7rem; color:var(--bright); margin-top:.25rem;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+/* What a decoder measured when it recognized nothing — the same answer this tool gives
+   everywhere else, and the reason an empty result is still worth reading. */
+.idtold { font-size:.68rem; color:var(--dim); margin-top:.22rem; line-height:1.45; }
+.idtold code { display:block; font-family:var(--mono); font-size:.64rem; color:var(--warn); margin-top:.15rem; word-break:break-all; }
+.iderr { font-family:var(--mono); font-size:.64rem; color:var(--crit); margin-top:.22rem; }
+
+.idsum { padding:.5rem .7rem; border-top:1px solid var(--rule); color:var(--body); line-height:1.5; }
+.idsum.idnil { color:var(--dim); }
+.idnone { padding:.7rem; color:var(--dim); line-height:1.5; }
+
+/* Absent for a reason is different from absent. */
+.idskip { border-top:1px solid var(--rule); background:var(--raised); padding:.45rem .7rem .55rem; }
+.idskiph { font-family:var(--mono); font-size:.54rem; letter-spacing:.15em; text-transform:uppercase; color:var(--dim); margin-bottom:.3rem; }
+.idskr { font-size:.68rem; color:var(--faint); line-height:1.45; margin-top:.18rem; }
+.idskr b { color:var(--dim); font-weight:500; }
+
 /* ── tooltip: explanation, never identity (law 11) ── */
 .tip { position:fixed; z-index:50; width:250px; padding:.5rem .62rem; background:var(--raised); border:1px solid var(--rule); border-radius:4px; box-shadow:0 14px 34px -12px var(--shadow-hard); font-size:.73rem; color:var(--dim); line-height:1.5; pointer-events:none; }
 .tip[hidden] { display:none; }

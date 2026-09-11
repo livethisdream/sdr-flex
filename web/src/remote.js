@@ -78,6 +78,10 @@ export class RemoteEngine extends Graph {
         try {
           const hello = await this.call('hello');
           this.server = hello;
+          // The adapter table lives on the engine object here exactly as it does on the
+          // server's, so everything that reads `engine.adapters` — the palette merge,
+          // the Identify plan — does not have to know which engine it is talking to.
+          this.adapters = hello.adapterTable || [];
           resolve(hello);
         } catch (e) { reject(e); }
       };
@@ -303,6 +307,19 @@ export class RemoteEngine extends Graph {
    * runs on the server, where the bytes already are — the split is not "local versus
    * remote", it is "code somebody dropped versus code that shipped".
    */
+  /**
+   * The decoders run on the box; only the report comes back.
+   *
+   * Rows arrive on the per-call progress channel as each decoder finishes, which is
+   * what `onResult` is for — the final reply carries the same rows again, sorted, so a
+   * caller that does not want the running commentary can ignore it and still be right.
+   */
+  async identify(nodeId, { at = null, onResult = null } = {}) {
+    return await this.call('identify',
+      { nodeId, at: at != null ? at : this.effectiveTime(nodeId) },
+      onResult ? (row) => { if (row && row.id) onResult(row); } : null);
+  }
+
   async runRecords(nodeId, at) {
     const n = this.node(nodeId);
     if (!n) return null;

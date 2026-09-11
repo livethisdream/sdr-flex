@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-11 (the third-party decoders, checked against the real programs) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-11 (third-party decoders checked for real, then `Identify`) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
 ---
 
@@ -18,7 +18,7 @@ Update it at the end of a session, not the start of the next one.
 
 MVP in the browser, the same tool with its engine in a container, and live radio into a
 ring recording. Static ES modules, no build step, no dependencies on either side.
-30 ADRs.
+31 ADRs.
 
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
@@ -43,8 +43,12 @@ Working end to end:
   the page picks the server engine when one answers and the in-tab engine otherwise
 - Live radio: a capture program writes a ring recording, the engine reads it exactly as
   it reads a file, and you can scrub back into what already went past
+- Five external decoders — rtl_433, multimon-ng, dump1090, direwolf, minimodem — each
+  checked against the real program rather than its documentation
+- `Identify`: one button runs every decoder that could read this stream and says what
+  each found, what it declined to try, and what it decoded but refuses to count
 
-Tests: 139 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 160 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -276,6 +280,62 @@ was. `web/test/span.test.mjs` is the regression — a tone whose phase advance i
 so a repeat or a gap is a measurable step rather than something to eyeball. Reverting the
 fix fails three of its four tests.
 
+## `Identify`, as built
+
+ADR-0031. One button next to the `+` on the tab strip, on any node carrying IQ or audio.
+Runs every decoder that could read the stream, eight seconds ending at the playhead (or
+the pinned clip), rows filling in as each finishes. Clicking a row that found something
+builds the chain — demodulator, then decoder, with the settings that produced the result
+— and lands on its records. An audio decoder on IQ is tried behind an FM demod *and* an
+AM one, because which is right is the question.
+
+The running of decoders was the easy half. Everything that took work was about the
+report being honest, and the first version of it was not:
+
+- **What was not tried is in the report**, with the reason. Not installed, wrong kind of
+  stream, or wanting more bandwidth than the capture ever had (`dump1090` wants 2.4 MS/s;
+  Mode S is a megabit and cannot be hiding in 96 kHz).
+- **An adapter says what "try everything" means for it** — a `sweep` field. multimon-ng
+  defaults to three POCSAG rates because a default should be cheap; asked to identify, it
+  wants its whole `-a` list. Running with no parameters at all, which is what the first
+  version did, quietly asked every decoder for its least capable configuration and then
+  reported that AX.25 was not AX.25.
+- **A decode with almost nothing in it is not a decode.** multimon-ng's Morse demodulator
+  reads a noise blip in an OOK capture as `E`. minimodem locks onto real APRS audio and
+  hands back bytes at confidence 3.8 against 4.9 for a genuine Bell 202 decode — so
+  confidence does not separate them, and what does is that one is text. Both are shown,
+  neither counted, each says why.
+- **The window is bounded and stated**, because "nothing in these eight seconds" and
+  "nothing in this capture" are different claims.
+
+Cost: 1.8 s for eight seconds at 250 kS/s, 4.8 s at 2.4 MS/s, first row back in about
+half that. The [budget](../docs/08-ui-principles.md) asks 3 s; channel rates meet it and
+dongle rate does not, and the measured number is in the table rather than the target.
+
+Driven in a real browser against the real server before it was called done — one click,
+progressive rows, click through to a built chain, on four fixtures, both themes and at
+phone width.
+
+### The bug chasing that cost found
+
+Worth recording twice over, because it was two layers below anything Identify touches and
+it was silently wrong in the field.
+
+`resample()` scaled its cutoff with the ratio and did not scale the kernel's width. So
+2.4 MS/s → 250 kS/s — which is exactly what `rtl_433` gets handed off a dongle-rate
+capture — built a sinc stretched nine and a half times and then truncated it after three
+zero crossings. That is not a low-pass filter. A 200 kHz tone came back at 50 kHz down
+only 31 dB: **everything the radio heard between about 125 and 250 kHz was folding into
+the band the decoder was reading**, and nothing said so.
+
+Fixed by making the support stretch with the cutoff and precomputing the kernel on a grid
+of fractional offsets — which also made it four times faster, since the old one was
+evaluating three transcendentals per tap per output. `Identify` over eight seconds at
+2.4 MS/s went 17 s → 4.8 s on the back of it.
+
+This may well be the real answer to "if i just pick rtl433 from the spectrum view, i get
+no decodes", which was put down to the flex spec at the time.
+
 ## Wanted later
 
 - **SoapySDR, for the long tail of hardware.** The `rx_sdr` process driver already
@@ -349,9 +409,11 @@ fix fails three of its four tests.
   context, so it would force the `tailscale serve` TLS setup.
 
 - Slot-map overlay — until the CTF has been played blind.
-- **`Identify`** — every applicable decoder in parallel over the span, with progressive
-  results. Nearly free now that one adapter works, and it is the headline interaction
-  M4.5 was aiming at. Deliberately left for its own pass.
+- **`Identify` over the native chain.** The external decoders are in (ADR-0031); a
+  Manchester slicer and a CRC search over the catalog is the obvious next tier, and
+  `fixtures/manchester-crc` is exactly the case it would catch — it is currently a clean
+  negative, which is the right answer today and the wrong one once this exists. The
+  report shape already has room: a row is a chain, not a decoder.
 
 
 - The flow rail. Built once, then removed: it complicated the interface without
