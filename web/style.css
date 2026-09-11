@@ -580,6 +580,17 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .poptext input:focus { outline:none; border-color:var(--accent); }
 .poptext input::placeholder { color:var(--dim); letter-spacing:.04em; }
 
+.nodec { padding:1rem 1.1rem; color:var(--body); max-width:60ch; }
+.nodec p { margin:0 0 .6rem; line-height:1.5; }
+.nodec b { color:var(--bright); }
+.nodec code {
+  display:inline-block; font-family:var(--mono); font-size:.76rem;
+  background:var(--sunken); border:1px solid var(--rule); border-radius:5px;
+  padding:.18rem .4rem; margin-top:.15rem; color:var(--bright);
+  overflow-wrap:anywhere;
+}
+.nodec .exgo { margin-top:.3rem; }
+
 .pop {
   position:fixed; z-index:60; min-width:190px; max-width:260px;
   background:var(--raised); border:1px solid var(--rule); border-radius:8px;

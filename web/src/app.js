@@ -1238,18 +1238,18 @@ class App {
    * and says what it found.
    */
   async renderBytes(force) {
-    const n = this.node();
+    let n = this.node();
     if (!n || n.out.kind !== 'bytes') return;
     const el = $('#pane-bytes');
     const sliced = n._sliced;
     if (!sliced || force) {
       el.innerHTML = '<div class="empty">slicing the capture…</div>';
       await this.engine.sliceBytes(n.id, () => {});
-      // By id, not by identity. A remote engine replaces every node object whenever a
-      // snapshot lands (ADR-0029), so the node you were rendering is never the same
-      // object afterwards — and comparing objects meant the pane sat on "running…"
-      // forever with the answer already in hand.
-      if (!this.node() || this.node().id !== n.id) return;
+      // Same as the events pane: re-read the node, do not keep the one this started
+      // on. A snapshot replaced it, and the slice landed on its replacement.
+      const live = this.node();
+      if (!live || live.id !== n.id) return;
+      n = live;
     }
     const r = n._sliced;
     if (!r) { el.innerHTML = '<div class="empty">nothing to slice yet</div>'; return; }
@@ -1281,6 +1281,27 @@ class App {
   }
 
   /**
+   * What to say when a decoder recognized nothing.
+   *
+   * "Nothing decoded" is true and useless. Some decoders can say what they *did* see —
+   * rtl_433 measures the pulse widths and will name the flex decoder that would read
+   * them — and when one does, that is the whole answer: here is the parameter, and here
+   * is what the signal says it should be, which is what every derived value in this
+   * tool owes the person looking at it (ADR-0017).
+   */
+  renderNoDecode(r) {
+    const e = r.explained;
+    if (!e) return '<div class="empty">nothing decoded — the parameters below are the thing to move</div>';
+    const esc = (x) => String(x).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+    return `<div class="nodec">
+      <p><b>Nothing it recognizes</b>${e.summary ? ` — but it saw ${esc(e.summary)}.` : '.'}</p>
+      ${e.suggestion ? `<p class="nodec-sug">It suggests reading them with
+        <code>${esc(e.suggestion)}</code></p>
+        <button class="exgo" id="usesug">Use this decoder</button>` : ''}
+    </div>`;
+  }
+
+  /**
    * The Events pane.
    *
    * It leads with the count, and that is not decoration. A decoder can return many
@@ -1289,7 +1310,7 @@ class App {
    * "one message and a broken challenge". Ask british_news.
    */
   async renderEvents(force) {
-    const n = this.node();
+    let n = this.node();
     if (!n || n.out.kind !== 'events') return;
     const el = $('#pane-events');
     if (!n.plugin && !n.adapter && n.op !== 'core.framer') {
@@ -1300,11 +1321,17 @@ class App {
       el.innerHTML = '<div class="empty">running ' + n.label + '…</div>';
       await new Promise((r) => setTimeout(r, 0));
       await this.engine.runRecords(n.id);
-      // By id, not by identity. A remote engine replaces every node object whenever a
-      // snapshot lands (ADR-0029), so the node you were rendering is never the same
-      // object afterwards — and comparing objects meant the pane sat on "running…"
-      // forever with the answer already in hand.
-      if (!this.node() || this.node().id !== n.id) return;
+      // By id, not by identity, and then re-read the node.
+      //
+      // A remote engine replaces every node object whenever a snapshot lands
+      // (ADR-0029), so the node this started on is not the node holding the answer.
+      // Comparing objects left the pane on "running…" forever; *keeping* the old
+      // object was the other half of the same mistake, and it hid better — the first
+      // run of a decoder showed nothing and the second showed everything, because by
+      // then the results were on the object this call happened to pick up.
+      const live = this.node();
+      if (!live || live.id !== n.id) return;
+      n = live;
     }
     const r = n._records || { records: [] };
     const rows = r.records.map((rec, i) => {
@@ -1321,11 +1348,21 @@ class App {
           <button class="exgo" id="evrun">Run again</button>
         </div>
         ${r.error ? `<div class="everr">${r.error}</div>` : ''}
-        ${r.records.length ? `<ol class="evlist">${rows}</ol>`
-          : '<div class="empty">nothing decoded — the parameters below are the thing to move</div>'}
+        ${r.records.length ? `<ol class="evlist">${rows}</ol>` : this.renderNoDecode(r, n)}
       </div>`;
     const btn = $('#evrun');
     if (btn) btn.addEventListener('click', () => { n._records = null; this.renderEvents(true); });
+    const sug = $('#usesug');
+    if (sug) {
+      sug.addEventListener('click', async () => {
+        // The parameter it belongs in is the one the adapter declared for it.
+        const key = n.paramMeta && Object.keys(n.paramMeta).find((k) => /flex|decoder|spec/i.test(k));
+        if (!key) return;
+        await this.engine.setParam(n.id, key, r.explained.suggestion, 'manual');
+        this.renderStrip();
+        this.renderEvents(true);
+      });
+    }
   }
 
   /** The spectrum's share of the stage. The waterfall takes what is left. */

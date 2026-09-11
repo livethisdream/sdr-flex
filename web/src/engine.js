@@ -75,8 +75,11 @@ export const OPS = {
   },
   // Where a guess becomes a fact: a CRC that validates every frame is the only thing
   // in the chain that answers "is this the packet" rather than "here are some bytes".
+  // Takes bits as well as bytes, because a PWM slicer produces bursts of bits and
+  // until this did, that was where the chain stopped: you could see the bits and there
+  // was nothing to do with them.
   'core.framer': {
-    name: 'Frames & CRC', group: 'Decode', in: 'bytes', out: 'events',
+    name: 'Frames & CRC', group: 'Decode', in: ['bytes', 'bits'], out: 'events',
   },
   // A sink is a node. A view renders what a node produced; a sink consumes it and
   // the data leaves the graph there, which is exactly what a terminal block is
@@ -176,6 +179,12 @@ const DETECTORS = {
     },
   },
 };
+
+/** An operation's input type, which may be one kind, several, or anything. */
+export function accepts(want, kind) {
+  if (want === '*') return true;
+  return Array.isArray(want) ? want.includes(kind) : want === kind;
+}
 
 function param(value, mode = 'manual', auto = null) {
   return { value, mode, auto };
@@ -354,6 +363,36 @@ export class MockEngine extends Graph {
     return n._sliced;
   }
 
+  /**
+   * Every burst a PWM slicer found, over the whole span rather than a display window.
+   *
+   * `frame()` slices a window because that is what a view shows. A decoder wants all of
+   * them, for the same reason `sliceBytes` reads the whole capture: the packet is
+   * wherever it is, and a window sized for a display is almost never over it.
+   */
+  async sliceBursts(n, at = null) {
+    const p = this.node(n.parent);
+    if (!p) return null;
+    const keyOf = () => [n.params.threshold.value, n.params.symbolUs.value].join('|');
+    if (n._bursts && n._bursts.key === keyOf()) return n._bursts;
+
+    const fs = p.out.sampleRate;
+    const pin = this.isPinned(p.id);
+    const now = at != null ? at : this.t;
+    const t0 = pin ? pin.params.t0.value : 0;
+    const t1 = pin ? pin.params.t1.value : (isFinite(this.duration()) ? this.duration() : now);
+    const got = await this.readSpan(p.id, t0, t1);
+    if (!got) return null;
+
+    const raw = dsp.pwmSlice(got.data, n.params.threshold.value, fs, n.params.symbolUs.value);
+    n._bursts = {
+      key: keyOf(), t0, t1, sampleRate: fs,
+      groups: raw.map((g) => ({ bits: g.bits, t: t0 + g.start / fs,
+                                durationS: (g.end - g.start) / fs })),
+    };
+    return n._bursts;
+  }
+
   /** Differential sits on bytes, so its input is whatever the node above it sliced. */
   async _sliceDifferential(n, p, onProgress, at) {
     const keyOf = () => [n.params.mode.value, n.params.bitOrder.value].join('|');
@@ -376,14 +415,35 @@ export class MockEngine extends Graph {
    */
   async runFrames(n, at) {
     const p = this.node(n.parent);
-    const src = await this.sliceBytes(p.id, null, at);
-    if (!src) return { records: [], error: 'nothing upstream has produced bytes yet' };
     const t0 = performance.now();
 
+    // A slicer that produced bursts has already done the framing: each burst is a
+    // frame, and looking for a sync word inside one would be looking for a boundary
+    // that is already known. A byte stream has no such structure and needs the sync.
     const sync = frames.bytesOfHex(n.params.syncHex.value);
-    const found = frames.findFrames(src.bytes, {
-      syncBytes: sync, frameBytes: Math.max(0, Math.round(n.params.frameBytes.value)),
-    });
+    let found;
+    if (p.out.kind === 'bits') {
+      const bursts = await this.sliceBursts(p, at);
+      if (!bursts) return { records: [], error: 'nothing upstream has produced bits yet' };
+      if (!bursts.groups.length) {
+        return { records: [], ms: performance.now() - t0,
+                 error: 'the slicer found no bursts — its threshold and symbol period are the thing to move' };
+      }
+      const msb = true;
+      found = bursts.groups.map((g, i) => ({
+        at: i, bit: 0, bytes: dsp.packBits(g.bits, { msbFirst: msb }).bytes, t: g.t,
+      })).filter((f) => f.bytes.length);
+      if (!found.length) {
+        return { records: [], ms: performance.now() - t0,
+                 error: `${bursts.groups.length} bursts, none of them a whole byte long` };
+      }
+    } else {
+      const src = await this.sliceBytes(p.id, null, at);
+      if (!src) return { records: [], error: 'nothing upstream has produced bytes yet' };
+      found = frames.findFrames(src.bytes, {
+        syncBytes: sync, frameBytes: Math.max(0, Math.round(n.params.frameBytes.value)),
+      });
+    }
     if (!found.length) {
       return { records: [], ms: performance.now() - t0,
                error: sync.length ? 'that sync word does not appear in the bytes' : 'no bytes to frame' };
@@ -410,7 +470,7 @@ export class MockEngine extends Graph {
       const body = chk.checked ? f.bytes.subarray(0, chk.bodyEnd) : f.bytes;
       const rec = {
         text: [...body].map((x) => x.toString(16).padStart(2, '0')).join(' '),
-        at: `bit ${f.bit}`,
+        at: f.t != null ? `${f.t.toFixed(3)} s` : `bit ${f.bit}`,
         bytes: body.length,
       };
       // Hex is what the frame is; text is what it says. Shown when the frame is mostly
@@ -480,13 +540,13 @@ export class MockEngine extends Graph {
     await this._sleep(8);
     const n = this.node(nodeId);
     const built = Object.entries(OPS)
-      .filter(([, o]) => o.in === '*' || o.in === n.out.kind)
+      .filter(([, o]) => accepts(o.in, n.out.kind))
       .map(([id, o]) => ({ id, ...o }));
     // Somebody else's decoders, if this build has a table of them. Marked external and
     // opaque: you cannot see inside one, and the UI says so rather than implying you
     // could have (ADR-0013).
     const ext = (this.adapters || [])
-      .filter((a) => a.in === '*' || a.in === n.out.kind)
+      .filter((a) => accepts(a.in, n.out.kind))
       .map((a) => ({ id: a.id, name: a.name, group: a.group, in: a.in, out: a.out,
                      external: true, opaque: true, blurb: a.blurb,
                      stub: !a.available, needs: a.command }));

@@ -72,7 +72,8 @@ test('the new operations appear where their stream types fit', async () => {
   assert.equal(OPS['core.manchester'].in, 'real');
   assert.equal(OPS['core.manchester'].out, 'bytes');
   assert.equal(OPS['core.differential'].in, 'bytes');
-  assert.equal(OPS['core.framer'].in, 'bytes');
+  // the framer takes either, which is what stops `bits` being a dead end
+  assert.deepEqual(OPS['core.framer'].in, ['bytes', 'bits']);
   assert.equal(OPS['core.framer'].out, 'events');
 });
 
@@ -198,4 +199,71 @@ test('a framer with no bytes above it says so rather than throwing', async () =>
 test('hex a person would type is read the way they meant it', () => {
   assert.deepEqual([...bytesOfHex('2d d4')], [0x2d, 0xd4]);
   assert.deepEqual([...bytesOfHex('0x2DD4')], [0x2d, 0xd4]);
+});
+
+test('bursts of bits lead somewhere, instead of being a dead end', async () => {
+  // A PWM slicer produces bits. Until the framer accepted them, the only thing that
+  // consumed `bits` was Export — so the chain stopped at "here are your bits" with
+  // nothing to do with them, which is where a person actually gets stuck.
+  const { OPS, accepts } = await import('../src/engine.js');
+  const consumers = Object.values(OPS).filter((o) => accepts(o.in, 'bits')).map((o) => o.name);
+  assert.ok(consumers.includes('Frames & CRC'), `bits are consumed by: ${consumers.join(', ')}`);
+});
+
+test('an OOK burst train decodes to the words that were transmitted', async () => {
+  const spec = crcById('crc8');
+  // plain PWM this time: short pulse is a zero, long is a one, no line code
+  const rate = 250_000, symbolUs = 250;
+  const sps = symbolUs * 1e-6 * rate;
+  const words = [0xb33566, 0xcaa659];
+  const out = [];
+  const push = (n, amp) => { for (let i = 0; i < n; i++) out.push(amp, 0); };
+  push(Math.round(sps * 40), 0.02);
+  for (let rep = 0; rep < 3; rep++) {
+    for (const w of words) {
+      for (let k = 23; k >= 0; k--) {
+        push(Math.round(sps * ((w >> k) & 1 ? 2 : 1)), 0.45);
+        push(Math.round(sps), 0.02);
+      }
+      push(Math.round(sps * 24), 0.02);
+    }
+  }
+  const iq = Float32Array.from(out);
+  const buf = new ArrayBuffer(iq.length * 4);
+  new Float32Array(buf).set(iq);
+  const cap = new Capture({ buffer: buf, format: 'cf32', sampleRate: rate, centerHz: CENTER, label: 'ook' });
+
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  await e.openCapture(cap);
+  const det = await e.addNode({ parent: e.root.id, op: 'core.am_envelope', at: 0.02 });
+  const sl = await e.addNode({ parent: det.id, op: 'core.pwm_slicer', at: 0.02 });
+  assert.equal(sl.out.kind, 'bits');
+
+  const fr = await e.addNode({ parent: sl.id, op: 'core.framer', at: 0.02 });
+  const r = await e.runRecords(fr.id, 0.02);
+
+  assert.ok(r.records.length >= 6, `expected six bursts, got ${r.records.length}: ${r.error || ''}`);
+  const texts = r.records.map((x) => x.text);
+  assert.ok(texts.includes('b3 35 66'), `the first word is missing: ${JSON.stringify(texts.slice(0, 4))}`);
+  assert.ok(texts.includes('ca a6 59'), `the second word is missing: ${JSON.stringify(texts.slice(0, 4))}`);
+  // a burst knows when it happened; there is no byte offset to report
+  assert.ok(r.records.every((x) => /^\d+\.\d+ s$/.test(x.at)), `at: ${r.records[0].at}`);
+});
+
+test('a slicer that found no bursts says that, rather than reporting no frames', async () => {
+  const rate = 250_000;
+  const iq = new Float32Array(rate * 2 * 0.1);      // silence
+  const buf = new ArrayBuffer(iq.length * 4);
+  new Float32Array(buf).set(iq);
+  const cap = new Capture({ buffer: buf, format: 'cf32', sampleRate: rate, centerHz: CENTER, label: 'quiet' });
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  await e.openCapture(cap);
+  const det = await e.addNode({ parent: e.root.id, op: 'core.am_envelope', at: 0.02 });
+  const sl = await e.addNode({ parent: det.id, op: 'core.pwm_slicer', at: 0.02 });
+  const fr = await e.addNode({ parent: sl.id, op: 'core.framer', at: 0.02 });
+  const r = await e.runRecords(fr.id, 0.02);
+  assert.equal(r.records.length, 0);
+  assert.match(r.error, /no bursts|whole byte/, `unhelpful: ${r.error}`);
 });

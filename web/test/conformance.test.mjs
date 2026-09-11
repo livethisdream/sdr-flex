@@ -163,3 +163,33 @@ for (const name of dirs) {
       'anything larger is a link and a checksum');
   });
 }
+
+test('a decoder that recognizes nothing says what it saw', async (t) => {
+  // "Nothing decoded" is true and useless, and it is what the shipped OOK fixture
+  // produces if you just pick rtl_433 and change nothing — because the fixture is a
+  // made-up protocol rather than a real device, which is deliberate for the adapter
+  // test and a dead end for a person. rtl_433 can measure what it saw and name the
+  // decoder that would read it, which is the same answer this tool gives everywhere.
+  if (!adapters.list().some((a) => a.command === 'rtl_433' && a.available)) {
+    t.skip('rtl_433 is not installed on this machine');
+    return;
+  }
+  const dir = path.join(FIXTURES, 'rtl433-ook-pwm');
+  const { capture } = load(dir);
+  const e = engineWithAdapters();
+  await e.createSession();
+  await e.openCapture(capture);
+  const n = await e.addNode({ parent: e.root.id, op: 'ext.rtl433', at: 0.05 });
+
+  const r = await e.runRecords(n.id, 0.05);
+  assert.equal(r.records.length, 0, 'with no flex spec it should recognize nothing');
+  assert.ok(r.explained, 'and it should still have something to say');
+  assert.match(r.explained.summary, /pulses at/);
+  assert.ok(r.explained.suggestion && r.explained.suggestion.includes('m=OOK'),
+    `no usable suggestion: ${JSON.stringify(r.explained)}`);
+
+  // and the suggestion is one the adapter will actually accept
+  await e.setParam(n.id, 'flex', r.explained.suggestion);
+  const again = await e.runRecords(n.id, 0.05);
+  assert.ok(again.records.length > 0, 'taking its own advice should decode something');
+});

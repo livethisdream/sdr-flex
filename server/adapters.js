@@ -61,6 +61,36 @@ export const ADAPTERS = {
     parse: 'jsonl',
     // What to show as the headline of a record, in order of preference.
     title: ['model', 'type', 'codes', 'data'],
+
+    // When it recognises nothing, ask it what it saw.
+    //
+    // rtl_433 has an analyzer that measures the pulse and gap distributions and then
+    // prints the flex-decoder line that would read them. That is the same answer this
+    // tool gives everywhere else — here is the parameter, and here is what the signal
+    // said it should be (ADR-0017) — so a decode that finds nothing should end with
+    // that rather than with silence.
+    explain: {
+      args: ({ rate, centerHz }) => [
+        '-r', 'cu8:-', '-s', String(Math.round(rate)),
+        ...(centerHz ? ['-f', String(Math.round(centerHz))] : []),
+        '-A',
+      ],
+      parse(text) {
+        const clean = text.replace(/\x1b\[[0-9;]*m/g, '');
+        const suggestion = /-X\s+'([^']+)'/.exec(clean);
+        const pulses = [...clean.matchAll(/^\s*\[\s*\d+\]\s+count:\s*(\d+),\s+width:\s*(\d+)\s*us/gm)]
+          .map((m) => `${m[2]} µs ×${m[1]}`);
+        const guess = /Guessing modulation:\s*(.+)/.exec(clean);
+        if (!pulses.length && !suggestion) return null;
+        return {
+          summary: [
+            pulses.length ? `pulses at ${[...new Set(pulses)].slice(0, 4).join(', ')}` : null,
+            guess ? `it guesses ${guess[1].trim()}` : null,
+          ].filter(Boolean).join('; '),
+          suggestion: suggestion ? suggestion[1] : null,
+        };
+      },
+    },
   },
 
   'ext.multimon': {
@@ -254,11 +284,20 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
     const proc = spawn(spec.command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', done = false;
 
-    const finish = (error) => {
+    const finish = async (error) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       const records = spec.parse === 'jsonl' ? parseJsonl(stdout, spec) : parseLines(stdout);
+
+      // Nothing recognised is a result, not a failure — but a result with no account of
+      // itself is a dead end, and "I ran a decoder and it said nothing" is the least
+      // useful thing this tool could tell anybody.
+      let told = null;
+      if (!records.length && !error && spec.explain) {
+        told = await explain(spec, input.bytes, { rate: spec.wants.rate, centerHz, params });
+      }
+
       resolve({
         records, ms: Date.now() - started,
         note: `${spec.command} · ${input.note}`,
@@ -268,6 +307,7 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
         // reasons, and reporting "Use -F log if you want any messages" as the error
         // when a decoder simply found nothing is worse than saying nothing.
         error: error || (records.length === 0 ? complaint(stderr) : undefined),
+        ...(told ? { explained: told } : {}),
       });
     };
 
@@ -284,6 +324,29 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
     // the pipe under us, and that is a normal end rather than a fault.
     proc.stdin.on('error', () => {});
     proc.stdin.end(input.bytes);
+  });
+}
+
+/**
+ * Ask a decoder what it saw, when it recognised nothing.
+ *
+ * Bounded hard: it runs once, on the same samples, with a short timeout. A decoder that
+ * cannot explain itself quickly is one that has already cost the user enough time.
+ */
+function explain(spec, bytes, ctx) {
+  return new Promise((resolve) => {
+    let out = '', done = false;
+    const finish = (v) => { if (!done) { done = true; clearTimeout(t); resolve(v); } };
+    let proc;
+    try { proc = spawn(spec.command, spec.explain.args(ctx), { stdio: ['pipe', 'pipe', 'pipe'] }); }
+    catch { resolve(null); return; }
+    const t = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* gone */ } finish(null); }, 20_000);
+    proc.stdout.on('data', (b) => { out += b; });
+    proc.stderr.on('data', (b) => { out += b; });
+    proc.on('error', () => finish(null));
+    proc.on('close', () => { try { finish(spec.explain.parse(out)); } catch { finish(null); } });
+    proc.stdin.on('error', () => {});
+    proc.stdin.end(bytes);
   });
 }
 

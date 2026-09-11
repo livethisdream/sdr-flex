@@ -332,6 +332,13 @@ installed skips rather than fails.
 
 ## Standing rules learned the hard way
 
+- **A pane that reads a node after an await is reading the wrong node.** A snapshot
+  replaces every object, so results land on the replacement. The tell is that the
+  *first* run of something shows nothing and the second shows everything — because by
+  then the render happened to pick up the object the previous call wrote to.
+- **A stream type with nothing downstream is a dead end a person will find in five
+  minutes.** `bits` had only Export for months. Check what consumes each kind.
+
 - **A control loop that works better with more noise is not a control loop.** An
   early-late gate went into the Manchester slicer to fix erratic decoding; the fault
   was actually the phase search choosing between two inequivalent grids at random.
