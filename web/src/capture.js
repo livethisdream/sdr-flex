@@ -46,6 +46,19 @@ export const FORMATS = {
       }
     },
   },
+  // The Pluto, and most AD936x front ends: twelve significant bits carried in a
+  // sixteen-bit word, so full scale is 2048 rather than 32768. Reading it as cs16 does
+  // not fail — it just makes every signal twenty-four decibels quiet, which looks
+  // exactly like a gain problem and is the first thing anyone would chase.
+  cs12: {
+    name: 'complex int12 in int16', bps: 4,
+    read(view, i0, count, out) {
+      for (let i = 0; i < count; i++) {
+        out[i * 2] = view.getInt16((i0 + i) * 4, true) / 2048;
+        out[i * 2 + 1] = view.getInt16((i0 + i) * 4 + 2, true) / 2048;
+      }
+    },
+  },
   cs8: {
     name: 'complex int8', bps: 2,
     read(view, i0, count, out) {

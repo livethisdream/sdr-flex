@@ -1131,8 +1131,11 @@ class App {
     catch (err) { this.notify(`could not ask about radios: ${err.message}`, 8000); return; }
     const ops = drivers.map((d) => ({
       id: d.kind,
+      // What distinguishes two entries for the same board is not its sample rate, it
+      // is what each one needs of you — so a driver that says something about itself
+      // says that instead.
       name: d.available
-        ? `${d.name} — ${(d.defaults.sampleRate / 1e6).toFixed(3)} MS/s`
+        ? `${d.name} — ${d.blurb || `${(d.defaults.sampleRate / 1e6).toFixed(3)} MS/s`}`
         : `${d.name} — needs ${d.command}`,
       group: d.available ? 'Available' : 'Not installed',
       stub: !d.available,

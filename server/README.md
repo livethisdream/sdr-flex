@@ -60,11 +60,26 @@ support for a radio means having its capture program installed, and nothing else
 
 | Driver | Needs | From | Windows |
 |---|---|---|---|
+| **ADALM-PLUTO** | **nothing** | — | yes |
 | RTL-SDR | `rtl_sdr` | `rtl-sdr` | yes |
-| ADALM-PLUTO | `iio_readdev`, `iio_attr` | `libiio-utils` | yes |
+| ADALM-PLUTO (via libiio) | `iio_readdev`, `iio_attr` | `libiio-utils` | yes |
 | USRP (UHD) | `uhd_rx_cfile` | `uhd-host` | no — it writes to `/dev/stdout` |
 | SoapySDR (anything else) | `rx_sdr` | `soapysdr-tools` | yes |
 | Synthetic signal | nothing | built in | yes |
+
+**The Pluto needs nothing installed.** It is not a USB device to claim — it presents a
+USB-ethernet gadget answering on `192.168.2.1`, and `iiod` listens on port 30431, so the
+driver is a TCP client and the protocol is spoken directly. No libiio, no native module,
+no `Dockerfile.radio`. Set `SDRFLEX_PLUTO_HOST` if the board is somewhere other than its
+default address — behind a port forward, or given a real address on your network.
+
+It is also the only driver that **retunes without restarting**: a frequency is an
+attribute write rather than a new command line, so the stream keeps running and the ring
+keeps its history. Every other driver here loses a second of air and everything recorded
+to change frequency, because that is what killing and respawning costs.
+
+The second Pluto entry, via libiio, is kept for the cases the socket cannot reach — a
+board in pure USB mode rather than its ethernet gadget.
 
 The server runs on Windows as well as Linux, and looks up these programs by PATHEXT
 there, so `iio_readdev.exe` is found from the bare name. UHD is the exception: it takes

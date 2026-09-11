@@ -24,6 +24,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Ring } from './ring.js';
+import { PlutoSource } from './pluto.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -50,12 +51,32 @@ export const DRIVERS = {
     probe: { command: 'rtl_test', args: ['-t'] },
   },
 
-  // The Pluto's samples come out of libiio. `iio_readdev` is the part of libiio that
-  // already speaks to it over USB or the network, so this is a pipe rather than a
-  // reimplementation of iiod in JavaScript. `-u ip:192.168.2.1` is the address the
-  // board's USB-ethernet gadget answers on out of the box.
+  // The Pluto is a network device: its USB-ethernet gadget answers on 192.168.2.1 and
+  // iiod listens on 30431. So this needs no program installed at all — not libiio, not
+  // anything — which is what lets it work on a Windows box with nothing on it, in the
+  // plain container, and on a phone under Termux.
+  //
+  // It also retunes without restarting, because a frequency is an attribute write
+  // rather than a new command line. Every other driver here loses its history to change
+  // frequency; this one does not.
   pluto: {
     name: 'ADALM-PLUTO',
+    native: 'pluto',
+    format: 'cs12',          // corrected from what the board declares, on connect
+    // The board's own address out of the box. Overridable because it is not always
+    // reachable there: behind a WSL port forward, or on a network where it has been
+    // given a real address, the Pluto is somewhere else entirely.
+    defaults: { sampleRate: 2_000_000, centerHz: 433_920_000, gain: null,
+                host: process.env.SDRFLEX_PLUTO_HOST || '192.168.2.1' },
+    minRate: 520_833, maxRate: 61_440_000,
+    blurb: 'over its own network interface — nothing to install',
+  },
+
+  // The same board through libiio's tools, for the cases the socket cannot reach: a
+  // Pluto in pure USB mode rather than its ethernet gadget, or one behind a URI the
+  // native client does not speak.
+  'pluto-libiio': {
+    name: 'ADALM-PLUTO (via libiio)',
     command: 'iio_readdev',
     format: 'cs16',
     defaults: { sampleRate: 2_000_000, centerHz: 433_920_000, gain: null,
@@ -66,8 +87,6 @@ export const DRIVERS = {
       '-b', '32768',
       'cf-ad9361-lpc', 'voltage0', 'voltage1',
     ],
-    // Frequency and rate are attributes on the device, not command-line flags, so they
-    // are set before the reader starts rather than passed to it.
     tune: ({ uri, centerHz, sampleRate, gain }) => [
       { command: 'iio_attr', args: ['-u', uri || 'ip:192.168.2.1', '-c', 'ad9361-phy', 'altvoltage0', 'frequency', String(Math.round(centerHz))] },
       { command: 'iio_attr', args: ['-u', uri || 'ip:192.168.2.1', '-c', 'ad9361-phy', 'voltage0', 'sampling_frequency', String(Math.round(sampleRate))] },
@@ -143,7 +162,9 @@ export const DRIVERS = {
 export function available(kind) {
   const d = DRIVERS[kind];
   if (!d) return false;
-  if (d.alwaysAvailable) return true;
+  // A driver that talks a protocol rather than running a program is always available.
+  // Whether the radio answers is a different question, and one only trying can settle.
+  if (d.native || d.alwaysAvailable) return true;
   if (path.isAbsolute(d.command)) return executable(d.command);
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
   return dirs.some((dir) => candidates(d.command).some((c) => executable(path.join(dir, c))));
@@ -173,6 +194,8 @@ export function list() {
     command: d.command,
     format: d.format,
     available: available(kind) && !(d.unixOnly && process.platform === 'win32'),
+    native: !!d.native,
+    blurb: d.blurb || null,
     defaults: d.defaults,
     minRate: d.minRate,
     maxRate: d.maxRate,
@@ -204,7 +227,7 @@ export class Radio extends EventEmitter {
   }
 
   get label() { return `${this.driver.name} @ ${(this.tuning.centerHz / 1e6).toFixed(4)} MHz`; }
-  get format() { return this.driver.format; }
+  get format() { return this.formatOverride || this.driver.format; }
   get sampleRate() { return this.tuning.sampleRate; }
   get centerHz() { return this.tuning.centerHz; }
   get durationS() { return this.ring ? this.ring.durationS : 0; }
@@ -239,6 +262,7 @@ export class Radio extends EventEmitter {
     }
     this.stop();
     this.tuning = t;
+    if (d.native) return this._startNative(t);
 
     // Devices that are configured before they are read from, rather than by flags.
     for (const step of (d.tune ? d.tune(t) : [])) {
@@ -306,7 +330,57 @@ export class Radio extends EventEmitter {
     return this;
   }
 
+  /**
+   * A driver that speaks a protocol instead of running a program.
+   *
+   * The ring, the status and the error reporting are the same; only where the bytes
+   * come from differs. That is the whole reason the driver table has a shape rather
+   * than being four copies of `spawn`.
+   */
+  async _startNative(t) {
+    const d = this.driver;
+    const src = new PlutoSource({ host: t.host, port: t.port, log: this.log });
+    this.native = src;
+    this.status = 'starting';
+
+    let started;
+    try {
+      started = await src.start(t, (buf) => {
+        if (!this.ring || this.native !== src) return;
+        if (this.status !== 'running') { this.status = 'running'; this.emit('status', this.status); }
+        this.ring.write(buf);
+      });
+    } catch (err) {
+      this.native = null;
+      this.status = 'failed';
+      this.lastError = err.message;
+      throw err;
+    }
+
+    // The board tells us its format; the ring has to be made with that rather than with
+    // what the table guessed, or a twelve-bit sample is read as a sixteen-bit one.
+    this.formatOverride = started.format;
+    this.ring = new Ring({
+      path: path.join(this.ringDir, `sdrflex-ring-${process.pid}-${Date.now()}.iq`),
+      format: started.format, sampleRate: t.sampleRate, centerHz: t.centerHz,
+      seconds: this.ringSeconds, label: this.label,
+    });
+    this.log(`${d.name} streaming at ${(t.sampleRate / 1e6).toFixed(3)} MS/s, ${started.format}`);
+    return this;
+  }
+
+  /** Retune in place, when the driver can. Only the native ones can. */
+  async retuneInPlace(changes) {
+    if (!this.native) return false;
+    const t = { ...this.tuning, ...changes };
+    await this.native.tune(t);
+    this.tuning = t;
+    if (this.ring) this.ring.centerHz = t.centerHz;
+    return true;
+  }
+
   stop() {
+    if (this.native) { try { this.native.stop(); } catch { /* gone */ } this.native = null; }
     const proc = this.proc;
     this.status = 'stopped';
     this.proc = null;
@@ -318,8 +392,15 @@ export class Radio extends EventEmitter {
     if (this.ring) { this.ring.close(); this.ring = null; }
   }
 
-  /** Retune by restarting. History does not survive it — a new center is a new medium. */
+  /**
+   * Retune. In place where the driver allows it, by restarting where it does not.
+   *
+   * The difference is visible and worth being visible: a Pluto changes frequency and
+   * keeps its history, and a dongle driven by a command line loses a second of air and
+   * everything in the ring, because that is what killing and respawning costs.
+   */
   async retune(changes) {
+    if (await this.retuneInPlace(changes)) return this;
     return this.start({ ...this.tuning, ...changes });
   }
 }

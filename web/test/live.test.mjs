@@ -56,7 +56,12 @@ test('the drivers this build knows are listed, installed or not', async (t) => {
   const { e } = await fixture(t);
   const d = await e.listRadios();
   const kinds = d.map((x) => x.kind);
-  assert.deepEqual(kinds.sort(), ['pluto', 'rtl', 'soapy', 'synthetic', 'uhd']);
+  assert.deepEqual(kinds.sort(), ['pluto', 'pluto-libiio', 'rtl', 'soapy', 'synthetic', 'uhd']);
+  // The Pluto talks a protocol rather than running a program, so it is offered whether
+  // or not libiio is installed — whether a radio answers is a different question.
+  const pluto = d.find((x) => x.kind === 'pluto');
+  assert.equal(pluto.native, true);
+  assert.equal(pluto.available, true, 'a native driver needs nothing installed');
   const synth = d.find((x) => x.kind === 'synthetic');
   assert.ok(synth.available, 'the synthetic source always runs');
   const rtl = d.find((x) => x.kind === 'rtl');

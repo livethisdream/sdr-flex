@@ -150,6 +150,39 @@ detectors, pinned clips and auto-derived parameters all work on live signal unch
 - **Length search is refused below 16 bits.** Forty trials against an 8-bit CRC finds
   one in almost anything.
 
+## The Pluto, natively
+
+The driver speaks iiod over TCP rather than shelling out to libiio's tools, so a Pluto
+needs **nothing installed** — not libiio, not `Dockerfile.radio`, not a Windows
+installer. It is not a USB device to claim; it is a USB-ethernet gadget on
+`192.168.2.1` with `iiod` on port 30431, and the driver is a socket.
+
+- **It retunes without restarting**, which no other driver here does. A frequency is an
+  attribute write, so the stream keeps running and the ring keeps its history. Every
+  process-based driver loses a second of air and everything recorded.
+- **Two connections, not one.** A `READBUF` blocks on the server until the buffer fills,
+  so a control command down the same socket has its reply eaten by the read already
+  waiting. The symptom was a retune reporting an unintelligible answer and a session
+  that never recovered. The stream gets one link and everything else the other.
+- **The sample format is read off the device, not assumed.** A Pluto declares
+  `le:S12/16>>0` — twelve significant bits in a sixteen-bit word — so full scale is
+  2048. Reading it as `cs16` fails silently by making every signal 24 dB quiet, which
+  looks exactly like a gain problem. There is now a `cs12` format and the driver picks
+  it from what the board says.
+- **`SDRFLEX_PLUTO_HOST`** points it somewhere other than the default address.
+- The process-based driver stays as a second entry for a board in pure USB mode.
+
+**How it was tested, since there is no Pluto here.** The protocol was read off the wire
+between libiio's own client and a real `iiod`, not written from memory — which is how
+the two framing details that would otherwise be wrong were found: a value reply ends
+with a newline after its payload and a `READBUF` reply does not. Then a mock iiod was
+built and **validated by libiio's own tools** — `iio_info`, `iio_attr` and `iio_readdev`
+all drive it successfully — and only then used to test our client. A mock of a protocol
+written from memory tests the memory.
+
+Still unverified against a real board: whether an actual Pluto agrees with all of it.
+The first one plugged in is the test.
+
 ## Third-party decoders, as built
 
 M4.5, and the roadmap was right that it is the best ratio in the plan.
@@ -174,6 +207,17 @@ and which parameters must be *derived*, and a README with license and provenance
 captures are synthesized by `fixtures/make.mjs` from fixed seeds — CC0, byte-identical
 on regeneration, no question about who transmitted them. A fixture whose program is not
 installed skips rather than fails.
+
+## Wanted later
+
+- **SoapySDR, for the long tail of hardware.** The `rx_sdr` process driver already
+  covers whatever SoapySDR knows about, so this is not a coverage gap — it is the same
+  question the Pluto answered, one level up, and the answer is probably different.
+  SoapySDR is a C++ plugin host with no wire protocol, so "native" there would mean a
+  binding rather than a socket, and a binding is exactly the dependency this project
+  keeps declining. The likely shape: native drivers where a board has a protocol worth
+  speaking (anything AD936x now is), and `rx_sdr` for everything else. Worth revisiting
+  when a board turns up that `rx_sdr` handles badly.
 
 ## Open, needs a decision
 
@@ -283,19 +327,6 @@ installed skips rather than fails.
   there is nothing for WebUSB to do. It stays relevant only for RTL-style dongles,
   which is a smaller prize than it looked.
 
-- **Speak iiod directly, instead of shelling out to `iio_readdev`.** Falls out of the
-  above and is worth doing on its own merits.
-
-  The Pluto driver is currently the only one needing two external programs
-  (`iio_readdev` to read, `iio_attr` to tune), and iiod is a TCP protocol — text
-  commands, binary buffers. Written as a native driver in our own terms, which is
-  exactly what the roadmap asked for when it said the source interface must not become
-  SoapySDR's interface with our names on it, it would need no libiio installed
-  anywhere. That removes `Dockerfile.radio` as a requirement for a Pluto, removes the
-  libiio-for-Windows install, and is what makes the Termux route above possible at all.
-
-  Bigger than a table row and smaller than it sounds: connect, read the XML device
-  description, set a couple of attributes, open a buffer, read frames.
 
 ---
 

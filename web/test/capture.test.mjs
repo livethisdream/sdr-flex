@@ -28,6 +28,9 @@ function encode(format) {
     const re = ref[i * 2], im = ref[i * 2 + 1];
     if (format === 'cf32') { v.setFloat32(i * 8, re, true); v.setFloat32(i * 8 + 4, im, true); }
     else if (format === 'cs16') { v.setInt16(i * 4, Math.round(re * 32767), true); v.setInt16(i * 4 + 2, Math.round(im * 32767), true); }
+    // cs12 is int16 on the wire with twelve significant bits, so full scale is 2047 and
+    // not 32767 — writing it as though it were cs16 clips every sample flat.
+    else if (format === 'cs12') { v.setInt16(i * 4, Math.round(re * 2047), true); v.setInt16(i * 4 + 2, Math.round(im * 2047), true); }
     else if (format === 'cs8') { v.setInt8(i * 2, Math.round(re * 127)); v.setInt8(i * 2 + 1, Math.round(im * 127)); }
     else { v.setUint8(i * 2, Math.round(re * 127.5 + 127.5)); v.setUint8(i * 2 + 1, Math.round(im * 127.5 + 127.5)); }
   }
