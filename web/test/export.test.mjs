@@ -56,6 +56,34 @@ for (const [from, to] of [[20000, 22050], [48000, 22050], [8000, 48000], [15625,
   ok(rms < 0.02, `content above the new Nyquist is filtered, not folded (residual rms ${rms.toFixed(4)})`);
 }
 
+// ── and it still band-limits when the ratio is large ────────────────────────
+{
+  // 2.4 MS/s to 250 kS/s is what rtl_433 gets handed off a dongle-rate capture, and it
+  // is where this used to fail: the cutoff scaled with the ratio and the kernel's width
+  // did not, so the filter was a stretched sinc truncated after three zero crossings.
+  // A 200 kHz tone came back at 50 kHz down only 31 dB — everything the radio heard
+  // between about 125 and 250 kHz was folding into the band the decoder was reading,
+  // and nothing anywhere said so.
+  const FROM = 2_400_000, TO = 250_000, N = 1 << 17;
+  const spectrumPeak = (y) => {
+    const n = 4096, buf = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) buf[i * 2] = y[i + 2000];
+    const sp = dsp.spectrum(buf, n, 'Hann');
+    let best = -Infinity, at = 0;
+    for (let i = n / 2; i < n; i++) if (sp[i] > best) { best = sp[i]; at = i; }
+    return { hz: (at - n / 2) * (TO / n), db: best };
+  };
+  for (const f of [200_000, 300_000, 900_000]) {
+    const x = tone(f, FROM, N);
+    const p = spectrumPeak(resample(x, FROM, TO));
+    ok(p.db < -60, `${f / 1000} kHz does not fold back into the band (peak ${p.db.toFixed(0)} dB at ${(p.hz / 1000).toFixed(0)} kHz)`);
+  }
+  // and the passband is still there, at the level it went in
+  const inband = spectrumPeak(resample(tone(40_000, FROM, N), FROM, TO));
+  ok(Math.abs(inband.hz - 40_000) < 2000 && inband.db > -25,
+     `40 kHz survives at ${inband.db.toFixed(0)} dB and lands at ${(inband.hz / 1000).toFixed(1)} kHz`);
+}
+
 // ── normalize ───────────────────────────────────────────────────────────────
 {
   const x = new Float32Array([0.4, 0.6, 0.5, 0.45]);        // sits on a pedestal

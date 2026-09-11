@@ -25,24 +25,68 @@ export function resample(x, fromRate, toRate, halfWidth = 16) {
   const ratio = toRate / fromRate;
   const n = Math.floor(x.length * ratio);
   const out = new Float32Array(n);
-  // when decimating, the filter has to cut at the *output* Nyquist, not the input's
+
+  // When decimating, the filter has to cut at the *output* Nyquist, not the input's —
+  // and that is where this used to go wrong. The cutoff was scaled and the kernel's
+  // width was not, so decimating 2.4 MS/s to 250 kS/s built a sinc stretched nine and a
+  // half times and then truncated it at sixteen input samples: three zero crossings,
+  // which is not a low-pass filter, it is a suggestion. A 200 kHz tone came back at
+  // 50 kHz down only 31 dB. Anything a dongle heard between about 125 and 250 kHz was
+  // folding into the band rtl_433 was reading.
+  //
+  // Sixteen is sixteen zero crossings of the filter, so the support has to stretch with
+  // it: a hundred and fifty-four input samples at that ratio, not sixteen.
   const cutoff = Math.min(1, ratio);
+  const support = Math.max(1, Math.ceil(halfWidth / cutoff));
+  const taps = support * 2;
+
+  // Which makes the kernel too expensive to evaluate per output — three transcendentals
+  // a tap over three hundred taps and two million outputs is not a wait anybody would
+  // sit through. So it is built once, on a fixed grid of fractional offsets, and every
+  // output is a table lookup and a dot product. The grid is fine enough that the phase
+  // error inside a step is far below the stopband it would have to beat to matter.
+  const SUBS = 128;
+  const kern = new Float32Array(SUBS * taps);
+  for (let sp = 0; sp < SUBS; sp++) {
+    const frac = sp / SUBS;
+    const base = sp * taps;
+    let sum = 0;
+    for (let j = 0; j < taps; j++) {
+      const d = (frac + support - 1 - j) * cutoff;
+      const s = d === 0 ? 1 : Math.sin(Math.PI * d) / (Math.PI * d);
+      const t = j / (taps - 1);
+      const w = 0.42 - 0.5 * Math.cos(2 * Math.PI * t) + 0.08 * Math.cos(4 * Math.PI * t);
+      const h = s * w;
+      kern[base + j] = h;
+      sum += h;
+    }
+    // Unity gain at DC, per phase, so a steady signal comes out the level it went in.
+    if (sum !== 0) for (let j = 0; j < taps; j++) kern[base + j] /= sum;
+  }
+
   for (let i = 0; i < n; i++) {
     const at = i / ratio;
     const c = Math.floor(at);
-    let acc = 0, norm = 0;
-    for (let k = c - halfWidth + 1; k <= c + halfWidth; k++) {
-      if (k < 0 || k >= x.length) continue;
-      const d = (at - k) * cutoff;
-      // sinc × Blackman, evaluated on the fractional offset
-      const s = d === 0 ? 1 : Math.sin(Math.PI * d) / (Math.PI * d);
-      const w = 0.42 - 0.5 * Math.cos((2 * Math.PI * (k - c + halfWidth)) / (2 * halfWidth))
-                     + 0.08 * Math.cos((4 * Math.PI * (k - c + halfWidth)) / (2 * halfWidth));
-      const h = s * w * cutoff;
-      acc += x[k] * h;
-      norm += h;
+    const sp = Math.min(SUBS - 1, Math.floor((at - c) * SUBS));
+    const kb = sp * taps;
+    const start = c - support + 1;
+    let acc = 0;
+    if (start >= 0 && start + taps <= x.length) {
+      for (let j = 0; j < taps; j++) acc += x[start + j] * kern[kb + j];
+    } else {
+      // At the edges some of the kernel hangs off the end of the signal. Renormalizing
+      // over what is actually there beats treating the outside as silence, which would
+      // fade the first and last few milliseconds of every resampled span.
+      let norm = 0;
+      for (let j = 0; j < taps; j++) {
+        const k = start + j;
+        if (k < 0 || k >= x.length) continue;
+        acc += x[k] * kern[kb + j];
+        norm += kern[kb + j];
+      }
+      acc = norm !== 0 ? acc / norm : 0;
     }
-    out[i] = norm !== 0 ? acc / norm : 0;
+    out[i] = acc;
   }
   return out;
 }
