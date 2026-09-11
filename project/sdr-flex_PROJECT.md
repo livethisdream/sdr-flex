@@ -242,10 +242,10 @@ installed skips rather than fails.
 
 - **Run it on an unfolded foldable, on the device itself.** Wanted; not planned yet.
 
-  Some of this already works and it is worth separating from the part that does not.
+  Some of this already works and is worth separating from the part that does not.
   Browsing to the box from a phone works today over the tailnet, and the in-tab engine
-  is a complete tool with no server at all — so a phone can already open the tool,
-  drop a capture on it, and decode. What is new is two things.
+  is a complete tool with no server at all — so a phone can already open the tool, drop
+  a capture on it, and decode. What is new is two things.
 
   **The screen is a shape nothing here was designed for.** The layout is responsive and
   has been tested at 320, 390, 420, 1000 and 1100 px — all of them wide-and-short or
@@ -255,21 +255,47 @@ installed skips rather than fails.
   also the fold seam itself (`env(fold-*)`, the viewport-segments API) and the
   fold/unfold transition, which is a live resize across a hinge rather than a rotation.
 
-  **"Locally" is the interesting half.** Two routes, and they answer different questions:
+  **With a Pluto, the hard part of "locally" disappears.** This was written first around
+  an RTL-SDR, which was the wrong radio to reason from. An RTL dongle on a phone is a
+  USB device somebody has to claim: Android's permission model, `/dev/bus/usb` under
+  Termux, WebUSB as the alternative — all of it awkward.
 
-  - *In-tab engine only.* Works now. No server, no install, limited to the synthetic
-    scene and files you hand it — no adapters, no radios, and the whole capture lives
-    in the tab, which is the ceiling ADR-0029 exists to remove.
-  - *Node under Termux.* The server is plain Node with no dependencies and no build
-    step, which is exactly the kind of thing that runs under Termux. That would give
-    the full engine on the phone: adapters, ring recording, and an RTL-SDR over USB
-    OTG. Untested, and the unknowns are whether `rtl_sdr` can claim a USB device under
-    Android's permission model and what Termux does about `/dev/bus/usb`.
+  A Pluto is not a USB device to claim. It presents a USB-ethernet gadget answering on
+  `192.168.2.1`, and libiio talks to it over TCP on port 30431. The phone does not have
+  to open a device; it has to bring up a network interface, which is the kernel's job
+  rather than an app's. Everything above that is a socket.
 
-  This also changes the WebUSB calculus above. Android Chrome is the platform where
-  WebUSB has the fewest obstacles — no kernel driver to blacklist, and the permission
-  prompt is the normal way an app gets a device. If WebUSB is ever built, the phone is
-  the reason, not the laptop.
+  That makes the shape of it:
+
+  - **Node under Termux, a Pluto on the USB-C port, and no native code at all.** The
+    server already has no dependencies and no build step, which is exactly what runs
+    under Termux.
+  - **A browser alone still cannot do it**, and that is the sharp edge worth knowing: a
+    page cannot open a raw TCP socket, so the in-tab engine can never speak to a Pluto
+    however good the phone is. Something has to hold the socket, and on the phone that
+    is Node.
+  - **The unknown is Android, not us.** Whether the Pixel Fold brings up a USB-ethernet
+    interface for the Pluto in host mode, and whether an app can route to `192.168.2.x`
+    while cellular or Wi-Fi is also up. That is the first thing to try, and it needs no
+    code: `iio_info -u ip:192.168.2.1`, or just a TCP connect to port 30431.
+
+  This also settles the WebUSB question above rather than changing it: with a Pluto
+  there is nothing for WebUSB to do. It stays relevant only for RTL-style dongles,
+  which is a smaller prize than it looked.
+
+- **Speak iiod directly, instead of shelling out to `iio_readdev`.** Falls out of the
+  above and is worth doing on its own merits.
+
+  The Pluto driver is currently the only one needing two external programs
+  (`iio_readdev` to read, `iio_attr` to tune), and iiod is a TCP protocol — text
+  commands, binary buffers. Written as a native driver in our own terms, which is
+  exactly what the roadmap asked for when it said the source interface must not become
+  SoapySDR's interface with our names on it, it would need no libiio installed
+  anywhere. That removes `Dockerfile.radio` as a requirement for a Pluto, removes the
+  libiio-for-Windows install, and is what makes the Termux route above possible at all.
+
+  Bigger than a table row and smaller than it sounds: connect, read the XML device
+  description, set a couple of attributes, open a buffer, read frames.
 
 ---
 
