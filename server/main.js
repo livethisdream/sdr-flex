@@ -21,6 +21,7 @@ import { Session } from './session.js';
 import { Library } from './library.js';
 import { PluginDir } from './plugindir.js';
 import * as adapters from './adapters.js';
+import { AdapterDir } from './adapterdir.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,6 +38,9 @@ export const CONFIG = {
   // Decoders the box offers every tab. The default is the directory in this repository,
   // so what ships with the tool is actually in the tool.
   pluginDir: process.env.SDRFLEX_PLUGINS || path.join(HERE, '..', 'web', 'plugins'),
+  // Decoders you added (ADR-0026). Unset by default: an adapter is a command line, so
+  // this directory only exists because you said where it is.
+  adapterDir: process.env.SDRFLEX_ADAPTERS || null,
 };
 
 const MIME = {
@@ -151,8 +155,31 @@ export function createServer({ webDir, captureDir, quiet, ringDir, pluginDir } =
   return { server, library, plugins, log };
 }
 
-export function start(cfg = CONFIG) {
-  // Ask every decoder whether it is here, now, rather than on somebody's first click.
+/**
+ * Read `SDRFLEX_ADAPTERS` into the table.
+ *
+ * A pack that clashes with a decoder that ships with the tool is refused rather than
+ * allowed to win: silently shadowing `rtl_433` with something else called `rtl_433`
+ * would be a very confusing afternoon.
+ */
+async function loadLocalAdapters(cfg) {
+  if (!cfg.adapterDir) return { adapters: [], problems: [] };
+  const { adapters: found, problems } = await new AdapterDir(cfg.adapterDir).load();
+  const added = [];
+  for (const { id, spec } of found) {
+    try { adapters.register(id, spec); added.push(id); }
+    catch (e) { problems.push({ pack: spec.local.pack, why: e.message }); }
+  }
+  return { adapters: added, problems };
+}
+
+export async function start(cfg = CONFIG) {
+  // Decoders the operator added, before anything is probed — they are adapters like any
+  // other once they are in the table, and one that fails to load says why rather than
+  // simply not appearing.
+  const local = await loadLocalAdapters(cfg);
+
+  // Then ask every decoder whether it is here, rather than on somebody's first click.
   // Most answer instantly — a name on PATH — but a GNU Radio flowgraph has to be probed
   // by asking an interpreter to import a module, which is half a second each, and the
   // palette asks for this synchronously.
@@ -179,9 +206,13 @@ export function start(cfg = CONFIG) {
       const n = new PluginDir(cfg.pluginDir).list().length;
       log(`${n} plugin${n === 1 ? '' : 's'} in ${cfg.pluginDir}`);
     }
-    const all = adapters.list();
-    log(`${decoders} of ${all.length} external decoders installed: ` +
-        (all.filter((a) => a.available).map((a) => a.name).join(', ') || 'none'));
+    const table = adapters.list();
+    log(`${decoders} of ${table.length} external decoders installed: ` +
+        (table.filter((a) => a.available).map((a) => a.name).join(', ') || 'none'));
+    if (cfg.adapterDir) {
+      log(`${local.adapters.length} of those are yours, from ${cfg.adapterDir}`);
+      for (const p of local.problems) log(`  ${p.pack} did not load: ${p.why}`);
+    }
     const host = hosts[0].host;
     if (hosts.some((h) => h.host === '0.0.0.0')) {
       // Inside a container this is correct and says nothing about the host: what the

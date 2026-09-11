@@ -266,3 +266,38 @@ export function morse(text, { rate = 22_050, wpm = 15, toneHz = 800, tailS = 0.5
   key(tailS, false);                            // multimon needs the silence to commit
   return Float32Array.from(out);
 }
+
+// ── Baudot, which is what RTTY actually carries ─────────────────────────────
+
+// ITA2 letter case, written the way the bits go out: bit 1 first. So `0b10100` for H
+// means the transmitted run is 0,0,1,0,1 — the integer is read least significant bit
+// first, which is the order a start bit is followed by.
+const ITA2 = {
+  A: 0b00011, B: 0b11001, C: 0b01110, D: 0b01001, E: 0b00001, F: 0b01101, G: 0b11010,
+  H: 0b10100, I: 0b00110, J: 0b01011, K: 0b01111, L: 0b10010, M: 0b11100, N: 0b01100,
+  O: 0b11000, P: 0b10110, Q: 0b10111, R: 0b01010, S: 0b00101, T: 0b10000, U: 0b00111,
+  V: 0b11110, W: 0b10011, X: 0b11101, Y: 0b10101, Z: 0b10001, ' ': 0b00100,
+};
+
+/**
+ * Five-bit Baudot over FSK, 45.45 baud with a 170 Hz shift — the RTTY everybody means.
+ *
+ * One and a half stop bits is the standard, and a modulator that cannot send half a bit
+ * sends two: minimodem's `rtty` mode allows the slack, and rounding the other way puts
+ * the next start bit early enough to lose the character after it.
+ */
+export function baudot(text, { rate = 48_000, baud = 45.45, mark = 2125, space = 2295,
+                               idle = 40, seed = 0x8a17 } = {}) {
+  const levels = [];
+  const push = (v, n = 1) => { for (let i = 0; i < n; i++) levels.push(v); };
+  push(1, idle);
+  for (const ch of String(text).toUpperCase()) {
+    const c = ITA2[ch];
+    if (c == null) continue;
+    push(0);                                   // start
+    for (let k = 0; k < 5; k++) push((c >> k) & 1);
+    push(1, 2);                                // stop
+  }
+  push(1, idle);
+  return fsk(levels, { rate, baud, mark, space, amplitude: 0.6, seed });
+}

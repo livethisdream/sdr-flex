@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-11 (decoders checked for real, `Identify`, then GNU Radio) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-11 (decoders checked for real, `Identify`, GNU Radio, local adapters) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
 ---
 
@@ -47,8 +47,10 @@ Working end to end:
   as a GNU Radio flowgraph — each checked against the real program, not its documentation
 - `Identify`: one button runs every decoder that could read this stream and says what
   each found, what it declined to try, and what it decoded but refuses to count
+- Decoders you add yourself: a directory of manifests in `SDRFLEX_ADAPTERS`, badged
+  "yours" in the menu — `docs/10-adding-a-decoder.md` is the contract
 
-Tests: 167 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 184 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -227,7 +229,7 @@ signal it does not recognize looks like:
 
 `minimodem` is new, and it is the most CTF-relevant of the five: RTTY, Bell 103/202, and
 any N-baud FSK with an arbitrary tone pair. It reads through libsndfile, which refuses
-headerless samples on a pipe ("Format not recognised"), so `convert()` grew a `container`
+headerless samples on a pipe ("Format not recognised" — its words), so `convert()` grew a `container`
 option that puts a WAV header in front. The header can carry a truthful length rather
 than the streaming fiction of `0xffffffff`, because the whole span is in hand before the
 program starts.
@@ -391,6 +393,49 @@ only if those knobs become adapter parameters — which the parameter strip can 
 draw, and which would make this tool the GUI gr-tempest is missing. Not done. The
 alternative is the native raster fold, which was tried far enough to show structure and
 not a picture.
+
+## Local adapters, as built
+
+ADR-0026, which had been Proposed since the beginning and deferred "until three adapters
+exist to generalize from". Six existed, so the condition was met — and the format came out
+*smaller* than the sketch, because the six had already answered the open questions instead
+of leaving them open.
+
+`SDRFLEX_ADAPTERS` names a directory; one subdirectory per decoder, each holding
+`adapter.json` (or `adapter.mjs` when it needs functions), optionally a flowgraph and a
+golden capture. Read at startup, reported at startup, one bad pack does not take the
+others with it. Badged **yours** rather than **ext** in the menu, and a local adapter
+cannot take an id that ships with the tool.
+
+Every field in the format was demanded by a real adapter rather than imagined: several
+candidate binary names (dump1090), a module inside an interpreter (any flowgraph), a
+container in front of the samples (minimodem), a config file written per run (direwolf),
+a rate that follows a parameter (LoRa), and a flag omitted along with its value (rtl_433's
+`-R`, where "no protocol" is not "all protocols").
+
+Two things the ADR expected did **not** survive:
+
+- **The transport field.** It was expected because direwolf was supposed to need KISS over
+  TCP. It does not — it reads stdin and writes stdout like everything else, once it is
+  given a config file. No transport field, and none until something needs one.
+- **The version pin.** Checking one means parsing `--version` for six programs that each
+  format it differently, to produce a warning nobody can act on, since the user has
+  whatever their distribution gave them. The conformance fixture in the pack replaces it:
+  it answers whether *this* version of *this* program still produces the expected records,
+  which is what a version pin was a proxy for.
+
+**The trust line, unchanged where it matters.** An adapter is a command line, so anything
+that can write to that directory can run programs on the box — the loader refuses a
+world-writable one, and that is the control. It is a directory on the box and *not* a drop
+target in the browser; dropped code still runs in the tab and never on the server
+(ADR-0029). The capture and plugin directories already sat at exactly this trust level.
+
+Verified end to end: a pack wrapping minimodem at Baudot RTTY 45.45 decoded a signal built
+by our own FSK modulator, through the real server, and showed up badged "yours" in a real
+browser.
+
+Also this pass: American spelling fixed throughout, including in files that predate the
+house rule.
 
 ## Wanted later
 

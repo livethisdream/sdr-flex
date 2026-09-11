@@ -64,7 +64,7 @@ export const ADAPTERS = {
     // What to show as the headline of a record, in order of preference.
     title: ['model', 'type', 'codes', 'data'],
 
-    // When it recognises nothing, ask it what it saw.
+    // When it recognizes nothing, ask it what it saw.
     //
     // rtl_433 has an analyzer that measures the pulse and gap distributions and then
     // prints the flex-decoder line that would read them. That is the same answer this
@@ -365,6 +365,32 @@ export const ADAPTERS = {
 };
 
 /**
+ * Decoders the operator added, from `SDRFLEX_ADAPTERS` (ADR-0026).
+ *
+ * Held beside the shipped table rather than merged into it, for two reasons that are the
+ * same reason: a local adapter must never quietly replace a shipped one, and every place
+ * that reports an adapter has to be able to say which it is. `register` refuses an id
+ * that already exists, and `local` travels on the spec.
+ */
+const LOCAL = new Map();
+
+export function register(id, spec) {
+  if (ADAPTERS[id]) throw new Error(`${id} is already a decoder that ships with the tool`);
+  LOCAL.set(id, spec);
+  return id;
+}
+
+export function forget(id) { LOCAL.delete(id); PROBED.clear(); }
+
+/** Every adapter, shipped and local. The shipped ones first, so the menu is stable. */
+export function all() {
+  return { ...ADAPTERS, ...Object.fromEntries(LOCAL) };
+}
+
+/** One, by id. */
+export function spec(id) { return ADAPTERS[id] || LOCAL.get(id) || null; }
+
+/**
  * What this adapter wants on stdin, for the settings it is about to run with.
  *
  * Static for almost all of them — rtl_433 takes cu8 at 250 kS/s and that is that. LoRa
@@ -397,7 +423,7 @@ const FLOWGRAPHS = path.join(HERE, 'flowgraphs');
  * First name found wins, so the list is in preference order.
  */
 export function resolve(id) {
-  const a = ADAPTERS[id];
+  const a = spec(id);
   if (!a) return null;
   const wanted = Array.isArray(a.command) ? a.command : [a.command];
   const exts = process.platform === 'win32'
@@ -432,7 +458,7 @@ export function resolve(id) {
 const PROBED = new Map();
 
 export function available(id) {
-  const a = ADAPTERS[id];
+  const a = spec(id);
   if (!a) return false;
   const command = resolve(id);
   if (!command) return false;
@@ -455,8 +481,9 @@ export function available(id) {
 
 /** Probe every adapter now, so the first connection does not pay for it. */
 export function warm() {
-  for (const id of Object.keys(ADAPTERS)) available(id);
-  return Object.keys(ADAPTERS).filter(available).length;
+  const ids = Object.keys(all());
+  for (const id of ids) available(id);
+  return ids.filter(available).length;
 }
 
 /** What to call it when it is missing, which is the whole list rather than a guess. */
@@ -469,7 +496,7 @@ function commandNames(a) {
 
 /** Every adapter, with whether it could actually run here. */
 export function list() {
-  return Object.entries(ADAPTERS).map(([id, a]) => {
+  return Object.entries(all()).map(([id, a]) => {
     const found = resolve(id);
     return {
       id, name: a.name, group: a.group, in: a.in, out: a.out,
@@ -477,7 +504,11 @@ export function list() {
       // dump1090-mutability should say so rather than claim a binary it does not have.
       command: a.module ? commandNames(a) : (found || commandNames(a)),
       blurb: a.blurb, params: a.params,
-      sweep: a.sweep || null, wants: wants(a, defaults(a)), available: found != null,
+      sweep: a.sweep || null, wants: wants(a, defaults(a)),
+      available: available(id),
+      // Yours or ours. The UI says so, because a decoder you added behaving oddly and
+      // one that shipped behaving oddly are different problems.
+      ...(a.local ? { local: a.local.pack } : {}),
     };
   });
 }
@@ -653,14 +684,14 @@ function parseLines(text) {
  * wedged has still told you six things.
  */
 export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeoutMs = 60_000 }) {
-  const spec = ADAPTERS[id];
-  if (!spec) return Promise.resolve({ records: [], error: `no adapter ${id}` });
+  const a = spec(id);
+  if (!a) return Promise.resolve({ records: [], error: `no adapter ${id}` });
   const command = resolve(id);
   if (!command) {
-    return Promise.resolve({ records: [], error: `${commandNames(spec)} is not installed on this machine` });
+    return Promise.resolve({ records: [], error: `${commandNames(a)} is not installed on this machine` });
   }
 
-  const need = wants(spec, params);
+  const need = wants(a, params);
   let input;
   try {
     input = convert(data, kind, sampleRate, need);
@@ -674,9 +705,9 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
   // behind and two decodes cannot read each other's config.
   let dir = null;
   try {
-    if (spec.files) {
+    if (a.files) {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdrflex-'));
-      for (const file of spec.files({ rate: need.rate, centerHz, params })) {
+      for (const file of a.files({ rate: need.rate, centerHz, params })) {
         fs.writeFileSync(path.join(dir, file.name), file.text);
       }
     }
@@ -685,8 +716,9 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
   }
 
   const args = [
-    ...(spec.flowgraph ? [path.join(FLOWGRAPHS, spec.flowgraph)] : []),
-    ...spec.args({ rate: need.rate, centerHz, params, dir }),
+    ...(a.flowgraphPath ? [a.flowgraphPath]
+        : a.flowgraph ? [path.join(FLOWGRAPHS, a.flowgraph)] : []),
+    ...a.args({ rate: need.rate, centerHz, params, dir }),
   ];
   const started = Date.now();
 
@@ -699,21 +731,21 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
       done = true;
       clearTimeout(timer);
       if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* it is a temp dir */ } }
-      const { records, note: parseNote } = readRecords(spec, stdout, stderr);
+      const { records, note: parseNote } = readRecords(a, stdout, stderr);
 
-      // Nothing recognised is a result, not a failure — but a result with no account of
+      // Nothing recognized is a result, not a failure — but a result with no account of
       // itself is a dead end, and "I ran a decoder and it said nothing" is the least
       // useful thing this tool could tell anybody.
       let told = null;
-      if (!records.length && !error && spec.explain) {
-        told = await explain(spec, command, input.bytes, { rate: need.rate, centerHz, params });
+      if (!records.length && !error && a.explain) {
+        told = await explain(a, command, input.bytes, { rate: need.rate, centerHz, params });
       }
 
       done_({
         records, ms: Date.now() - started,
         // Named by what ran, which for a flowgraph is the module rather than the
         // interpreter: "python3.12 · cf32 at 250 kS/s" tells nobody anything.
-        note: `${spec.module || command} · ${input.note}${parseNote ? ` · ${parseNote}` : ''}`,
+        note: `${a.module || command} · ${input.note}${parseNote ? ` · ${parseNote}` : ''}`,
         // Also on its own, because a parser note is the only part of that string that
         // is about the *signal* rather than about the plumbing, and a report with room
         // for one line wants that line.
@@ -745,7 +777,7 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
 }
 
 /**
- * Ask a decoder what it saw, when it recognised nothing.
+ * Ask a decoder what it saw, when it recognized nothing.
  *
  * Bounded hard: it runs once, on the same samples, with a short timeout. A decoder that
  * cannot explain itself quickly is one that has already cost the user enough time.

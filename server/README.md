@@ -320,11 +320,37 @@ Three things are worth knowing:
   slicer, or annotate a stage inside it, and the tab is drawn differently to say so.
   That is the trade for 250 protocols; the native chain is there for when you need to
   *understand* a decode rather than get one.
-- **Adapters ship with the tool.** They are a table in `server/adapters.js`, not
-  something you drop in. An adapter is a command line, so a droppable one would be
-  arbitrary code execution on the box — the same reason dropped plugins run in your
-  browser instead.
+- **Adapters are not droppable.** They are a table in `server/adapters.js`, plus whatever
+  is in `SDRFLEX_ADAPTERS` (below). An adapter is a command line, so a *droppable* one
+  would be arbitrary code execution on the box — the same reason dropped plugins run in
+  your browser instead.
 - **A missing program is still listed**, greyed, naming what it wants.
+
+### Decoders you added
+
+`SDRFLEX_ADAPTERS` names a directory of your own decoders
+([ADR-0026](../docs/adr/0026-decoder-packs.md)). One directory per decoder, each holding a
+manifest and optionally a flowgraph and a golden capture:
+
+```
+~/sdrflex-decoders/
+  my-decoder/
+    adapter.json      or adapter.mjs, when it needs functions
+    flowgraph.py      optional
+    fixture.json      optional, with the capture beside it
+```
+
+Read at startup. The banner says how many loaded; one that does not load is named with
+the reason and skipped, so a typo does not take the others with it. A local decoder is
+badged **yours** rather than **ext** in the menu, and cannot take an id that ships with
+the tool.
+
+**A world-writable directory is refused.** An adapter is a command line, so anything that
+can write there can run programs on this box — the directory's permissions are the
+control. `chmod o-w` it.
+
+The full contract, with worked examples for a plain program and a GNU Radio flowgraph, is
+in [adding a decoder](../docs/10-adding-a-decoder.md).
 
 ## Security posture, stated plainly
 

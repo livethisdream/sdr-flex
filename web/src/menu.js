@@ -103,7 +103,8 @@ export class ContextMenu {
     // words above it were not
     const item = (o, i, gi) =>
       `<button class="ctx-i${o.stub ? ' stub' : ''}${!headed && gi > 0 && i === 0 ? ' gsep' : ''}" data-op="${o.id}">${o.name}` +
-      `${o.external ? '<span class="ext">ext</span>' : ''}` +
+      `${o.local ? `<span class="ext mine" title="from your ${o.local} pack">yours</span>`
+        : o.external ? '<span class="ext">ext</span>' : ''}` +
       `${o.stub ? '<span class="soon">M4</span>' : ''}</button>`;
 
     this.el.innerHTML =

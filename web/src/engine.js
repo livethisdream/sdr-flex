@@ -642,7 +642,7 @@ export class MockEngine extends Graph {
    * **What was not tried is part of the answer.** A decoder that is not installed, that
    * takes the wrong kind of stream, or that wants bandwidth the capture never had comes
    * back with its reason. An empty list is otherwise unreadable: you cannot tell a
-   * signal nothing recognised from a signal nothing was even asked about.
+   * signal nothing recognized from a signal nothing was even asked about.
    */
   async identify(nodeId, { at = null, onResult = null, timeoutMs = 20_000, concurrency = 3 } = {}) {
     const n = this.node(nodeId);
@@ -763,6 +763,10 @@ export class MockEngine extends Graph {
       .filter((a) => accepts(a.in, n.out.kind))
       .map((a) => ({ id: a.id, name: a.name, group: a.group, in: a.in, out: a.out,
                      external: true, opaque: true, blurb: a.blurb,
+                     // Yours or ours (ADR-0026). A decoder you added misbehaving and one
+                     // that shipped misbehaving are different problems, and the menu is
+                     // where you find out which this is.
+                     ...(a.local ? { local: a.local } : {}),
                      stub: !a.available, needs: a.command }));
     // A loaded plugin is an operation like any other — same menu, same filter on
     // stream type, marked so you can see it came from outside (ADR-0013's opacity

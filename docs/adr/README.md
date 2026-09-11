@@ -30,7 +30,7 @@ why, what it costs, and what would make us change our minds.
 | [0023](0023-frequency-makes-a-channel.md) | Frequency makes a channel; time is a property of one | Accepted |
 | [0024](0024-composable-decode-chain.md) | The transparent decode path is composable single-purpose nodes | Accepted |
 | [0025](0025-golden-capture-conformance.md) | A demod or decoder ships with a golden capture, or it does not ship | Accepted |
-| [0026](0026-decoder-packs.md) | A decoder ships as a pack — manifest, fixtures and version pin | Proposed |
+| [0026](0026-decoder-packs.md) | A decoder ships as a pack — manifest and fixtures in a directory | Accepted |
 | [0027](0027-sinks-are-nodes.md) | Sinks are nodes; views are tabs | Accepted |
 | [0028](0028-plugin-boundary-is-a-stream-type.md) | A plugin is defined by the stream types it sits between | Accepted |
 | [0029](0029-the-client-owns-the-clock.md) | The client owns the clock; the server answers about moments | Accepted |
