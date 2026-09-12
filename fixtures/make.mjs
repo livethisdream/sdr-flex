@@ -360,7 +360,32 @@ function ofdmGrid() {
   return { dir, bytes, samples: g.iq.length / 2, rate };
 }
 
-for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm, fhssHopping, ofdmGrid]) {
+// ── 9. A screen leaking, for the raster ──────────────────────────────────
+// What a monitor radiates: pixels along a line, lines down a frame, blanking where the
+// beam flies back. The blanking is the only structure in it and is what makes the line
+// period findable — nothing has to be told the resolution.
+//
+// A synthetic screen rather than a recording, and not only for ADR-0025's reasons: a real
+// TEMPEST capture is a picture of somebody's actual screen, which is the last thing that
+// belongs in a public repository.
+function tempestRaster() {
+  const rate = 200_000, centerHz = 300_000_000;
+  const width = 96, height = 64;
+  const img = mod.bitmapText('SDR', { width, height, scale: 4 });
+  const r = mod.rasterScan(img, { width, height, hBlank: 24, vBlank: 8, seed: 0x7ec3 });
+  const iq = mod.amCarrier(r.signal, { seed: 0x2b1f });
+  const dir = path.join(HERE, 'tempest-raster');
+  const bytes = writeSigmf(dir, 'capture', iq, {
+    sampleRate: rate, centerHz,
+    note: `Synthetic video leak: ${width}x${height} visible, ${r.lineN} samples a line, ` +
+          `${r.frameLines} lines a frame, three frames. The screen has SDR on it. ` +
+          'Nobody transmitted this and it is not a picture of anybody\'s monitor.',
+  });
+  return { dir, bytes, samples: iq.length / 2, rate };
+}
+
+for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm, fhssHopping,
+                    ofdmGrid, tempestRaster]) {
   const r = make();
   if (r.skipped) {
     console.log(`${path.basename(r.dir).padEnd(20)} skipped — ${r.skipped}`);

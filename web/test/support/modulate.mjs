@@ -491,3 +491,58 @@ export function gridText(text, { fftN = 64, rowsPerLine = 5, blank = 6, pad = 3,
   for (let i = 0; i < blank; i++) rows.push(new Uint8Array(fftN));
   return rows;
 }
+
+// ── a screen leaking ────────────────────────────────────────────────────────
+
+/**
+ * A raster-scanned video signal, which is what a monitor radiates.
+ *
+ * Pixels left to right, lines top to bottom, and blanking intervals where the beam is
+ * flying back and nothing is drawn. The blanking is not decoration: it is the only
+ * structure in the signal, and it is what makes the line period findable at all.
+ */
+export function rasterScan(image, {
+  width, height, hBlank = 24, vBlank = 8, seed = 0x7ec3, noise = 0.05, amplitude = 0.5,
+}) {
+  const lineN = width + hBlank;
+  const frameLines = height + vBlank;
+  const rand = rng(seed);
+  const frames = 3;
+  const out = new Float32Array(lineN * frameLines * frames);
+  let w = 0;
+  for (let f = 0; f < frames; f++) {
+    for (let y = 0; y < frameLines; y++) {
+      for (let x = 0; x < lineN; x++) {
+        const on = y < height && x < width ? image[y * width + x] : 0;
+        out[w++] = on * amplitude + (rand() - 0.5) * noise;
+      }
+    }
+  }
+  return { signal: out, lineN, frameLines, frames, width, height };
+}
+
+/** The same five-row font, rendered into a bitmap rather than a resource grid. */
+export function bitmapText(text, { width = 96, height = 64, scale = 4 } = {}) {
+  const rows = gridText(text, { fftN: width, blank: 0, pad: scale, wide: scale });
+  const img = new Float32Array(width * height);
+  const top = Math.max(0, Math.floor((height - rows.length) / 2));
+  for (let y = 0; y < rows.length && top + y < height; y++) {
+    for (let x = 0; x < width; x++) img[(top + y) * width + x] = rows[y][x] ? 1 : 0;
+  }
+  return img;
+}
+
+/** Amplitude modulation onto IQ, which is how the leak reaches a receiver. */
+export function amCarrier(signal, { seed = 0x2b1f, noise = 0.01 } = {}) {
+  const n = signal.length;
+  const iq = new Float32Array(n * 2);
+  const rand = rng(seed);
+  for (let i = 0; i < n; i++) {
+    // A real leak is a harmonic of the pixel clock with the video on its envelope. At
+    // baseband that is the envelope itself, which is what an AM detector recovers.
+    const a = Math.max(0, signal[i]);
+    iq[i * 2] = a + (rand() - 0.5) * noise;
+    iq[i * 2 + 1] = (rand() - 0.5) * noise;
+  }
+  return iq;
+}

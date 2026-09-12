@@ -129,6 +129,17 @@ export const OPS = {
   'core.ofdm': {
     name: 'OFDM grid', group: 'Analyze', in: 'iq', out: 'grid',
   },
+  // A screen leaking is a raster: pixels along a line, lines down a frame. Fold the
+  // signal at the line period and the picture comes back — the same grid view OFDM uses,
+  // because "fold a signal into two dimensions" is one idea (ADR-0034).
+  // Takes IQ as well as a demodulated stream, and IQ is the better input: the AM
+  // detector's post-detection filter is sized for audio — forty microseconds — and a
+  // pixel here is a fraction of one. Running a screen through it smears eight pixels
+  // into each other and the letters come out as bars. The raster takes the magnitude
+  // itself and leaves the bandwidth alone.
+  'core.raster': {
+    name: 'Raster', group: 'Analyze', in: ['iq', 'real'], out: 'grid',
+  },
   'core.burst_detector': {
     name: 'Burst detector', group: 'Analyze', in: 'iq', out: 'events',
     stub: true,
@@ -948,6 +959,15 @@ export class MockEngine extends Graph {
       node.params = DETECTORS[op].derive(iq, count, fs);
       node.out = { kind: 'real', sampleRate: fs, centerHz: p.out.centerHz };
       node.label = DETECTORS[op].label;
+    } else if (op === 'core.raster') {
+      node.params = {
+        lineUs: param(0, 'auto', { from: 'not yet measured — the shortest period it repeats at' }),
+        lines: param(0, 'auto', { from: 'not yet measured — how many lines before it repeats again' }),
+        average: param(1, 'manual'),
+        floorDb: param(-20, 'auto', { from: 'relative to the brightest pixel' }),
+      };
+      node.out = { kind: 'grid', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = 'Raster';
     } else if (op === 'core.ofdm') {
       // Nothing is assumed. The FFT size, the prefix and the symbol period are all
       // derived from the signal when the grid is built, and each says what told it so.
@@ -1237,6 +1257,7 @@ export class MockEngine extends Graph {
   async sliceGrid(nodeId, at = null) {
     const n = this.node(nodeId);
     if (!n || n.out.kind !== 'grid') return null;
+    if (n.op === 'core.raster') return this._sliceRaster(n, at);
     const p = this.node(n.parent);
     // Keyed on the *question*, not the answer.
     //
@@ -1275,6 +1296,69 @@ export class MockEngine extends Graph {
     n._grid = { key, ...g, est, sampleRate: fs, centerHz: p.out.centerHz,
                 t0: span.t0, spacingHz: est.spacingHz, symbolS: est.symbolS,
                 confident: est.confident };
+    return n._grid;
+  }
+
+  /**
+   * A screen, folded back out of the signal that leaked it.
+   *
+   * Two periods and a fold. The line period is the shortest thing the signal repeats at;
+   * the frame is a whole number of those; and averaging the frames is free signal-to-noise
+   * on a still picture, which a leak almost always is.
+   */
+  async _sliceRaster(n, at) {
+    const p = this.node(n.parent);
+    const pinnedLine = n.params.lineUs.mode === 'manual' && n.params.lineUs.value > 0;
+    const key = [pinnedLine ? `line:${n.params.lineUs.value}` : 'auto',
+                 n.params.average.value].join('|');
+    if (n._grid && n._grid.key === key) return n._grid;
+
+    const span = await this._spanOf(p, at);
+    if (!span) return null;
+    const fs = span.sampleRate;
+    // The envelope, at full bandwidth. Nothing is filtered on the way in — the whole
+    // point of taking IQ here is to avoid a post-detection filter sized for audio.
+    const video = span.kind === 'iq' ? dsp.amEnvelope(span.data, span.count) : span.data;
+    const est = dsp.estimateRaster(video, span.count, fs);
+    const lineSamples = pinnedLine ? (n.params.lineUs.value * 1e-6) * fs : est.lineSamples;
+
+    if (!lineSamples || lineSamples < 4) {
+      n._grid = { key, rows: 0, cols: 0, data: new Float32Array(0),
+                  error: est.reason || 'nothing here repeats often enough to be a raster' };
+      return n._grid;
+    }
+
+    n.params.lineUs = { ...n.params.lineUs, value: +((lineSamples / fs) * 1e6).toFixed(3),
+      auto: { from: `it repeats every ${lineSamples.toFixed(1)} samples ` +
+                    `(${est.peak?.toFixed(2)} against ${est.background?.toFixed(2)} elsewhere)`,
+              confident: !!est.confident } };
+    n.params.lines = { ...n.params.lines, value: est.linesPerFrame || 0,
+      auto: { from: est.frameConfident
+        ? `the whole frame repeats every ${est.linesPerFrame} lines (${est.frameScore.toFixed(2)})`
+        : 'no frame repeat stood out — this may be moving, or only one frame long',
+        confident: !!est.frameConfident } };
+
+    const cols = Math.max(2, Math.round(lineSamples));
+    const folded = dsp.foldRaster(video, span.count, lineSamples, { cols, maxRows: 4096 });
+
+    // Fold the frames on top of each other, when there are frames and averaging is on.
+    let out = folded;
+    const lines = est.linesPerFrame;
+    const wantAvg = n.params.average.value && est.frameConfident && lines > 2;
+    let frames = 1;
+    if (wantAvg && folded.rows >= lines * 2) {
+      frames = Math.floor(folded.rows / lines);
+      const acc = new Float32Array(lines * cols);
+      for (let f = 0; f < frames; f++) {
+        for (let i = 0; i < lines * cols; i++) acc[i] += folded.data[f * lines * cols + i];
+      }
+      for (let i = 0; i < acc.length; i++) acc[i] /= frames;
+      out = { rows: lines, cols, data: acc };
+    }
+
+    n._grid = { key, ...out, sampleRate: fs, centerHz: p.out.centerHz, t0: span.t0,
+                symbolS: lineSamples / fs, spacingHz: 0, frames,
+                confident: !!est.confident, kindLabel: 'raster' };
     return n._grid;
   }
 

@@ -579,6 +579,135 @@ export function findHops(iq, count, sampleRate, { bins = 256, step = 128, minSte
 }
 
 /**
+ * The period a signal repeats at, found by correlating it with itself.
+ *
+ * Normalized, so the answer does not depend on the level, and refined by a parabola
+ * through the peak and its neighbors — a raster line is rarely a whole number of samples,
+ * and a period rounded to the nearest sample shears the picture a little more with every
+ * line until it is unreadable halfway down.
+ */
+export function estimatePeriod(x, { minLag, maxLag, maxSamples = 1 << 19 }) {
+  const n = Math.min(x.length, maxSamples);
+  const hi = Math.min(maxLag, Math.floor(n / 3));
+  if (hi <= minLag + 2) return { value: 0, confident: false, reason: 'nothing to correlate over' };
+
+  // Mean removed: a video signal sits on a pedestal, and correlating the pedestal with
+  // itself is a large number that says nothing.
+  let mean = 0;
+  for (let i = 0; i < n; i++) mean += x[i];
+  mean /= n;
+
+  let e0 = 0;
+  for (let i = 0; i < n; i++) { const v = x[i] - mean; e0 += v * v; }
+  if (!(e0 > 0)) return { value: 0, confident: false, reason: 'a flat signal has no period' };
+
+  const score = new Float32Array(hi + 1);
+  let best = -Infinity, bestLag = 0;
+  for (let lag = minLag; lag <= hi; lag++) {
+    let acc = 0;
+    const m = n - lag;
+    for (let i = 0; i < m; i++) acc += (x[i] - mean) * (x[i + lag] - mean);
+    const v = acc / (e0 * (m / n));
+    score[lag] = v;
+    if (v > best) { best = v; bestLag = lag; }
+  }
+  if (bestLag <= minLag || bestLag >= hi) {
+    return { value: bestLag, confident: false, reason: 'the best match is at the edge of the search' };
+  }
+
+  // Sub-sample, through the peak and its two neighbors.
+  const a = score[bestLag - 1], b = score[bestLag], c = score[bestLag + 1];
+  const denom = a - 2 * b + c;
+  const shift = denom !== 0 ? (0.5 * (a - c)) / denom : 0;
+  const lag = bestLag + Math.max(-1, Math.min(1, shift));
+
+  // How much it stands out. A signal with no period still has a highest correlation
+  // somewhere, and reporting that as a period is how a picture of noise gets drawn.
+  let sum = 0, k = 0;
+  for (let i = minLag; i <= hi; i++) { sum += score[i]; k++; }
+  const mean2 = sum / (k || 1);
+  return { value: lag, peak: best, background: mean2, contrast: best - mean2,
+           confident: best > 0.3 && best - mean2 > 0.15, score, minLag, maxLag: hi };
+}
+
+/**
+ * Fold a signal into a picture, one row per period.
+ *
+ * Each row is resampled onto `cols` columns at its own fractional start, because the
+ * period is fractional: taking `round(period)` samples per row accumulates a fraction of
+ * a sample every line and the image shears.
+ */
+export function foldRaster(x, count, period, { cols = 0, maxRows = 1024, from = 0 } = {}) {
+  const width = cols || Math.max(2, Math.round(period));
+  const rows = Math.min(maxRows, Math.floor((count - from) / period));
+  if (rows < 1) return { rows: 0, cols: width, data: new Float32Array(0) };
+  const data = new Float32Array(rows * width);
+  for (let r = 0; r < rows; r++) {
+    const base = from + r * period;
+    for (let c = 0; c < width; c++) {
+      const at = base + (c / width) * period;
+      const i0 = Math.floor(at);
+      const f = at - i0;
+      const a = i0 >= 0 && i0 < count ? x[i0] : 0;
+      const b = i0 + 1 >= 0 && i0 + 1 < count ? x[i0 + 1] : 0;
+      data[r * width + c] = a * (1 - f) + b * f;
+    }
+  }
+  return { rows, cols: width, data };
+}
+
+/**
+ * A raster: how long a line is, and how many lines make a frame.
+ *
+ * Two periods, found one after the other, because they are found differently. The line
+ * period is the shortest thing the signal repeats at and falls straight out of an
+ * autocorrelation. The frame is a *whole number of lines* — so rather than search the
+ * autocorrelation again and risk landing on a lag that is not a multiple, only multiples
+ * of the line period are scored.
+ *
+ * Averaging the frames is the point of finding the second one. A leak is a weak signal
+ * and a still picture is the same frame over and over; adding them up is free signal.
+ */
+export function estimateRaster(x, count, sampleRate, {
+  minLineUs = 4, maxLineUs = 2000, maxLines = 2048,
+} = {}) {
+  const minLag = Math.max(4, Math.round((minLineUs * 1e-6) * sampleRate));
+  const maxLag = Math.round((maxLineUs * 1e-6) * sampleRate);
+  const line = estimatePeriod(x, { minLag, maxLag });
+  if (!line.value) return { ...line, lineSamples: 0, linesPerFrame: 0 };
+
+  // Frames: score every whole number of lines, and keep the best that is not trivial.
+  const P = line.value;
+  let mean = 0;
+  for (let i = 0; i < count; i++) mean += x[i];
+  mean /= count || 1;
+  let e0 = 0;
+  for (let i = 0; i < count; i++) { const v = x[i] - mean; e0 += v * v; }
+
+  let bestLines = 0, bestScore = -Infinity;
+  const top = Math.min(maxLines, Math.floor(count / (P * 2)));
+  for (let k = 2; k <= top; k++) {
+    const lag = Math.round(k * P);
+    if (lag >= count - 16) break;
+    let acc = 0;
+    const m = count - lag;
+    for (let i = 0; i < m; i += 2) acc += (x[i] - mean) * (x[i + lag] - mean);
+    const v = (acc * 2) / (e0 * (m / count));
+    if (v > bestScore) { bestScore = v; bestLines = k; }
+  }
+  return {
+    ...line,
+    lineSamples: P,
+    lineUs: (P / sampleRate) * 1e6,
+    linesPerFrame: bestLines,
+    frameScore: bestScore,
+    // A frame is only worth claiming if the whole frame repeats about as well as a line
+    // does. A still picture does; a signal that happens to be periodic at a line does not.
+    frameConfident: bestLines > 2 && bestScore > 0.25,
+  };
+}
+
+/**
  * OFDM's own structure, found without being told any of it.
  *
  * Every OFDM symbol carries a cyclic prefix: a copy of its own tail pasted in front. That

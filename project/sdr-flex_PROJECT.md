@@ -53,8 +53,10 @@ Working end to end:
   the sequence, and a de-hopper that follows it so the ordinary chain reads the payload
 - OFDM: the resource grid as a picture, with the FFT size, cyclic prefix and symbol period
   all recovered from the signal — `grid` is a stream type with a canvas view of its own
+- Raster: a screen leaking, folded back into a picture, with the line and frame periods
+  derived and the frames averaged
 
-Tests: 215 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 227 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -511,6 +513,30 @@ Also: both axes of a grid have to be scaled together. A cell is one subcarrier b
 symbol and has no natural aspect ratio; glyphs three subcarriers wide and fifteen symbols
 tall are legible in a terminal and a smear on a screen.
 
+### The raster, and its honest limit
+
+`core.raster` takes IQ (or a demodulated stream) and gives a screen back: line period from
+an autocorrelation, frame as the best whole number of lines, frames averaged. On
+`fixtures/tempest-raster` it recovers **600.0 µs per line and 72 lines a frame** and the
+screen reads `SDR` in the browser, with a 23.1 Hz refresh derived from the two.
+
+Three things in it:
+
+- **It takes IQ rather than a demodulated stream.** The AM detector's post-detection
+  filter is 40 µs — right for speech, about eight pixels here — and through it the letters
+  come out as bars. *That filter is arguably wrong for anything wider than audio and the
+  AM node has no parameter for it; a separate thing to fix.*
+- **The line period is fractional.** Rounded to a whole sample the picture shears a little
+  more every line. The correlation peak is refined by a parabola through its neighbors.
+- **Only whole numbers of lines are scored for the frame**, because searching the
+  autocorrelation again lands on lags that are not multiples and the frame slides.
+
+**What this does not prove:** that it reads a *real* leak. A genuine capture has an
+unknown pixel clock, a harmonic carrier, interlace, and a receiver synchronized to none of
+it — which is why gr-tempest has five live knobs. The fixture is the case where all of
+that is already right. The node says "not confident" rather than drawing noise, and the
+suite asserts that a moving picture finds a line but no frame.
+
 ### The direwolf flake, found and fixed
 
 Written down last session as "seen once, suspect load". It recurred, so it got measured:
@@ -575,11 +601,16 @@ house rule.
   FLEX/POCSAG, CW, FSK, LoRa, M17, FHSS, OFDM. Have a node but never tested against a real signal of that
   kind: NBFM, USB/LSB, WBFM — and WBFM has no de-emphasis, so broadcast audio will sound
   wrong. Nothing at all: BBC, TEMPEST, CDMA, the AOL handshake.
-- **TEMPEST, the last of the three folds.** FHSS (ADR-0033) and OFDM (ADR-0034) are done
-  and the `grid` view already draws anything two-dimensional. TEMPEST wants a raster:
-  estimate the horizontal line period by autocorrelation, fold, render line against frame.
-  The mechanism is testable against a synthetic screen; a *real* capture is harder, and
-  gr-tempest's five live operator knobs exist for a reason.
+- **A real TEMPEST capture.** All three folds are built (ADR-0033, ADR-0034) and the
+  raster reads a synthetic screen. What is untested is a genuine leak: unknown pixel
+  clock, harmonic carrier, interlace, nothing synchronized. The likely shape is the
+  gr-tempest adapter with its knobs exposed as parameters, which the strip can already
+  draw — or a resolution search in the raster node, since it already scores candidate
+  periods.
+- **The AM detector's post-detection filter is fixed at 40 µs.** Right for speech, wrong
+  for anything wider — it smears eight pixels of a video leak together. The raster works
+  around it by taking IQ; a bandwidth parameter on the AM node is the real fix, and the
+  same gap is why WBFM has no de-emphasis.
 - **An adapter cannot hand audio back to the graph.** M17 decodes voice and the node
   throws it away, saying how much there was. Every decoder that produces audio rather than
   records — M17, and anything vocoded — is half-connected until this exists. It wants an

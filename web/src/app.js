@@ -1493,11 +1493,14 @@ class App {
       return;
     }
 
+    const raster = g.kindLabel === 'raster';
     const spacing = g.spacingHz || 0;
     head.innerHTML =
       `<b>${g.rows} × ${g.cols}</b>` +
-      `<span>${(g.symbolS * 1e6).toFixed(0)} µs per symbol · ` +
-      `${(spacing / 1e3).toFixed(2)} kHz per subcarrier` +
+      `<span>${raster
+        ? `${(g.symbolS * 1e6).toFixed(1)} µs per line` +
+          `${g.frames > 1 ? ` · ${g.frames} frames averaged` : ''}`
+        : `${(g.symbolS * 1e6).toFixed(0)} µs per symbol · ${(spacing / 1e3).toFixed(2)} kHz per subcarrier`}` +
       `${g.confident ? '' : ' · <em>not confident</em>'}</span>` +
       '<button class="exgo" id="gridrun">Read again</button>';
     const btn = $('#gridrun');
@@ -1557,6 +1560,14 @@ class App {
 
   renderGridAxis(g) {
     const el = $('#gridaxis');
+    if (g.kindLabel === 'raster') {
+      // A raster's axes are pixels and lines, not frequency: it is a picture of a screen,
+      // and labeling it in hertz would be labeling it with the wrong thing entirely.
+      el.innerHTML = `<span>${g.cols} px across</span>` +
+        `<span>${g.rows} lines · ${(g.rows * g.symbolS * 1e3).toFixed(1)} ms a frame</span>` +
+        `<span>${(1 / (g.rows * g.symbolS)).toFixed(1)} Hz refresh</span>`;
+      return;
+    }
     const span = g.cols * (g.spacingHz || 0);
     const left = (g.centerHz || 0) - span / 2, right = (g.centerHz || 0) + span / 2;
     const label = (hz) => (Math.abs(hz) >= 1e6 ? (hz / 1e6).toFixed(3) + ' MHz' : (hz / 1e3).toFixed(1) + ' kHz');
