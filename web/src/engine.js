@@ -110,6 +110,19 @@ export const OPS = {
   // installed on the box, which only the engine can know, so `palette` asks the adapter
   // table rather than this one — and a decoder whose program is missing is still shown,
   // saying which program (ADR-0013).
+  // Where a hopper has been, and in what order. The sequence is usually the thing
+  // somebody is after, so it is records rather than a picture — but the picture is a
+  // view of the same records (ADR-0027).
+  'core.hopmap': {
+    name: 'Hop map', group: 'Analyze', in: 'iq', out: 'events',
+  },
+  // And then following it. A hopper's payload runs through the dwells rather than
+  // restarting on each one, so stitching them back together hands the ordinary chain a
+  // signal it already knows how to read — which is why the hop sequence and the bits
+  // come out of one capability rather than two.
+  'core.dehop': {
+    name: 'De-hop', group: 'Narrow', in: 'iq', out: 'iq',
+  },
   'core.burst_detector': {
     name: 'Burst detector', group: 'Analyze', in: 'iq', out: 'events',
     stub: true,
@@ -514,6 +527,89 @@ export class MockEngine extends Graph {
    * frame is microseconds, and an answer only counts if it validates all of them — one
    * short frame agreeing with an 8-bit CRC happens one time in 256 and means nothing.
    */
+  /**
+   * Every dwell in the span, in order, with the channel set derived from them.
+   *
+   * The parameters are filled in from what was found and say what told them so
+   * (ADR-0017) — a hop map that arrives needing to be told the dwell time is a hop map
+   * for somebody who already knew the answer, which is nobody.
+   */
+  async runHops(n, at) {
+    const p = this.node(n.parent);
+    const t0 = performance.now();
+    const span = await this._spanOf(p, at);
+    if (!span) return { records: [], error: 'nothing upstream has produced samples yet' };
+
+    const bins = Math.max(32, Math.round(n.params.bins.value) || 256);
+    const found = dsp.findHops(span.data, span.count, span.sampleRate, { bins, step: bins >> 1 });
+
+    const evidence = found.hops.length
+      ? `${found.hops.length} dwells over ${(span.t1 - span.t0).toFixed(2)} s`
+      : 'no dwells found';
+    n.params.dwellMs = { ...n.params.dwellMs, value: +(found.dwellS * 1000 || 0).toFixed(3),
+      auto: { from: found.confident
+        ? `the median of ${found.hops.length} dwells (${(found.agreement * 100).toFixed(0)}% within a quarter of it)`
+        : `${evidence} — the dwells do not agree with each other, so this may not be a hopper`,
+        confident: found.confident } };
+    n.params.spacingHz = { ...n.params.spacingHz, value: Math.round(found.spacingHz || 0),
+      auto: { from: found.channels.length > 1
+        ? `the median gap between ${found.channels.length} channels`
+        : 'only one channel was used, so there is no spacing to measure',
+        confident: found.channels.length > 1 } };
+    n.params.channels = { ...n.params.channels, value: found.channels.length,
+      auto: { from: `peak frequencies clustered by their gaps, ${evidence}`, confident: found.confident } };
+
+    if (!found.hops.length) {
+      return { records: [], ms: performance.now() - t0,
+               error: found.reason ? `no hopping here: ${found.reason}` : 'no dwells above the noise floor' };
+    }
+
+    const centerHz = p.out.centerHz;
+    const records = found.hops.map((h, i) => ({
+      text: `ch ${h.channel} · ${((centerHz + h.hz) / 1e6).toFixed(4)} MHz`,
+      n: i, channel: h.channel, t: +h.t0.toFixed(4),
+      ms: +((h.t1 - h.t0) * 1000).toFixed(2),
+      offsetHz: Math.round(h.hz),
+    }));
+    // The order is the answer. A reader scrolling forty rows to write down a sequence is
+    // a reader doing by hand the one thing this node exists to do.
+    records.unshift({
+      text: `sequence: ${found.hops.map((h) => h.channel).join(' ')}`,
+      dwells: found.hops.length, channels: found.channels.length,
+      dwellMs: +(found.dwellS * 1000).toFixed(2),
+      spacingHz: Math.round(found.spacingHz),
+    });
+    return { records, ms: performance.now() - t0,
+             note: `${found.channels.length} channels, ${found.hops.length} dwells` };
+  }
+
+  /**
+   * A window to estimate from: as long as makes sense, and inside the medium.
+   *
+   * Every `auto` parameter that is derived when a node is made is derived from this, so
+   * it is the difference between a value with evidence behind it and a value derived from
+   * the silence before the recording started.
+   */
+  _peekWindow(fs, now, seconds = 0.25) {
+    const d = this.duration();
+    const have = isFinite(d) ? Math.floor(d * fs) : Infinity;
+    const count = Math.max(256, Math.min(65536, Math.floor(fs * seconds), have));
+    // End far enough in for the window to be full, but never past the end of the medium.
+    const earliest = count / fs;
+    const at = isFinite(d) ? Math.min(d, Math.max(now, earliest)) : Math.max(now, earliest);
+    return { count, at };
+  }
+
+  /** The whole span a node should be analyzed over: the pinned clip, or all of it. */
+  async _spanOf(p, at) {
+    const pin = this.isPinned(p.id);
+    const now = at != null ? at : this.t;
+    const t0 = pin ? pin.params.t0.value : 0;
+    const t1 = pin ? pin.params.t1.value : (isFinite(this.duration()) ? this.duration() : now);
+    const got = await this.readSpan(p.id, t0, t1);
+    return got ? { ...got, t0, t1 } : null;
+  }
+
   async runFrames(n, at) {
     const p = this.node(n.parent);
     const t0 = performance.now();
@@ -612,6 +708,11 @@ export class MockEngine extends Graph {
     if (!n) return null;
     if (n.op === 'core.framer') {
       const out = await this.runFrames(n, at);
+      n._records = out;
+      return out;
+    }
+    if (n.op === 'core.hopmap') {
+      const out = await this.runHops(n, at);
       n._records = out;
       return out;
     }
@@ -830,11 +931,39 @@ export class MockEngine extends Graph {
       // arrives needing to be told the deviation is a detector for someone who
       // already knew the answer.
       const fs = p.out.sampleRate;
-      const iq = this._readIQ(p, now, Math.min(65536, Math.floor(fs * 0.25)));
-      const count = iq.length / 2;
+      // A quarter second, or as much as there is — whichever is less, and positioned so
+      // the window actually lands on signal. Asking for 0.25 s ending at the playhead is
+      // right on a long capture and wrong on a short one: on a 90 ms capture with the
+      // playhead at 50 ms, four fifths of that window is before the beginning, and an
+      // estimator handed mostly silence reports "looks unmodulated" and picks a
+      // deviation off the noise.
+      const { count, at } = this._peekWindow(fs, now);
+      const iq = this._readIQ(p, at, count);
       node.params = DETECTORS[op].derive(iq, count, fs);
       node.out = { kind: 'real', sampleRate: fs, centerHz: p.out.centerHz };
       node.label = DETECTORS[op].label;
+    } else if (op === 'core.hopmap' || op === 'core.dehop') {
+      // Undecided on purpose, and for the same reason the slicers are: a hopper's dwells
+      // are spread across a capture and the window a display happens to be showing is
+      // almost never over a representative stretch of them. These are derived from the
+      // whole span when the node is asked to produce something, not from a peek here.
+      node.params = {
+        bins: param(256, 'auto', { from: 'a compromise between time and frequency resolution' }),
+        dwellMs: param(0, 'auto', { from: 'not yet measured — derived from the dwells found' }),
+        spacingHz: param(0, 'auto', { from: 'not yet measured — derived from the channels found' }),
+        channels: param(0, 'auto', { from: 'not yet measured' }),
+      };
+      if (op === 'core.dehop') {
+        node.params.channel = param(-1, 'auto', { from: 'every channel, in the order they were used' });
+        node._needsDehop = true;              // sliced below, once the node exists to hang it on
+        // The de-hopped stream is one channel wide, so the rate that makes sense is the
+        // channel spacing with room either side rather than whatever the source was.
+        node.out = { kind: 'iq', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+        node.label = 'De-hop';
+      } else {
+        node.out = { kind: 'events', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+        node.label = 'Hop map';
+      }
     } else if (op === 'core.audio') {
       node.params = {
         volume: param(0.5),
@@ -957,6 +1086,7 @@ export class MockEngine extends Graph {
     }
 
     this.nodes.set(node.id, node);
+    if (node._needsDehop) { delete node._needsDehop; await this._refreshDehop(node.id, now); }
     return node;
   }
 
@@ -967,6 +1097,23 @@ export class MockEngine extends Graph {
   }
 
   /** Hot params take the short path; structural ones cost a rebuild. */
+  /**
+   * De-hopping has to happen before anything downstream can read a sample, and reads are
+   * synchronous. So it runs when the node is made and again whenever a parameter that
+   * would change the answer moves — rather than lazily on first read, which would hand
+   * the first frame silence and the second one the signal.
+   */
+  async _refreshDehop(nodeId, at) {
+    const n = this.node(nodeId);
+    if (!n || n.op !== 'core.dehop') return;
+    const st = await this.sliceDehop(nodeId, at);
+    const live = this.node(nodeId);
+    if (!live || !st) return;
+    // The stitched stream is shorter than the span it came from — that is the dead air
+    // between dwells, removed — so the node's own duration is its own business.
+    live._dehopSpanS = st.count / st.sampleRate;
+  }
+
   async setParam(nodeId, key, value, mode = 'manual') {
     const n = this.node(nodeId);
     const cold = key === 'decim' || key === 'taps';
@@ -981,6 +1128,9 @@ export class MockEngine extends Graph {
         c.out.centerHz = n.out.centerHz;
       }
     }
+    // De-hopping is done ahead of any read, so a parameter that changes which dwells get
+    // stitched has to redo it before the next frame asks for samples.
+    if (n.op === 'core.dehop' && (key === 'bins' || key === 'channel')) await this._refreshDehop(n.id, null);
     return { node: n, rebuilt: cold };
   }
 
@@ -1029,7 +1179,98 @@ export class MockEngine extends Graph {
       return dsp.xlateFilterDecimate(src, taps, offset, p.out.sampleRate, decim, count, startPhase).samples;
     }
 
+    if (node.op === 'core.dehop') {
+      // Same length and same time base as its parent, because it corrects rather than
+      // rearranges — so this is an ordinary window read like every other node's.
+      const st = node._dehopped;
+      const out = new Float32Array(count * 2);
+      if (!st || !st.count) return out;                 // not sliced yet, or nothing found
+      const end = Math.floor(tEnd * node.out.sampleRate);
+      for (let k = 0; k < count; k++) {
+        const idx = end - count + k;
+        if (idx < 0 || idx >= st.count) continue;
+        out[k * 2] = st.data[idx * 2];
+        out[k * 2 + 1] = st.data[idx * 2 + 1];
+      }
+      return out;
+    }
+
     return this._readIQ(p, tEnd, count);
+  }
+
+  /**
+   * Follow the hops and stitch the dwells into one continuous channel.
+   *
+   * Mix each dwell down by where it actually was, keep only the part of it that was
+   * transmitting, and lay them end to end. What comes out is the payload as it would have
+   * been if nobody had been hopping — which the ordinary demodulator and slicer chain
+   * reads without knowing anything happened. That is the point: the hop sequence and the
+   * bits are one capability, not two.
+   *
+   * The dwell edges are taken from where the energy was, not from a schedule, so the
+   * settling time at each end of a hop is dropped rather than stitched in as a click.
+   */
+  async sliceDehop(nodeId, at = null) {
+    const n = this.node(nodeId);
+    if (!n || n.op !== 'core.dehop') return null;
+    const p = this.node(n.parent);
+    const key = [n.params.bins.value, n.params.channel.value].join('|');
+    if (n._dehopped && n._dehopped.key === key) return n._dehopped;
+
+    const span = await this._spanOf(p, at);
+    if (!span) return null;
+    const bins = Math.max(32, Math.round(n.params.bins.value) || 256);
+    const found = dsp.findHops(span.data, span.count, span.sampleRate, { bins, step: bins >> 1 });
+    if (!found.hops.length) {
+      n._dehopped = { key, data: new Float32Array(0), count: 0, hops: 0,
+                      reason: found.reason || 'no dwells found' };
+      return n._dehopped;
+    }
+
+    // It corrects; it does not rearrange.
+    //
+    // The first version of this stitched the dwells together with the dead time cut out,
+    // which is the obvious thing to do and is wrong twice over. It makes a stream whose
+    // time axis is not the capture's — and worse, a dwell edge is only known to within
+    // one analysis step, which at any useful resolution is a symbol or two. Cutting there
+    // loses a fraction of a symbol at every hop, so the symbol clock walks and the slicer
+    // downstream reads a payload that decodes to nothing. It looked entirely plausible
+    // until a preamble of 0xAA came back as 0x78e1c78e.
+    //
+    // Correcting each sample by the frequency in effect at that moment leaves every
+    // sample where it was, so the symbol clock survives and the ordinary demodulator and
+    // slicer read the payload without knowing anything happened. Dead air between dwells
+    // stays dead air, which is the truth about the signal rather than a seam hidden in it.
+    const fs = span.sampleRate;
+    const only = Math.round(n.params.channel.value);
+    const offset = new Float32Array(span.count);
+    const live = new Uint8Array(span.count);
+    for (const h of found.hops) {
+      if (only >= 0 && h.channel !== only) continue;
+      const a = Math.max(0, Math.round(h.t0 * fs));
+      const b = Math.min(span.count, Math.round(h.t1 * fs));
+      for (let i = a; i < b; i++) { offset[i] = h.hz; live[i] = 1; }
+    }
+
+    const data = new Float32Array(span.count * 2);
+    let ph = 0, kept = 0;
+    for (let i = 0; i < span.count; i++) {
+      if (!live[i]) { ph = 0; continue; }
+      const re = span.data[i * 2], im = span.data[i * 2 + 1];
+      const c = Math.cos(ph), sn = Math.sin(ph);
+      data[i * 2] = re * c - im * sn;
+      data[i * 2 + 1] = re * sn + im * c;
+      ph += (-2 * Math.PI * offset[i]) / fs;
+      if (ph < -Math.PI * 2) ph += Math.PI * 2;
+      kept++;
+    }
+    n._dehopped = {
+      key, data, count: span.count, sampleRate: fs,
+      hops: found.hops.filter((h) => only < 0 || h.channel === only).length,
+      channels: found.channels.length, dwellS: found.dwellS,
+      keptS: kept / fs, spanS: span.t1 - span.t0,
+    };
+    return n._dehopped;
   }
 
   async _readReal(node, tEnd, count) {

@@ -1326,6 +1326,10 @@ class App {
       const live = this.node();
       if (!live || live.id !== n.id) return;
       n = live;
+      // An analyzer derives its parameters from the whole span while it runs, so the
+      // strip is stale until it has. Redrawing it here is the difference between a dwell
+      // time with the evidence for it and three zeros.
+      this.renderStrip();
     }
     const r = n._sliced;
     if (!r) { el.innerHTML = '<div class="empty">nothing to slice yet</div>'; return; }
@@ -1397,8 +1401,12 @@ class App {
     let n = this.node();
     if (!n || n.out.kind !== 'events') return;
     const el = $('#pane-events');
-    if (!n.plugin && !n.adapter && n.op !== 'core.framer') {
-      el.innerHTML = '<div class="empty">Event streams from the built-in analyzers arrive at M4.5.</div>';
+    // Everything that produces records: a decoder somebody else wrote, a plugin, the
+    // framer, and the analyzers that answer a question about the signal rather than
+    // decoding it.
+    const PRODUCES = ['core.framer', 'core.hopmap'];
+    if (!n.plugin && !n.adapter && !PRODUCES.includes(n.op)) {
+      el.innerHTML = '<div class="empty">This analyzer has nothing to report yet.</div>';
       return;
     }
     if (!n._records || force) {
@@ -1416,6 +1424,10 @@ class App {
       const live = this.node();
       if (!live || live.id !== n.id) return;
       n = live;
+      // An analyzer derives its parameters from the whole span while it runs, so the
+      // strip is stale until it has. Redrawing it here is the difference between a dwell
+      // time with the evidence for it and three zeros.
+      this.renderStrip();
     }
     const r = n._records || { records: [] };
     const rows = r.records.map((rec, i) => {

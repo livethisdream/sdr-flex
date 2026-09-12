@@ -310,7 +310,35 @@ function which(name) {
     .some((d) => { try { return fs.statSync(path.join(d, name)).isFile(); } catch { return false; } });
 }
 
-for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm]) {
+// ── 7. Frequency hopping, for the hop map and the de-hopper ──────────────
+// Two questions at once, which is the point: where did it go, and what did it say. The
+// payload runs straight through the dwells rather than restarting on each one, so
+// recovering it is only possible if the hops are followed — the same chain pointed at
+// the capture without de-hopping first gets nothing, and the suite checks that too.
+//
+// Dwells are a whole number of symbols, because that is how a hopper is built: the
+// frequency changes between symbols and never part-way through one.
+function fhssHopping() {
+  const rate = 200_000, centerHz = 433_920_000;
+  const text = 'HOPPING PAYLOAD 12345';
+  const bytes = [0xaa, 0xaa, 0xaa, 0x2d, 0xd4, ...[...text].map((c) => c.charCodeAt(0))];
+  const bits = [];
+  for (const b of bytes) for (let k = 7; k >= 0; k--) bits.push((b >> k) & 1);
+
+  const g = mod.fhss(bits, { rate, channels: 6, spacingHz: 25_000, dwellSymbols: 16,
+                             baud: 2400, deviationHz: 2400, seed: 0x71c5 });
+  const dir = path.join(HERE, 'fhss-6ch');
+  const bytesWritten = writeSigmf(dir, 'capture', g.iq, {
+    sampleRate: rate, centerHz,
+    note: `Synthetic frequency hopper: 6 channels 25 kHz apart, 16 symbols per dwell, ` +
+          `2-FSK at 2400 baud with 2.4 kHz shift. The hop order comes from a shift ` +
+          `register and the payload runs continuously across the dwells. Sequence: ` +
+          `${g.hops.join(' ')}.`,
+  });
+  return { dir, bytes: bytesWritten, samples: g.samples, rate };
+}
+
+for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm, fhssHopping]) {
   const r = make();
   if (r.skipped) {
     console.log(`${path.basename(r.dir).padEnd(20)} skipped — ${r.skipped}`);

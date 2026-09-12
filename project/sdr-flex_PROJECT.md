@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-11 (decoders checked for real, `Identify`, GNU Radio, local adapters, M17) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-12 (decoders checked for real, `Identify`, GNU Radio, local adapters, M17, FHSS) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
 ---
 
@@ -18,7 +18,7 @@ Update it at the end of a session, not the start of the next one.
 
 MVP in the browser, the same tool with its engine in a container, and live radio into a
 ring recording. Static ES modules, no build step, no dependencies on either side.
-32 ADRs.
+33 ADRs.
 
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
@@ -49,8 +49,10 @@ Working end to end:
   each found, what it declined to try, and what it decoded but refuses to count
 - Decoders you add yourself: a directory of manifests in `SDRFLEX_ADAPTERS`, badged
   "yours" in the menu — `docs/10-adding-a-decoder.md` is the contract
+- Frequency hopping: a hop map that derives the dwell, spacing and channel set and reports
+  the sequence, and a de-hopper that follows it so the ordinary chain reads the payload
 
-Tests: 190 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 203 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -425,6 +427,65 @@ spectrum → tuner → discriminator → decoder, so it fails the way a user wou
 
 `Identify` finds it behind the FM demod and ranks it first, in 862 ms.
 
+## Frequency hopping, as built
+
+ADR-0033. Two nodes over one capability: **Hop map** (`iq` → `events`) reports the
+sequence and derives the dwell time, channel spacing and channel count from the signal;
+**De-hop** (`iq` → `iq`) follows the same dwells so the ordinary FM demod and NRZ slicer
+read the payload without knowing anything happened.
+
+Verified end to end on `fixtures/fhss-6ch`: the hop sequence comes back **exactly**
+(14 of 14 dwells, `1 3 1 3 3 4 2 4 4 1 0 0 2 1`), dwell 6.67 ms, spacing 25.3 kHz against
+25.0, and the payload decodes **26 of 26 bytes** — preamble, sync word and
+`HOPPING PAYLOAD 12345`. The control is in the suite: the same chain pointed at the same
+capture *without* de-hopping first gets nothing.
+
+**De-hop corrects; it does not rearrange.** Cutting the dwells out and stitching them is
+the obvious approach and is wrong twice — it invents a time base the rest of the graph
+does not share, and a dwell edge known only to one analysis step loses a fraction of a
+symbol per hop, which walks the clock and decodes to mush. Convincingly: the preamble came
+back perfect and everything after it was garbage.
+
+Three things in the detector are not obvious and each was a bug first:
+
+- **Cluster the channels before grouping in time.** Grouping by "the peak has not moved
+  much" splits every dwell at each bit transition, because the modulation moves the peak
+  too — 24 dwells became 65.
+- **Detect on peak-over-median, not on level.** A hopper that dwells back to back never
+  goes quiet, so a level threshold has one population to work with and Otsu cheerfully
+  cuts it in half: 59% of a continuous transmission was marked as noise.
+- **Refine every boundary against the instantaneous frequency.** The FFT locates an edge
+  to one step; the instantaneous frequency locates it to a few samples. 650 corrupted
+  samples per capture became 7.
+
+### Three bugs this found that have nothing to do with hopping
+
+The valuable part. All three made decodes quietly worse rather than visibly broken, and
+none would have been found by reading:
+
+- **`otsuThreshold` ranged its histogram between min and max.** Seven bad samples in
+  eighteen thousand stretched the range twentyfold, packed the whole signal into two bins
+  and returned a threshold below all of it — the slicer read the entire capture as ones.
+  Any capture with a click in it has that shape. Now ranged by percentile.
+- **`estimateNrzSymbol` assumed the shortest run was one symbol.** A low percentile
+  instead of the minimum survives one glitch, not a handful. Now it scores every candidate
+  period against every run weighted by length, then refines by total elapsed samples over
+  total symbols — which is how a clock is measured, and three times better than the
+  least-squares fit that was the obvious alternative. 0.45% error → 0.06%, which is the
+  difference between eleven bytes and twenty-six.
+- **Auto parameters were derived from a window that could lie outside the medium.** A
+  quarter second ending at the playhead is right on a long capture; on a 90 ms one with
+  the playhead at 50 ms, four fifths of it is before the recording starts and the
+  estimator reports "looks unmodulated" about silence.
+
+### One flaky test, seen once
+
+`direwolf reads AX.25 over Bell 202` failed once while the Playwright browser and a
+server were running alongside the suite, and has passed eight consecutive runs since.
+Most likely direwolf hitting its timeout under load rather than anything in the code, but
+it is written down rather than waved away — if it recurs, the timeout is the first place
+to look.
+
 ## Local adapters, as built
 
 ADR-0026, which had been Proposed since the beginning and deferred "until three adapters
@@ -473,16 +534,14 @@ house rule.
 - **The CTF's remaining modulations.** The 2026 challenge list is NBFM, WBFM, USB/LSB, CW,
   FHSS, OFDM, FSK, M17, AFSK1200, APRS, ADS-B, BBC (gr-bbc), the AOL handshake, CDMA,
   FLEX/POCSAG, LoRa and TEMPEST (gr-tempest). Covered and verified: AFSK1200/APRS, ADS-B,
-  FLEX/POCSAG, CW, FSK, LoRa, M17. Have a node but never tested against a real signal of that
+  FLEX/POCSAG, CW, FSK, LoRa, M17, FHSS. Have a node but never tested against a real signal of that
   kind: NBFM, USB/LSB, WBFM — and WBFM has no de-emphasis, so broadcast audio will sound
-  wrong. Nothing at all: BBC, TEMPEST, CDMA, OFDM, FHSS, the AOL handshake.
-- **Fold a signal into a grid.** FHSS (time × channel), OFDM (symbol × subcarrier) and
-  TEMPEST (line × frame) are one operation: estimate a period, fold at it, render. The
-  period auto-derived, showing its evidence (ADR-0017). FHSS then needs de-hopping —
-  follow the hop list, retune per hop, concatenate — and the existing demod and slicer
-  chain decodes the payload, so the hop sequence and the bits come out of one capability.
-  What the author wants from each: FHSS the sequence *and* the bits, OFDM a time/frequency
-  grid used as a battleship board, TEMPEST the image, CDMA the bits.
+  wrong. Nothing at all: BBC, TEMPEST, CDMA, OFDM, the AOL handshake.
+- **OFDM and TEMPEST, the other two folds.** FHSS is done (ADR-0033). OFDM wants a
+  resource grid — estimate the symbol period and cyclic prefix by autocorrelation, FFT per
+  symbol, render symbol × subcarrier as the battleship board. TEMPEST wants a raster —
+  estimate the line period, fold, render line × frame. Both are "estimate a period from
+  the signal and fold at it", which is now a shape the hop map has walked once.
 - **An adapter cannot hand audio back to the graph.** M17 decodes voice and the node
   throws it away, saying how much there was. Every decoder that produces audio rather than
   records — M17, and anything vocoded — is half-connected until this exists. It wants an

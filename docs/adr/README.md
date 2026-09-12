@@ -37,3 +37,4 @@ why, what it costs, and what would make us change our minds.
 | [0030](0030-a-radio-is-a-recording.md) | A radio is a recording; only its start moves | Accepted |
 | [0031](0031-identify-says-what-it-will-not-claim.md) | `Identify` is a heuristic, so it is built around what it will not claim | Accepted |
 | [0032](0032-a-flowgraph-is-a-program.md) | A GNU Radio flowgraph is a program, so it is an adapter | Accepted |
+| [0033](0033-de-hop-corrects-rather-than-rearranges.md) | A de-hopper corrects the signal; it does not rearrange it | Accepted |

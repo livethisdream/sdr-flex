@@ -408,16 +408,271 @@ export function envelopeWindow(sampleRate) {
   return Math.max(2, Math.round(sampleRate * 40e-6));
 }
 
+/**
+ * The range a histogram should cover: the bulk of the data, not its extremes.
+ *
+ * Half a percent trimmed from each end, estimated from a subsample so this stays cheap on
+ * a span of millions. A distribution with genuine outliers keeps them — they are simply
+ * not allowed to set the scale.
+ */
+function robustRange(x, trim = 0.005) {
+  const n = x.length;
+  if (!n) return { lo: 0, hi: 1 };
+  const want = Math.min(n, 1 << 16);
+  const stride = Math.max(1, Math.floor(n / want));
+  const sample = new Float64Array(Math.ceil(n / stride));
+  for (let i = 0, k = 0; i < n; i += stride, k++) sample[k] = x[i];
+  sample.sort();
+  const a = Math.floor(sample.length * trim);
+  const b = Math.max(a, sample.length - 1 - a);
+  let lo = sample[a], hi = sample[b];
+  if (!(hi > lo)) { lo = sample[0]; hi = sample[sample.length - 1]; }
+  return { lo, hi };
+}
+
+/**
+ * Where the energy is, over time and frequency.
+ *
+ * One FFT per step, keeping only the strongest bin and how far above the floor it is.
+ * That is a deliberate reduction: a hopper puts everything in one channel at a time, so
+ * the peak *is* the signal, and keeping the whole spectrogram to find it would be a
+ * hundred times the memory for the same answer.
+ */
+export function peakTrack(iq, count, sampleRate, { bins = 256, step = 128 } = {}) {
+  const steps = Math.max(0, Math.floor((count - bins) / step) + 1);
+  const hz = new Float32Array(steps);
+  const db = new Float32Array(steps);
+  const snr = new Float32Array(steps);
+  const win = new Float32Array(bins * 2);
+  const scratch = new Float32Array(bins);
+  for (let s = 0; s < steps; s++) {
+    const at = s * step;
+    win.set(iq.subarray(at * 2, (at + bins) * 2));
+    const sp = spectrum(win, bins, 'Hann');
+    scratch.set(sp.subarray(0, bins));
+    let best = -Infinity, bi = 0;
+    for (let i = 0; i < bins; i++) if (sp[i] > best) { best = sp[i]; bi = i; }
+    hz[s] = (bi - bins / 2) * (sampleRate / bins);
+    db[s] = best;
+    // How far the peak stands above the rest of its own step. This, and not the absolute
+    // level, is what says whether there is a signal here: it does not care what the
+    // receiver's gain was, and — the part that matters — it still works when the
+    // transmitter never stops. A hopper that dwells back to back has no quiet steps to
+    // compare against, and a threshold derived from the level distribution alone then
+    // splits a single population down the middle and calls half of it noise.
+    snr[s] = best - medianOf(scratch);
+  }
+  return { hz, db, snr, steps, stepS: step / sampleRate, binHz: sampleRate / bins };
+}
+
+/**
+ * A frequency hopper's dwells, and the channel set it is walking.
+ *
+ * Runs of consecutive time steps whose peak sits in the same place. Everything the node
+ * shows is derived here and comes with the evidence for it (ADR-0017): the dwell is the
+ * median run length, the spacing is the median gap between the channels actually used,
+ * and the confidence is how much of the signal agrees with those two numbers. A hopper
+ * whose dwells are all different lengths is not a hopper, and saying so is the useful
+ * answer.
+ */
+export function findHops(iq, count, sampleRate, { bins = 256, step = 128, minSteps = 2 } = {}) {
+  const track = peakTrack(iq, count, sampleRate, { bins, step });
+  if (track.steps < 4) return { hops: [], channels: [], confident: false, reason: 'too short to look at' };
+
+  // Is there a signal in this step? Six decibels above the median bin of the same step.
+  // A fixed number rather than a derived one, on purpose: the alternative is deriving a
+  // threshold from a distribution that has only one population in it whenever the
+  // transmitter never stops, and Otsu will always find somewhere to cut.
+  const SNR_DB = 6;
+  const lit = [];
+  for (let i = 0; i < track.steps; i++) if (track.snr[i] > SNR_DB) lit.push(i);
+  if (lit.length < 4) return { hops: [], channels: [], confident: false, reason: 'almost nothing above the noise' };
+
+  // The channel set comes first, before any grouping in time — and that ordering is the
+  // whole trick. Grouping by "the peak has not moved much" looks obvious and is wrong:
+  // the modulation inside a channel moves the peak too. An FSK payload with a 2.4 kHz
+  // shift broke every dwell into pieces at each bit transition, turning 24 dwells into 65.
+  //
+  // So: cluster the peak frequencies, decide what a channel *is*, and only then ask which
+  // consecutive steps are in the same one.
+  const channels = clusterChannels(lit.map((i) => track.hz[i]), track.binHz);
+  if (channels.length < 1) return { hops: [], channels: [], confident: false, reason: 'no channel stood out' };
+
+  const nearest = (hz) => {
+    let best = 0;
+    for (let c = 1; c < channels.length; c++) {
+      if (Math.abs(hz - channels[c]) < Math.abs(hz - channels[best])) best = c;
+    }
+    return best;
+  };
+  const chan = new Int16Array(track.steps).fill(-1);
+  for (const i of lit) chan[i] = nearest(track.hz[i]);
+
+  const hops = [];
+  let i = 0;
+  while (i < track.steps) {
+    if (chan[i] < 0) { i++; continue; }
+    const c = chan[i];
+    let j = i, peak = -Infinity;
+    while (j < track.steps && chan[j] === c) { peak = Math.max(peak, track.db[j]); j++; }
+    if (j - i >= minSteps) {
+      hops.push({ t0: i * track.stepS, t1: j * track.stepS, hz: channels[c], channel: c,
+                  db: peak, steps: j - i });
+    }
+    i = j;
+  }
+  if (hops.length < 2) return { hops, channels, confident: false, reason: 'fewer than two dwells' };
+
+  // A hop sequence visits the same channel twice in a row sooner or later, and back to
+  // back those two dwells are one unbroken stretch of the same frequency — there is
+  // nothing in the signal to tell them apart until you know how long a dwell is. So:
+  // measure the dwell from the runs that are not merged, then split the ones that are.
+  let dwell0 = median(hops.map((h) => h.t1 - h.t0));
+  for (let i = hops.length - 1; i >= 0; i--) {
+    const h = hops[i];
+    const parts = Math.round((h.t1 - h.t0) / dwell0);
+    if (parts < 2) continue;
+    const each = (h.t1 - h.t0) / parts;
+    const split = [];
+    for (let k = 0; k < parts; k++) {
+      split.push({ ...h, t0: h.t0 + k * each, t1: h.t0 + (k + 1) * each, steps: h.steps / parts });
+    }
+    hops.splice(i, 1, ...split);
+  }
+
+  // And close the seams. One analysis step straddles every boundary and belongs to
+  // neither channel cleanly; left as a gap it is a symbol or two of signal that de-hopping
+  // would not correct, which is a hole in the middle of the payload.
+  for (let i = 1; i < hops.length; i++) {
+    const gap = hops[i].t0 - hops[i - 1].t1;
+    if (gap > 0 && gap <= track.stepS * 2.5) {
+      const mid = (hops[i - 1].t1 + hops[i].t0) / 2;
+      hops[i - 1].t1 = mid;
+      hops[i].t0 = mid;
+    }
+  }
+
+  // The boundaries so far are only known to one analysis step, and that is not good
+  // enough to de-hop with. A step is a symbol or two; correcting those samples by the
+  // wrong channel's frequency is a 25 kHz error against a 2.4 kHz deviation, which does
+  // not degrade the symbols so much as obliterate them — 650 samples of the payload came
+  // back at twenty times full scale before this existed.
+  //
+  // The instantaneous frequency finds the edge to within a few samples. It is the channel
+  // offset plus the modulation, and the modulation is an order of magnitude smaller than
+  // the channel spacing, so the midpoint between two channels is a threshold nothing else
+  // goes near.
+  refineEdges(iq, count, sampleRate, hops, track.stepS);
+
+  const dwellS = median(hops.map((h) => h.t1 - h.t0));
+  const spacingHz = channels.length > 1
+    ? median(channels.slice(1).map((c, k) => c - channels[k])) : 0;
+  // How much of it agrees. Two dwells that happen to be the same length prove nothing;
+  // forty that agree to within a quarter are a dwell time.
+  const agree = hops.filter((h) => Math.abs((h.t1 - h.t0) - dwellS) <= dwellS * 0.25).length / hops.length;
+  return {
+    hops, channels, dwellS, spacingHz,
+    agreement: agree,
+    confident: hops.length >= 6 && agree > 0.8 && channels.length > 1,
+    stepS: track.stepS, binHz: track.binHz, snrDb: SNR_DB,
+  };
+}
+
+/**
+ * Move each dwell boundary to where the frequency actually changes.
+ *
+ * Only where two dwells meet: an edge with silence on one side of it is where the
+ * transmitter stopped, which the energy detector already located as well as anything can.
+ */
+function refineEdges(iq, count, sampleRate, hops, stepS) {
+  if (hops.length < 2) return;
+  const inst = smooth(fmDiscriminate(iq, count, sampleRate), 8);
+  const win = Math.ceil(stepS * sampleRate * 1.5);
+  for (let i = 1; i < hops.length; i++) {
+    const a = hops[i - 1], b = hops[i];
+    if (Math.abs(b.t0 - a.t1) > 1e-9) continue;        // not touching: real dead air
+    if (a.channel === b.channel) continue;             // a split, not an edge
+    const mid = (a.hz + b.hz) / 2;
+    const at = Math.round(a.t1 * sampleRate);
+    const rising = b.hz > a.hz;
+    let best = -1, bestD = Infinity;
+    for (let k = Math.max(1, at - win); k < Math.min(count, at + win); k++) {
+      const was = inst[k - 1] < mid, now = inst[k] < mid;
+      if (was === now) continue;
+      if ((rising && was && !now) || (!rising && !was && now)) {
+        const d = Math.abs(k - at);
+        if (d < bestD) { bestD = d; best = k; }
+      }
+    }
+    if (best > 0) { a.t1 = best / sampleRate; b.t0 = a.t1; }
+  }
+}
+
+/**
+ * Which frequencies are the same channel, without being told how many there are.
+ *
+ * Sort them and look at the gaps. Within a channel the gaps are tiny — the same bin over
+ * and over, give or take the modulation. Between channels there is one large gap per
+ * boundary. Those are two populations, so Otsu separates them the same way it separates
+ * a signal from a floor, and nobody has to supply a channel count or a spacing.
+ */
+export function clusterChannels(freqs, binHz) {
+  if (!freqs.length) return [];
+  const sorted = Float64Array.from(freqs).sort();
+  if (sorted.length < 3) return [mean(sorted)];
+
+  const gaps = new Float32Array(sorted.length - 1);
+  for (let i = 1; i < sorted.length; i++) gaps[i - 1] = sorted[i] - sorted[i - 1];
+  const split = otsuThreshold(gaps);
+  // A floor under it, because a single channel has no large gaps at all and Otsu will
+  // still find a threshold somewhere in the noise if you let it.
+  const cut = Math.max(split.value, binHz * 2);
+
+  const out = [];
+  let start = 0;
+  for (let i = 0; i < gaps.length; i++) {
+    if (gaps[i] > cut) { out.push(mean(sorted.subarray(start, i + 1))); start = i + 1; }
+  }
+  out.push(mean(sorted.subarray(start)));
+  return out;
+}
+
+const mean = (a) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]; return s / (a.length || 1); };
+
+/** The median of a spectrum slice, used as "what everything else in this step looks like". */
+function medianOf(a) {
+  const c = Float32Array.from(a).sort();
+  const m = c.length >> 1;
+  return c.length % 2 ? c[m] : (c[m - 1] + c[m]) / 2;
+}
+
+function median(xs) {
+  if (!xs.length) return 0;
+  const a = Float64Array.from(xs).sort();
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
 /** Otsu threshold over a real envelope — the `⟲ auto` estimator for a slicer. */
 export function otsuThreshold(x) {
-  let lo = Infinity, hi = -Infinity;
-  for (let i = 0; i < x.length; i++) { if (x[i] < lo) lo = x[i]; if (x[i] > hi) hi = x[i]; }
+  // The histogram is ranged by percentile, not by minimum and maximum.
+  //
+  // Min and max are the obvious choice and one outlier ruins them. A de-hopped stream
+  // with seven bad samples in eighteen thousand — a couple of samples either side of a
+  // hop, corrected by the wrong channel — stretched the range twentyfold, packed every
+  // real sample into two bins, and returned a threshold below everything in the signal.
+  // The slicer then read the whole capture as ones. Any capture with a click in it has
+  // the same shape, so this is not a special case, it is the ordinary one.
+  const { lo, hi } = robustRange(x);
   if (!(hi > lo)) return { value: 0.5, hist: new Float32Array(48), lo: 0, hi: 1 };
 
   const nb = 48;
   const hist = new Float32Array(nb);
   for (let i = 0; i < x.length; i++) {
-    let b = Math.floor(((x[i] - lo) / (hi - lo)) * (nb - 1));
+    // Outside the range still counts, at the end it falls off: a sample that is far
+    // above everything is still above the threshold, it just does not get to decide
+    // where the threshold is.
+    const b = Math.max(0, Math.min(nb - 1, Math.floor(((x[i] - lo) / (hi - lo)) * (nb - 1))));
     hist[b] += 1;
   }
   let total = x.length, sum = 0;
@@ -642,23 +897,94 @@ export function estimateNrzSymbol(env, threshold, sampleRate) {
   }
   runs.push(len);
   if (runs.length < 8) return { value: 0, confident: false, runs: runs.length };
+  // The first and last runs are cut off by the window rather than by the data.
+  const inner = runs.slice(1, -1);
+  if (inner.length < 6) return { value: 0, confident: false, runs: runs.length };
 
-  const sorted = runs.slice().sort((a, b) => a - b);
-  // a low percentile rather than the minimum: one glitch should not set the rate
-  const shortest = sorted[Math.max(0, Math.floor(sorted.length * 0.05))];
-  if (shortest < 2) return { value: 0, confident: false, runs: runs.length };
+  // Find the period that explains every run, rather than assuming the shortest run is
+  // one symbol.
+  //
+  // The shortest run is a tempting definition and a fragile one: it is whatever the
+  // worst glitch in the capture happens to be. Taking a low percentile instead of the
+  // minimum helps until there are a handful of glitches, and then it fails the same way
+  // — a de-hopped capture with seven bad samples in eighteen thousand reported 100 µs
+  // for a 417 µs symbol, and the slicer dutifully read every byte four times over.
+  //
+  // So: score each candidate period by how nearly every run is a whole number of them,
+  // weighted by how long each run is. A glitch twenty samples long contributes twenty
+  // out of eighteen thousand and cannot move the answer; the payload decides it.
+  const maxRun = Math.max(...inner);
+  const hi = Math.min(maxRun, Math.floor(env.length / 8));
+  if (hi < 2) return { value: 0, confident: false, runs: runs.length };
 
-  // confidence is whether the other runs really are multiples of it
-  let hits = 0;
-  for (const r of runs) {
-    const m = r / shortest;
-    if (Math.abs(m - Math.round(m)) < 0.2) hits++;
+  let weight = 0;
+  for (const r of inner) weight += r;
+  const score = (t) => {
+    let acc = 0;
+    for (const r of inner) acc += r * Math.cos((2 * Math.PI * r) / t);
+    return acc / weight;
+  };
+
+  let best = -Infinity;
+  const step = 0.25;
+  const scores = [];
+  for (let t = 2; t <= hi; t += step) {
+    const v = score(t);
+    scores.push({ t, v });
+    if (v > best) best = v;
   }
-  const agreement = hits / runs.length;
+  if (!(best > 0.2)) return { value: 0, confident: false, runs: runs.length, agreement: 0 };
+
+  // Every submultiple of the right period scores just as well — if every run is a whole
+  // number of T, it is also a whole number of T/2. The answer is the *longest* period
+  // that still explains the data, so take the last one near the best rather than the
+  // best one.
+  let chosen = scores[0].t;
+  for (const { t, v } of scores) if (v >= best * 0.97) chosen = t;
+
+  // Then refine against the runs it just classified.
+  //
+  // The sweep only has to land close enough to get every run onto the right integer; it
+  // does not have to be accurate, and it is not — a quarter-sample grid picked 423.8 µs
+  // for a 416.7 µs symbol. Under two percent, which sounds like nothing and is three bits
+  // of drift across two hundred: the preamble decoded perfectly and everything after it
+  // was mush.
+  //
+  // Once each run has an integer attached, the period is the least-squares fit through
+  // them — every run votes, the long ones loudest, and the answer is good to a fraction
+  // of a sample. The Manchester estimator needed the same correction for the same reason.
+  // Total elapsed samples over total symbols, which is how you measure a clock: the two
+  // long-baseline numbers, not a weighted average of short ones. A least-squares fit
+  // through the same classified runs was three times worse — it lets every run pull
+  // independently, and the quantization of a run to whole samples then averages in as
+  // noise instead of cancelling over the length of the capture.
+  for (let pass = 0; pass < 8; pass++) {
+    let elapsed = 0, symbols = 0;
+    for (const r of inner) {
+      // A run far shorter than a symbol is a glitch, not a symbol — a threshold crossing
+      // in the noise, or the edge of a gap. Rounding it up to one symbol and letting it
+      // vote is how the estimate came out 0.14% high, which is a sixth of a symbol of
+      // drift across two hundred bits and turns the back half of a packet to mush.
+      if (r < chosen * 0.4) continue;
+      const m = Math.round(r / chosen);
+      // A tight window, because this is a refinement and not a search: anything that is
+      // not already very nearly a whole number of symbols is something else.
+      if (m < 1 || Math.abs(r / chosen - m) > 0.15) continue;
+      elapsed += r; symbols += m;
+    }
+    if (symbols > 0) chosen = elapsed / symbols;
+  }
+
+  let hits = 0, hitWeight = 0;
+  for (const r of inner) {
+    const m = r / chosen;
+    if (Math.abs(m - Math.round(m)) < 0.2) { hits++; hitWeight += r; }
+  }
+  const agreement = hitWeight / weight;
   return {
-    value: (shortest / sampleRate) * 1e6,
-    confident: agreement > 0.9 && runs.length > 20,
-    agreement, runs: runs.length,
+    value: (chosen / sampleRate) * 1e6,
+    confident: agreement > 0.9 && inner.length > 20,
+    agreement, runs: runs.length, hits,
   };
 }
 

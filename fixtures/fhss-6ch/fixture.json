@@ -1,0 +1,44 @@
+{
+  "name": "Frequency hopping: the sequence and the payload",
+  "why": "Two answers out of one capability. The hop map derives the dwell time, the channel spacing and the channel set from the signal and reports the order the channels were used in; the de-hopper follows that order and hands the ordinary demodulator and slicer a signal they already know how to read. It also pins three fixes that this exposed and that reach much further than hopping: Otsu ranged its histogram by minimum and maximum so a handful of outliers destroyed it, the NRZ symbol estimator assumed the shortest run was one symbol so a few glitches set the rate, and every auto-derived parameter was estimated from a window that could lie mostly before the start of a short capture.",
+  "capture": "capture.sigmf-data",
+  "chain": [
+    {
+      "op": "core.hopmap"
+    }
+  ],
+  "expect": {
+    "noError": true,
+    "fieldContains": {
+      "text": [
+        "sequence: 1 3 1 3 3 4 2 4 4 1 0 0 2 1"
+      ]
+    },
+    "note": "The first record is the sequence, because reading forty rows to write down an order by hand is the one thing this node exists to do. The rest is one row per dwell. Recovering the payload needs the de-hopper as well, and that is asserted in web/test/fhss.test.mjs \u2014 including the control, which is that the same chain without de-hopping first gets nothing."
+  },
+  "note": "The chain here ends in bytes rather than records, so the assertions that matter are in web/test/fhss.test.mjs \u2014 this entry exists so the capture is regenerated, size-checked and licensed with the rest.",
+  "derive": [
+    {
+      "node": 0,
+      "param": "dwellMs",
+      "about": 6.67,
+      "within": 0.05,
+      "evidence": "the median of",
+      "confident": true
+    },
+    {
+      "node": 0,
+      "param": "spacingHz",
+      "about": 25000,
+      "within": 0.05,
+      "evidence": "the median gap between"
+    },
+    {
+      "node": 0,
+      "param": "channels",
+      "about": 5,
+      "within": 0.25,
+      "evidence": "clustered by their gaps"
+    }
+  ]
+}

@@ -301,3 +301,72 @@ export function baudot(text, { rate = 48_000, baud = 45.45, mark = 2125, space =
   push(1, idle);
   return fsk(levels, { rate, baud, mark, space, amplitude: 0.6, seed });
 }
+
+// ── frequency hopping ───────────────────────────────────────────────────────
+
+/**
+ * A hop sequence from a maximal-length shift register.
+ *
+ * Real frequency hoppers do not pick channels at random each time; they walk a sequence
+ * both ends already know. An LFSR is the cheapest thing that looks like one — every
+ * channel gets visited, the order is not obvious, and it repeats after a known number of
+ * hops, which is exactly the structure somebody analyzing the signal is trying to find.
+ */
+export function hopSequence(n, channels, { seed = 0x1f, taps = 0b100101 } = {}) {
+  const out = [];
+  let reg = seed & 0x3f || 1;
+  for (let i = 0; i < n; i++) {
+    out.push(reg % channels);
+    const bit = popcount(reg & taps) & 1;
+    reg = ((reg >> 1) | (bit << 5)) & 0x3f;
+    if (!reg) reg = 1;
+  }
+  return out;
+}
+
+const popcount = (v) => { let c = 0; while (v) { c += v & 1; v >>= 1; } return c; };
+
+/**
+ * 2-FSK carried across a set of channels, one dwell at a time.
+ *
+ * The payload runs straight through the hops rather than restarting on each one, which is
+ * what makes de-hopping worth anything: follow the sequence, stitch the dwells together
+ * and the original bit stream is back, whole. A modulator that started a fresh packet per
+ * dwell would make de-hopping unnecessary and the fixture pointless.
+ */
+export function fhss(bits, {
+  rate = 200_000, channels = 6, spacingHz = 25_000, dwellSymbols = 16,
+  baud = 2400, deviationHz = 2400, sequence = null, seed = 0x71c5, noise = 0.01,
+} = {}) {
+  const sps = rate / baud;
+  // A dwell is a whole number of symbols, which is how a real hopper is built: the
+  // frequency changes between symbols, not part-way through one. A modulator that hops
+  // mid-symbol makes a capture nobody can de-hop and decode, including the person who
+  // designed the radio.
+  const perDwell = Math.round(dwellSymbols * sps);
+  const total = Math.ceil(bits.length * sps);
+  const hops = sequence || hopSequence(Math.max(1, Math.ceil(total / perDwell)), channels);
+  const n = hops.length * perDwell;
+  const iq = new Float32Array(n * 2);
+  const rand = rng(seed);
+
+  // Channels centered on zero: index 0 is the lowest, so the middle of the set is the
+  // middle of the span, which is where a tuner would sit.
+  const offsetOf = (ch) => (ch - (channels - 1) / 2) * spacingHz;
+
+  let phase = 0;                       // the modulation's own phase, continuous throughout
+  let mixPhase = 0;
+  for (let i = 0; i < n; i++) {
+    const k = Math.floor(i / sps);
+    const bit = k < bits.length ? bits[k] : 1;
+    phase += (2 * Math.PI * (bit ? deviationHz / 2 : -deviationHz / 2)) / rate;
+    mixPhase += (2 * Math.PI * offsetOf(hops[Math.floor(i / perDwell)])) / rate;
+    if (mixPhase > Math.PI * 2) mixPhase -= Math.PI * 2;
+    if (phase > Math.PI * 2) phase -= Math.PI * 2;
+    const a = phase + mixPhase;
+    iq[i * 2] = 0.6 * Math.cos(a) + (rand() - 0.5) * noise;
+    iq[i * 2 + 1] = 0.6 * Math.sin(a) + (rand() - 0.5) * noise;
+  }
+  return { iq, hops, channels, spacingHz, dwellSymbols, baud,
+           dwellS: perDwell / rate, offsetOf, samples: n };
+}
