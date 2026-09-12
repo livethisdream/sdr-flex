@@ -338,7 +338,29 @@ function fhssHopping() {
   return { dir, bytes: bytesWritten, samples: g.samples, rate };
 }
 
-for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm, fhssHopping]) {
+// ── 8. OFDM, with the message written on the resource grid ───────────────
+// Which cells carry anything, in time and in frequency, *is* the message here — a
+// picture rather than a bit stream. So the fixture spells something: if the grid comes
+// back right you can read it, and if the symbol boundaries are off by even a little the
+// letters smear and it is obvious rather than subtle.
+//
+// Nothing about the structure is written into the capture. The FFT size, the cyclic
+// prefix and the symbol period are all recovered from the signal itself.
+function ofdmGrid() {
+  const rate = 200_000, centerHz = 2_412_000_000;   // where OFDM usually lives
+  const grid = mod.gridText('SDR', { fftN: 64 });
+  const g = mod.ofdm(grid, { rate, fftN: 64, cpN: 16, seed: 0x0fd0 });
+  const dir = path.join(HERE, 'ofdm-grid');
+  const bytes = writeSigmf(dir, 'capture', g.iq, {
+    sampleRate: rate, centerHz,
+    note: `Synthetic OFDM: 64 subcarriers, 16-sample cyclic prefix, 400 µs symbols, ` +
+          `QPSK on the lit subcarriers. The occupancy pattern spells SDR across the ` +
+          `resource grid. Nobody transmitted this.`,
+  });
+  return { dir, bytes, samples: g.iq.length / 2, rate };
+}
+
+for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm, fhssHopping, ofdmGrid]) {
   const r = make();
   if (r.skipped) {
     console.log(`${path.basename(r.dir).padEnd(20)} skipped — ${r.skipped}`);

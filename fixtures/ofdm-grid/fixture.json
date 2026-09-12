@@ -1,0 +1,8 @@
+{
+  "name": "OFDM: the message is the grid",
+  "why": "Nothing about the structure is in the capture — the FFT size, the cyclic prefix and the symbol period are all recovered from the signal by correlating it against itself at each plausible lag, which is the one thing a cyclic prefix makes possible and nothing else in a signal does. The occupancy pattern spells SDR, so a grid that comes back with the symbol boundaries even slightly wrong smears the letters and fails visibly rather than subtly.",
+  "capture": "capture.sigmf-data",
+  "chain": [{ "op": "core.ofdm" }],
+  "expect": { "noError": true },
+  "note": "The chain ends in a grid rather than in records, so the assertions live in web/test/ofdm.test.mjs. This entry exists so the capture is regenerated, size-checked and licensed with the rest."
+}

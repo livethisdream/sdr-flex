@@ -47,6 +47,15 @@
     <div class="pane scrolly" id="pane-audio" hidden></div>
     <div class="pane scrolly" id="pane-export" hidden></div>
     <div class="pane scrolly" id="pane-bytes" hidden></div>
+    <!-- A grid is a picture, so it gets a canvas rather than a table: a resource grid is
+         hundreds of symbols by hundreds of subcarriers and the pattern is the message. -->
+    <div class="pane" id="pane-grid" hidden>
+      <div class="gridwrap">
+        <div class="gridhead" id="gridhead"></div>
+        <div class="gridstage"><canvas id="gridcv" class="gridcv"></canvas></div>
+        <div class="axis" id="gridaxis"></div>
+      </div>
+    </div>
   </div>
 
   <div class="dock">

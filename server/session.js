@@ -238,6 +238,16 @@ const METHODS = {
     return { ...rest, floats: data.length };
   },
 
+  /**
+   * A resource grid. One Float32Array of cell amplitudes, which the wire format carries
+   * as a payload rather than as JSON — a 512 × 64 grid is 32k numbers and a JSON array of
+   * those is a megabyte of text for 128 kB of data.
+   */
+  async sliceGrid({ nodeId, at }) {
+    const r = await this.engine.sliceGrid(nodeId, at);
+    return r ? { grid: strip(r) } : null;
+  },
+
   async sliceBytes({ nodeId, at }, id) {
     const r = await this.engine.sliceBytes(nodeId, (frac) => {
       this._send({ id, t: 'progress', v: frac });

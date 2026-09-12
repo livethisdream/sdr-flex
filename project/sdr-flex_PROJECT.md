@@ -18,7 +18,7 @@ Update it at the end of a session, not the start of the next one.
 
 MVP in the browser, the same tool with its engine in a container, and live radio into a
 ring recording. Static ES modules, no build step, no dependencies on either side.
-33 ADRs.
+34 ADRs.
 
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
@@ -51,8 +51,10 @@ Working end to end:
   "yours" in the menu — `docs/10-adding-a-decoder.md` is the contract
 - Frequency hopping: a hop map that derives the dwell, spacing and channel set and reports
   the sequence, and a de-hopper that follows it so the ordinary chain reads the payload
+- OFDM: the resource grid as a picture, with the FFT size, cyclic prefix and symbol period
+  all recovered from the signal — `grid` is a stream type with a canvas view of its own
 
-Tests: 203 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 215 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -478,13 +480,49 @@ none would have been found by reading:
   the playhead at 50 ms, four fifths of it is before the recording starts and the
   estimator reports "looks unmodulated" about silence.
 
-### One flaky test, seen once
+## OFDM, as built
 
-`direwolf reads AX.25 over Bell 202` failed once while the Playwright browser and a
-server were running alongside the suite, and has passed eight consecutive runs since.
-Most likely direwolf hitting its timeout under load rather than anything in the code, but
-it is written down rather than waved away — if it recurs, the timeout is the first place
-to look.
+ADR-0034. `grid` is now a stream type alongside `iq`, `real`, `bits`, `bytes`, `events`
+and `audio`, with a canvas view: time down the page, frequency across. `core.ofdm` takes
+IQ and produces one.
+
+**Nothing about the structure is supplied.** Every OFDM symbol carries a cyclic prefix — a
+copy of its own tail pasted in front — so a stretch of samples identical to another
+stretch exactly one FFT length later, recurring once per symbol, is a signature nothing
+else in a signal has. Correlating against itself at each plausible lag recovers the FFT
+size, the prefix and the symbol period, and each arrives with its evidence: *"the prefix
+correlates at a lag of 64 samples, 0.66 against 0.09 elsewhere"*.
+
+**Contrast, not just correlation.** A steady tone correlates with itself at *every* lag, so
+"is the correlation high" would call a carrier OFDM. What separates them is whether it is
+high *in a pattern*. The suite asserts a tone and noise both come back not confident.
+
+`fixtures/ofdm-grid` lights the subcarriers that spell **SDR** across the grid, which is
+the honest demonstration of what OFDM occupancy is *and* a failure mode you can see: a
+grid recovered with the symbol boundaries slightly wrong smears the letters rather than
+moving a percentage. Verified in a browser — it reads.
+
+One bug worth remembering: the grid cache was keyed on the parameters, and this operation
+*writes* the derived FFT size back into `fftN` — so the key changed the moment the work
+was done and the cache never hit once. Keyed on the question now (was a size pinned, and
+to what), not on the answer.
+
+Also: both axes of a grid have to be scaled together. A cell is one subcarrier by one
+symbol and has no natural aspect ratio; glyphs three subcarriers wide and fifteen symbols
+tall are legible in a terminal and a smear on a screen.
+
+### The direwolf flake, found and fixed
+
+Written down last session as "seen once, suspect load". It recurred, so it got measured:
+**20/20 at idle, 16/20 with eight busy cores.** direwolf is a real-time audio program and
+drops the second AX.25 frame when the machine is loaded and the two are back to back.
+
+Not our bug, but a flaky test is a liability. direwolf will not read a WAV *file* argument
+in this build — it always wants an audio device — so stdin is the only path. The fix is in
+the fixture instead: sixty-four HDLC flags between frames rather than the minimum eight.
+Two packets eight flags apart is legal and nothing like the air, where a busy channel puts
+seconds between them. **20/20 under the same load that gave 16/20** — more realistic
+*and* deterministic, rather than a weaker assertion.
 
 ## Local adapters, as built
 
@@ -534,14 +572,14 @@ house rule.
 - **The CTF's remaining modulations.** The 2026 challenge list is NBFM, WBFM, USB/LSB, CW,
   FHSS, OFDM, FSK, M17, AFSK1200, APRS, ADS-B, BBC (gr-bbc), the AOL handshake, CDMA,
   FLEX/POCSAG, LoRa and TEMPEST (gr-tempest). Covered and verified: AFSK1200/APRS, ADS-B,
-  FLEX/POCSAG, CW, FSK, LoRa, M17, FHSS. Have a node but never tested against a real signal of that
+  FLEX/POCSAG, CW, FSK, LoRa, M17, FHSS, OFDM. Have a node but never tested against a real signal of that
   kind: NBFM, USB/LSB, WBFM — and WBFM has no de-emphasis, so broadcast audio will sound
-  wrong. Nothing at all: BBC, TEMPEST, CDMA, OFDM, the AOL handshake.
-- **OFDM and TEMPEST, the other two folds.** FHSS is done (ADR-0033). OFDM wants a
-  resource grid — estimate the symbol period and cyclic prefix by autocorrelation, FFT per
-  symbol, render symbol × subcarrier as the battleship board. TEMPEST wants a raster —
-  estimate the line period, fold, render line × frame. Both are "estimate a period from
-  the signal and fold at it", which is now a shape the hop map has walked once.
+  wrong. Nothing at all: BBC, TEMPEST, CDMA, the AOL handshake.
+- **TEMPEST, the last of the three folds.** FHSS (ADR-0033) and OFDM (ADR-0034) are done
+  and the `grid` view already draws anything two-dimensional. TEMPEST wants a raster:
+  estimate the horizontal line period by autocorrelation, fold, render line against frame.
+  The mechanism is testable against a synthetic screen; a *real* capture is harder, and
+  gr-tempest's five live operator knobs exist for a reason.
 - **An adapter cannot hand audio back to the graph.** M17 decodes voice and the node
   throws it away, saying how much there was. Every decoder that produces audio rather than
   records — M17, and anything vocoded — is half-connected until this exists. It wants an

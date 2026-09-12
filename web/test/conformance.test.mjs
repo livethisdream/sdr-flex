@@ -74,6 +74,22 @@ function have(needs) {
     [].concat(adapters.ADAPTERS[id].command).includes(needs) && adapters.available(id));
 }
 
+/**
+ * A grid, in the shape the expectations are written against.
+ *
+ * The detailed assertions about a grid live in its own test — what belongs here is that
+ * it was produced at all, without an error, from a capture that is still the right size
+ * and still carries its license.
+ */
+function gridAsResult(g) {
+  if (!g) return null;
+  return {
+    records: g.rows ? [{ text: `${g.rows} × ${g.cols}`, rows: g.rows, cols: g.cols }] : [],
+    error: g.error,
+    rows: g.rows, cols: g.cols,
+  };
+}
+
 const dirs = fs.existsSync(FIXTURES)
   ? fs.readdirSync(FIXTURES).filter((d) => fs.existsSync(path.join(FIXTURES, d, 'fixture.json')))
   : [];
@@ -113,7 +129,13 @@ for (const name of dirs) {
       parent = n.id;
     }
 
-    const out = await e.runRecords(made[made.length - 1].id, 0.05);
+    // A chain ends in whatever it ends in. Most produce records; an analyzer that folds
+    // the signal into two dimensions produces a grid, and asking it for records gets
+    // nothing — which used to read as "the fixture is broken".
+    const last = made[made.length - 1];
+    const out = last.out.kind === 'grid'
+      ? gridAsResult(await e.sliceGrid(last.id, 0.05))
+      : await e.runRecords(last.id, 0.05);
     assert.ok(out, 'the last node produced nothing at all');
 
     const x = spec.expect || {};

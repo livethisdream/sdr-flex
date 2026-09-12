@@ -1,0 +1,16 @@
+{
+  "global": {
+    "core:datatype": "cu8",
+    "core:sample_rate": 200000,
+    "core:description": "Synthetic OFDM: 64 subcarriers, 16-sample cyclic prefix, 400 µs symbols, QPSK on the lit subcarriers. The occupancy pattern spells SDR across the resource grid. Nobody transmitted this.",
+    "core:license": "CC0-1.0",
+    "core:recorder": "sdr-flex fixtures/make.mjs (synthesized, not recorded)"
+  },
+  "captures": [
+    {
+      "core:sample_start": 0,
+      "core:frequency": 2412000000
+    }
+  ],
+  "annotations": []
+}

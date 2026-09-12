@@ -15,7 +15,7 @@ import { fromFiles, FORMATS } from './capture.js';
 import * as out from './export.js';
 import * as plugins from './plugins.js';
 import { AudioMixer, meterLevel } from './audio.js';
-import { COLORMAPS, cssGradient, floorColor } from './colormap.js';
+import { COLORMAPS, cssGradient, floorColor, lut } from './colormap.js';
 import { WINDOWS } from './dsp.js';
 import { CRCS } from './frames.js';
 
@@ -33,6 +33,7 @@ const VIEWS = {
   real: ['Time', 'Flow'],
   bits: ['Bits', 'Time', 'Flow'],
   events: ['Events', 'Flow'],
+  grid: ['Grid', 'Flow'],
   audio: ['Listen', 'Flow'],
   file: ['Export', 'Flow'],
   bytes: ['Bytes', 'Flow'],
@@ -422,6 +423,7 @@ class App {
     $('#pane-audio').hidden = v !== 'Listen';
     $('#pane-export').hidden = v !== 'Export';
     $('#pane-bytes').hidden = v !== 'Bytes';
+    $('#pane-grid').hidden = v !== 'Grid';
     if (v === 'Spectrum') {
       const p = this.vp(this.current);
       $('#cbar').style.background = cssGradient(p.colormap);
@@ -441,6 +443,7 @@ class App {
     if (v === 'Export') this.renderExport();
     if (v === 'Bytes') this.renderBytes();
     if (v === 'Events') this.renderEvents();
+    if (v === 'Grid') this.renderGrid();
   }
 
   /**
@@ -1459,6 +1462,106 @@ class App {
         this.renderEvents(true);
       });
     }
+  }
+
+  /**
+   * The resource grid: time down, frequency across.
+   *
+   * A canvas rather than a table because this is a picture — an OFDM grid is hundreds of
+   * symbols by tens or hundreds of subcarriers, and which cells carry anything *is* the
+   * message. The same view serves anything else that folds into two dimensions.
+   */
+  async renderGrid(force) {
+    let n = this.node();
+    if (!n || n.out.kind !== 'grid') return;
+    const head = $('#gridhead');
+    if (!n._grid || force) {
+      head.innerHTML = '<b>reading…</b>';
+      await new Promise((r) => setTimeout(r, 0));
+      await this.engine.sliceGrid(n.id);
+      const live = this.node();
+      if (!live || live.id !== n.id) return;
+      n = live;
+      this.renderStrip();                    // the derived sizes, with their evidence
+    }
+    const g = n._grid;
+    const cv = $('#gridcv');
+    if (!g || !g.rows) {
+      head.innerHTML = `<b>nothing to draw</b><span>${(g && g.error) || 'no structure found'}</span>`;
+      const ctx = cv.getContext('2d');
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      return;
+    }
+
+    const spacing = g.spacingHz || 0;
+    head.innerHTML =
+      `<b>${g.rows} × ${g.cols}</b>` +
+      `<span>${(g.symbolS * 1e6).toFixed(0)} µs per symbol · ` +
+      `${(spacing / 1e3).toFixed(2)} kHz per subcarrier` +
+      `${g.confident ? '' : ' · <em>not confident</em>'}</span>` +
+      '<button class="exgo" id="gridrun">Read again</button>';
+    const btn = $('#gridrun');
+    if (btn) btn.addEventListener('click', () => { n._grid = null; this.renderGrid(true); });
+
+    this.drawGrid(cv, g);
+    this.renderGridAxis(g);
+  }
+
+  /**
+   * One pixel block per cell, on a floor relative to the strongest cell in the grid.
+   *
+   * Relative because the question is which subcarriers carry *anything*, and an absolute
+   * threshold would answer a different question on every capture depending on the gain
+   * the receiver happened to be using.
+   */
+  drawGrid(cv, g) {
+    const wrap = cv.parentElement;
+    const W = Math.max(64, wrap.clientWidth), H = Math.max(64, wrap.clientHeight);
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    let peak = 0;
+    for (let i = 0; i < g.data.length; i++) if (g.data[i] > peak) peak = g.data[i];
+    const floorDb = this.node().params.floorDb ? this.node().params.floorDb.value : -12;
+    const floor = peak * Math.pow(10, floorDb / 20);
+
+    const img = ctx.createImageData(g.cols, g.rows);
+    // The same lookup table the waterfall uses, so a grid and a waterfall of the same
+    // capture are the same colors meaning the same thing.
+    const map = lut(this.vp(this.current).colormap);
+    for (let r = 0; r < g.rows; r++) {
+      for (let c = 0; c < g.cols; c++) {
+        const v = g.data[r * g.cols + c];
+        // Normalized between the floor and the peak, in dB, so a faint carrier still
+        // reads as present rather than vanishing into the background.
+        const db = 20 * Math.log10((v || 1e-12) / peak);
+        const t = Math.max(0, Math.min(1, (db - floorDb) / (0 - floorDb)));
+        const k = Math.round(t * 255) * 3;
+        const o = (r * g.cols + c) * 4;
+        img.data[o] = map[k]; img.data[o + 1] = map[k + 1]; img.data[o + 2] = map[k + 2];
+        img.data[o + 3] = 255;
+      }
+    }
+    // Blit at grid resolution, then let the canvas scale it up with no smoothing — a
+    // resource grid is cells, and a blurred cell is a cell you cannot read.
+    const off = new OffscreenCanvas(g.cols, g.rows);
+    off.getContext('2d').putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, W, H);
+    ctx.drawImage(off, 0, 0, W, H);
+    void floor;
+  }
+
+  renderGridAxis(g) {
+    const el = $('#gridaxis');
+    const span = g.cols * (g.spacingHz || 0);
+    const left = (g.centerHz || 0) - span / 2, right = (g.centerHz || 0) + span / 2;
+    const label = (hz) => (Math.abs(hz) >= 1e6 ? (hz / 1e6).toFixed(3) + ' MHz' : (hz / 1e3).toFixed(1) + ' kHz');
+    el.innerHTML = `<span>${label(left)}</span><span>${g.cols} subcarriers · ` +
+                   `${(g.rows * g.symbolS * 1e3).toFixed(1)} ms down the page</span><span>${label(right)}</span>`;
   }
 
   /** The spectrum's share of the stage. The waterfall takes what is left. */

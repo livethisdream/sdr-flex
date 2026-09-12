@@ -579,6 +579,115 @@ export function findHops(iq, count, sampleRate, { bins = 256, step = 128, minSte
 }
 
 /**
+ * OFDM's own structure, found without being told any of it.
+ *
+ * Every OFDM symbol carries a cyclic prefix: a copy of its own tail pasted in front. That
+ * exists to absorb multipath, and it has a side effect that makes the whole scheme
+ * findable — a stretch of samples that is identical to another stretch exactly one FFT
+ * length later, recurring once per symbol. Nothing else in a signal does that.
+ *
+ * So: for each plausible FFT size, correlate the signal against itself at that lag, and
+ * see whether the correlation peaks regularly. The lag that works is the FFT size, the
+ * width of the peak is the prefix, and the spacing between peaks is the symbol period.
+ * The subcarrier spacing and the symbol rate follow from those two numbers.
+ */
+export function estimateOfdm(iq, count, sampleRate, {
+  sizes = [32, 64, 128, 256, 512, 1024, 2048], maxSamples = 1 << 18,
+} = {}) {
+  const n = Math.min(count, maxSamples);
+  let best = null;
+  for (const fftN of sizes) {
+    if (n < fftN * 6) continue;                    // too few symbols to say anything
+    const lim = n - fftN;
+    // r[i] · conj(r[i + fftN]), and the energy of both, once per candidate size.
+    const cr = new Float64Array(lim), ci = new Float64Array(lim), en = new Float64Array(lim);
+    for (let i = 0; i < lim; i++) {
+      const ar = iq[i * 2], ai = iq[i * 2 + 1];
+      const br = iq[(i + fftN) * 2], bi = iq[(i + fftN) * 2 + 1];
+      cr[i] = ar * br + ai * bi;
+      ci[i] = ai * br - ar * bi;
+      en[i] = ar * ar + ai * ai + br * br + bi * bi;
+    }
+    for (const div of [4, 8, 16, 32]) {
+      const cpN = Math.round(fftN / div);
+      if (cpN < 2) continue;
+      const period = fftN + cpN;
+      if (lim < period * 4) continue;
+
+      // A sliding window the length of the prefix. Where it sits over the prefix the
+      // correlation is coherent and the metric approaches one; anywhere else the phases
+      // are unrelated and it falls to nothing.
+      const m = new Float32Array(lim - cpN + 1);
+      let sr = 0, si = 0, se = 0;
+      for (let i = 0; i < cpN; i++) { sr += cr[i]; si += ci[i]; se += en[i]; }
+      for (let i = 0; i + cpN <= lim; i++) {
+        m[i] = se > 0 ? (2 * Math.hypot(sr, si)) / se : 0;
+        if (i + cpN < lim) {
+          sr += cr[i + cpN] - cr[i]; si += ci[i + cpN] - ci[i]; se += en[i + cpN] - en[i];
+        }
+      }
+
+      // Does it peak once per symbol? Score every phase and keep the best.
+      let bestPhase = 0, bestScore = -1;
+      for (let p = 0; p < period; p++) {
+        let acc = 0, k = 0;
+        for (let i = p; i < m.length; i += period) { acc += m[i]; k++; }
+        if (k >= 4 && acc / k > bestScore) { bestScore = acc / k; bestPhase = p; }
+      }
+      // Against the background: a candidate that scores well everywhere has found the
+      // signal's average, not its structure.
+      let mean = 0;
+      for (let i = 0; i < m.length; i++) mean += m[i];
+      mean /= m.length || 1;
+      const contrast = bestScore - mean;
+      if (!best || contrast > best.contrast) {
+        best = { fftN, cpN, period, phase: bestPhase, peak: bestScore, mean, contrast };
+      }
+    }
+  }
+  if (!best) return { confident: false, reason: 'not enough signal to find a symbol in' };
+  return {
+    ...best,
+    symbolS: best.period / sampleRate,
+    spacingHz: sampleRate / best.fftN,
+    symbols: Math.floor((count - best.phase) / best.period),
+    // A real prefix correlates near one and the gaps between near zero. Half is generous
+    // and still a long way from what an unstructured signal produces.
+    confident: best.peak > 0.55 && best.contrast > 0.2,
+  };
+}
+
+/**
+ * The resource grid: one row per symbol, one column per subcarrier.
+ *
+ * Skip the prefix, transform what is left, and the amplitudes that come out are the
+ * subcarriers as they were sent. In frequency order rather than FFT order, because a
+ * person reading a grid expects the lowest frequency at one end.
+ */
+export function ofdmGrid(iq, count, est, { maxSymbols = 512 } = {}) {
+  const { fftN, cpN, period, phase } = est;
+  const symbols = Math.min(maxSymbols, Math.floor((count - phase - cpN) / period));
+  if (symbols < 1) return { rows: 0, cols: fftN, data: new Float32Array(0) };
+  const data = new Float32Array(symbols * fftN);
+  const buf = new Float32Array(fftN * 2);
+  const half = fftN / 2;
+  for (let s = 0; s < symbols; s++) {
+    // The prefix is a copy of the tail; the symbol proper starts after it.
+    const at = phase + s * period + cpN;
+    for (let i = 0; i < fftN; i++) {
+      buf[i * 2] = iq[(at + i) * 2];
+      buf[i * 2 + 1] = iq[(at + i) * 2 + 1];
+    }
+    fft(buf);
+    for (let k = 0; k < fftN; k++) {
+      const src = k < half ? k + half : k - half;     // fftshift into frequency order
+      data[s * fftN + k] = Math.hypot(buf[src * 2], buf[src * 2 + 1]) / fftN;
+    }
+  }
+  return { rows: symbols, cols: fftN, data };
+}
+
+/**
  * Move each dwell boundary to where the frequency actually changes.
  *
  * Only where two dwells meet: an edge with silence on one side of it is where the

@@ -15,6 +15,8 @@
 // Deterministic: noise comes from a seeded generator, so a failure is a failure and not
 // a bad draw.
 
+import { fft } from '../../src/dsp.js';
+
 /** The same small PRNG the fixtures use, so "with noise" is reproducible. */
 export function rng(seed) {
   let s = seed >>> 0;
@@ -65,7 +67,7 @@ export function ax25(source, dest, info) {
  * are also the part a decoder will silently refuse rather than complain about — a frame
  * with a missed stuffed zero simply never appears.
  */
-export function hdlcBits(frames, { flags = 32, tail = 8 } = {}) {
+export function hdlcBits(frames, { flags = 32, tail = 8, between = 8 } = {}) {
   const raw = [];
   const flag = () => { for (const b of [0, 1, 1, 1, 1, 1, 1, 0]) raw.push(b); };
   for (let i = 0; i < flags; i++) flag();
@@ -79,7 +81,7 @@ export function hdlcBits(frames, { flags = 32, tail = 8 } = {}) {
         else ones = 0;
       }
     }
-    for (let i = 0; i < 8; i++) flag();
+    for (let i = 0; i < between; i++) flag();
   }
   for (let i = 0; i < tail; i++) flag();
 
@@ -115,8 +117,14 @@ export function fsk(levels, { rate, baud, mark, space, amplitude = 0.5, seed = 0
 }
 
 /** AFSK1200: AX.25 over Bell 202 tones, the most common packet signal there is. */
-export function afsk1200(frames, { rate = 44_100, seed = 0xa9c5 } = {}) {
-  return fsk(hdlcBits(frames), { rate, baud: 1200, mark: 1200, space: 2200, seed });
+export function afsk1200(frames, { rate = 44_100, seed = 0xa9c5, between = 64 } = {}) {
+  // Sixty-four flags between frames rather than the minimum eight. Two AX.25 packets
+  // eight flags apart is legal and is nothing like the air, where a busy channel puts
+  // seconds between them — and direwolf is a real-time audio program that drops the
+  // second frame about a fifth of the time when the machine is loaded and they are back
+  // to back. Spacing them is both more realistic and the difference between a test that
+  // passes and one that mostly passes.
+  return fsk(hdlcBits(frames, { between }), { rate, baud: 1200, mark: 1200, space: 2200, seed });
 }
 
 // ── Bell 202 as an async serial line, which is what minimodem reads ─────────
@@ -369,4 +377,117 @@ export function fhss(bits, {
   }
   return { iq, hops, channels, spacingHz, dwellSymbols, baud,
            dwellS: perDwell / rate, offsetOf, samples: n };
+}
+
+// ── OFDM ────────────────────────────────────────────────────────────────────
+
+/**
+ * Inverse FFT, from the forward one: conjugate, transform, conjugate, scale.
+ *
+ * Worth having rather than importing a second transform. The tool ships one FFT and a
+ * modulator that needed its own would be a second implementation to keep in step with it.
+ */
+function ifft(buf, n) {
+  for (let i = 0; i < n; i++) buf[i * 2 + 1] = -buf[i * 2 + 1];
+  fft(buf);
+  for (let i = 0; i < n; i++) { buf[i * 2] /= n; buf[i * 2 + 1] = -buf[i * 2 + 1] / n; }
+  return buf;
+}
+
+/**
+ * OFDM, with a chosen set of subcarriers lit in each symbol.
+ *
+ * `grid` is one row per symbol and one entry per subcarrier, truthy where that
+ * subcarrier carries anything. Which makes the occupancy pattern the message — a
+ * time-frequency picture rather than a bit stream — and that is exactly what somebody
+ * looking at an OFDM resource grid is trying to read back.
+ *
+ * QPSK on the lit subcarriers, from a seeded generator, because the *content* is not the
+ * point and a fixture whose content changes run to run is not a fixture.
+ */
+export function ofdm(grid, { rate = 200_000, fftN = 64, cpN = 16, seed = 0x0fd0, noise = 0.004 } = {}) {
+  const rand = rng(seed);
+  const symbols = grid.length;
+  const out = new Float32Array(symbols * (fftN + cpN) * 2);
+  const spec = new Float32Array(fftN * 2);
+  let w = 0;
+  for (const row of grid) {
+    spec.fill(0);
+    for (let k = 0; k < fftN; k++) {
+      if (!row[k]) continue;
+      // The grid is in frequency order — index 0 is the most negative subcarrier — which
+      // is how a person reads a resource grid and how the analyzer reports one. The FFT
+      // wants it wrapped, so this is the shift.
+      const bin = (k + fftN / 2) % fftN;
+      // QPSK: equal power, one of four phases
+      const q = Math.floor(rand() * 4);
+      spec[bin * 2] = q < 2 ? Math.SQRT1_2 : -Math.SQRT1_2;
+      spec[bin * 2 + 1] = (q % 2) ? Math.SQRT1_2 : -Math.SQRT1_2;
+    }
+    const time = ifft(Float32Array.from(spec), fftN);
+    // The cyclic prefix is the tail of the symbol pasted in front of it. It exists to
+    // absorb multipath, and it is also what makes the symbol boundaries findable at all:
+    // a copy of the end sitting a symbol-length earlier is a correlation nothing else has.
+    for (let i = 0; i < cpN; i++) {
+      out[w * 2] = time[(fftN - cpN + i) * 2];
+      out[w * 2 + 1] = time[(fftN - cpN + i) * 2 + 1];
+      w++;
+    }
+    for (let i = 0; i < fftN; i++) {
+      out[w * 2] = time[i * 2];
+      out[w * 2 + 1] = time[i * 2 + 1];
+      w++;
+    }
+  }
+  let peak = 0;
+  for (let i = 0; i < out.length; i++) peak = Math.max(peak, Math.abs(out[i]));
+  const g = peak > 0 ? 0.6 / peak : 1;
+  for (let i = 0; i < out.length; i++) out[i] = out[i] * g + (rand() - 0.5) * noise;
+  return { iq: out, symbols, fftN, cpN, rate,
+           symbolS: (fftN + cpN) / rate, spacingHz: rate / fftN };
+}
+
+/**
+ * A grid with something written on it, in a 5-row font.
+ *
+ * The battleship board, in other words: the message is which cells are lit, so a fixture
+ * whose occupancy spells something is a fixture you can check by looking at it.
+ */
+export function gridText(text, { fftN = 64, rowsPerLine = 5, blank = 6, pad = 3, wide = 3 } = {}) {
+  const FONT = {
+    S: ['111', '100', '111', '001', '111'], D: ['110', '101', '101', '101', '110'],
+    R: ['111', '101', '111', '110', '101'], F: ['111', '100', '111', '100', '100'],
+    L: ['100', '100', '100', '100', '111'], E: ['111', '100', '110', '100', '111'],
+    X: ['101', '101', '010', '101', '101'], O: ['111', '101', '101', '101', '111'],
+    ' ': ['000', '000', '000', '000', '000'],
+  };
+  const letters = [...text.toUpperCase()].filter((c) => FONT[c]);
+  // Columns run along the subcarriers; rows run in time, one OFDM symbol each — and the
+  // two axes have to be scaled together or the letters come out unreadable. A cell is a
+  // subcarrier by a symbol and has no natural aspect ratio, so a glyph three subcarriers
+  // wide and fifteen symbols tall is legible in a terminal and a smear on a screen.
+  const glyph = 3 * wide;
+  const step = glyph + wide;
+  const width = letters.length * step;
+  const left = Math.max(1, Math.floor((fftN - width) / 2));
+  const rows = [];
+  for (let i = 0; i < blank; i++) rows.push(new Uint8Array(fftN));
+  for (let r = 0; r < rowsPerLine; r++) {
+    for (let rep = 0; rep < pad; rep++) {
+      const row = new Uint8Array(fftN);
+      letters.forEach((ch, li) => {
+        const bits = FONT[ch][r];
+        for (let c = 0; c < 3; c++) {
+          if (bits[c] !== '1') continue;
+          for (let w = 0; w < wide; w++) {
+            const k = left + li * step + c * wide + w;
+            if (k < fftN) row[k] = 1;
+          }
+        }
+      });
+      rows.push(row);
+    }
+  }
+  for (let i = 0; i < blank; i++) rows.push(new Uint8Array(fftN));
+  return rows;
 }

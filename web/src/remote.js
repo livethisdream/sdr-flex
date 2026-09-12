@@ -320,6 +320,14 @@ export class RemoteEngine extends Graph {
       onResult ? (row) => { if (row && row.id) onResult(row); } : null);
   }
 
+  /** The grid is built where the samples are; only the picture crosses the wire. */
+  async sliceGrid(nodeId, at = null) {
+    const r = await this.call('sliceGrid', { nodeId, at: at != null ? at : this.effectiveTime(nodeId) });
+    const n = this.node(nodeId);
+    if (n && r) n._grid = r.grid;
+    return r ? r.grid : null;
+  }
+
   async runRecords(nodeId, at) {
     const n = this.node(nodeId);
     if (!n) return null;

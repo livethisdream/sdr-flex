@@ -373,6 +373,16 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .ctx-i .soon { margin-left:auto; font-family:var(--mono); font-size:.54rem; color:var(--faint); }
 .ctx-none { padding:.5rem .6rem; color:var(--dim); font-size:.72rem; }
 
+/* ── the grid: a fold of the signal into two dimensions ── */
+.gridwrap { display:flex; flex-direction:column; height:100%; gap:.5rem; }
+.gridhead { display:flex; align-items:baseline; gap:.5rem; }
+.gridhead b { font-size:1.05rem; color:var(--bright); }
+.gridhead span { font-size:.72rem; color:var(--dim); font-family:var(--mono); }
+.gridhead em { font-style:normal; color:var(--warn); }
+.gridhead .exgo { margin-left:auto; }
+.gridstage { flex:1; min-height:0; position:relative; background:var(--panel); border:1px solid var(--rule); border-radius:3px; overflow:hidden; }
+.gridcv { display:block; width:100%; height:100%; image-rendering:pixelated; }
+
 /* ── Identify: the auto mode of choosing a decoder (ADR-0017) ── */
 /* `+` picks one by hand and sits at the right; Identify is the same choice made for
    you, so it sits beside it and takes over the margin that pushes the pair over. */

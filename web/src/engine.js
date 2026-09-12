@@ -123,6 +123,12 @@ export const OPS = {
   'core.dehop': {
     name: 'De-hop', group: 'Narrow', in: 'iq', out: 'iq',
   },
+  // The resource grid, as a picture rather than a list. OFDM's message is *which* cells
+  // carry anything, in time and in frequency, so the answer is a grid and not a byte
+  // stream — and a grid is a stream type of its own rather than an events pane pretending.
+  'core.ofdm': {
+    name: 'OFDM grid', group: 'Analyze', in: 'iq', out: 'grid',
+  },
   'core.burst_detector': {
     name: 'Burst detector', group: 'Analyze', in: 'iq', out: 'events',
     stub: true,
@@ -942,6 +948,17 @@ export class MockEngine extends Graph {
       node.params = DETECTORS[op].derive(iq, count, fs);
       node.out = { kind: 'real', sampleRate: fs, centerHz: p.out.centerHz };
       node.label = DETECTORS[op].label;
+    } else if (op === 'core.ofdm') {
+      // Nothing is assumed. The FFT size, the prefix and the symbol period are all
+      // derived from the signal when the grid is built, and each says what told it so.
+      node.params = {
+        fftN: param(0, 'auto', { from: 'not yet measured — the lag the prefix correlates at' }),
+        cpN: param(0, 'auto', { from: 'not yet measured — how wide that correlation is' }),
+        symbolUs: param(0, 'auto', { from: 'not yet measured' }),
+        floorDb: param(-12, 'auto', { from: 'relative to the strongest subcarrier' }),
+      };
+      node.out = { kind: 'grid', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = 'OFDM grid';
     } else if (op === 'core.hopmap' || op === 'core.dehop') {
       // Undecided on purpose, and for the same reason the slicers are: a hopper's dwells
       // are spread across a capture and the window a display happens to be showing is
@@ -1210,6 +1227,57 @@ export class MockEngine extends Graph {
    * The dwell edges are taken from where the energy was, not from a schedule, so the
    * settling time at each end of a hop is dropped rather than stitched in as a click.
    */
+  /**
+   * The resource grid, built once over the whole span and cached against its parameters.
+   *
+   * A job rather than a frame: an OFDM symbol is a few hundred microseconds and the
+   * interesting pattern is hundreds of them, so what a display window happens to hold is
+   * never the answer.
+   */
+  async sliceGrid(nodeId, at = null) {
+    const n = this.node(nodeId);
+    if (!n || n.out.kind !== 'grid') return null;
+    const p = this.node(n.parent);
+    // Keyed on the *question*, not the answer.
+    //
+    // The obvious key is the parameters, and it is wrong here: this operation writes the
+    // derived FFT size back into `fftN`, so a key that included the value changed the
+    // moment the work was done and the cache never hit once. What actually varies is
+    // whether somebody has pinned a size, and to what.
+    const pinned = n.params.fftN.mode === 'manual' && n.params.fftN.value >= 8;
+    const key = pinned ? `pinned:${Math.round(n.params.fftN.value)}` : 'auto';
+    if (n._grid && n._grid.key === key) return n._grid;
+
+    const span = await this._spanOf(p, at);
+    if (!span) return null;
+    const fs = span.sampleRate;
+    const est = pinned
+      ? { ...dsp.estimateOfdm(span.data, span.count, fs, { sizes: [Math.round(n.params.fftN.value)] }) }
+      : dsp.estimateOfdm(span.data, span.count, fs);
+
+    if (!est || !est.fftN) {
+      n._grid = { key, rows: 0, cols: 0, data: new Float32Array(0), error: est?.reason || 'no OFDM structure here' };
+      return n._grid;
+    }
+    n.params.fftN = { ...n.params.fftN, value: est.fftN,
+      auto: { from: `the prefix correlates at a lag of ${est.fftN} samples ` +
+                    `(${est.peak.toFixed(2)} against ${est.mean.toFixed(2)} elsewhere)`,
+              confident: est.confident } };
+    n.params.cpN = { ...n.params.cpN, value: est.cpN,
+      auto: { from: `the correlation stays coherent for ${est.cpN} samples, ` +
+                    `which is a ${(est.cpN / est.fftN * 100).toFixed(0)}% prefix`,
+              confident: est.confident } };
+    n.params.symbolUs = { ...n.params.symbolUs, value: +(est.symbolS * 1e6).toFixed(2),
+      auto: { from: `${est.fftN} + ${est.cpN} samples at ${(fs / 1e3).toFixed(0)} kS/s`,
+              confident: est.confident } };
+
+    const g = dsp.ofdmGrid(span.data, span.count, est);
+    n._grid = { key, ...g, est, sampleRate: fs, centerHz: p.out.centerHz,
+                t0: span.t0, spacingHz: est.spacingHz, symbolS: est.symbolS,
+                confident: est.confident };
+    return n._grid;
+  }
+
   async sliceDehop(nodeId, at = null) {
     const n = this.node(nodeId);
     if (!n || n.op !== 'core.dehop') return null;
