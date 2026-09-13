@@ -608,6 +608,18 @@ class App {
                         integer: true, fmt: (v) => (v > 0 ? `${v} B` : 'to next sync') },
           crc: { label: 'CRC', unit: '', type: 'enum', fmt: String,
                  values: ['auto', 'none', ...CRCS.map((c) => c.id)] },
+          chipRate: { label: 'chip rate', unit: 'kc/s', fmt: (v) => (v / 1e3).toFixed(1),
+                      step: 40, min: 100, integer: true, type: 'num' },
+          // Typed rather than chosen from a list. There are six hundred and seventy-odd
+          // codes in the catalog and a menu of them is not a menu — but the id is short,
+          // it is what the search reports, and typing it back is how you pin an answer.
+          code: { label: 'code', unit: '', type: 'text', placeholder: 'auto',
+                  hint: 'auto, or a code id as the search reports it — m127/0x48, gold63/17, walsh32/13, barker11',
+                  fmt: (v) => shorten(v) },
+          // Which polarity is a one is not in a BPSK signal. `auto` picks the one that
+          // reads as text and says so; the other two are the coin, flipped by hand.
+          invert: { label: 'polarity', unit: '', type: 'enum', fmt: String,
+                    values: ['auto', 'normal', 'inverted'] },
         // An adapter's parameters come with the node, since the client has no table of
         // somebody else's decoder's knobs and should not need one.
         }[key] || (n.paramMeta && n.paramMeta[key]
@@ -1347,12 +1359,23 @@ class App {
       dump += `${off.toString(16).padStart(6, '0')}  ${hex.padEnd(47)}  ${asc}\n`;
     }
     const sync = n.params.syncHex.value;
+    // What a byte stream owes the reader is how it was made, and that differs by what
+    // made it. A slicer read a waveform on a symbol grid; a despreader correlated
+    // against a code and the sign of the correlation *was* the bit — "samples per
+    // symbol" and "grid phase" are not facts about it, and asking for them crashed.
+    const how = n.op === 'core.despread'
+      ? `${r.bits.toLocaleString()} bits, one per code period of ${r.sps ? r.sps.toFixed(2) : '?'}`
+        + ` samples a chip · <code>${r.code || '?'}</code> peaks ${r.psr ? r.psr.toFixed(1) : '?'}×`
+        + ` its sidelobes, eye ${r.eye != null ? (r.eye * 100).toFixed(0) + '%' : '?'}`
+      : `${r.bits.toLocaleString()} bits at ${r.sps != null ? r.sps.toFixed(2) : '?'} samples/symbol`
+        + `${r.phase != null ? ` · grid phase ${r.phase.toFixed(2)}` : ''}`;
+    const where = n.op === 'core.despread' ? 'byte' : 'bit';
     el.innerHTML = `
       <div class="bywrap">
         <div class="byhead">
           <b>${b.length.toLocaleString()} bytes</b>
-          <span>${r.bits.toLocaleString()} bits at ${r.sps.toFixed(2)} samples/symbol · grid phase ${r.phase.toFixed(2)}
-          · ${sync ? (r.syncAt >= 0 ? `sync <code>${sync}</code> found at bit ${r.syncAt.toLocaleString()}`
+          <span>${how}
+          · ${sync ? (r.syncAt >= 0 ? `sync <code>${sync}</code> found at ${where} ${r.syncAt.toLocaleString()}`
                                     : `sync <code>${sync}</code> <u>not found</u> — bytes are packed from the start`)
                    : 'no sync word, so the byte boundary is a guess'}</span>
           <button class="exgo" id="byreslice">Re-slice</button>

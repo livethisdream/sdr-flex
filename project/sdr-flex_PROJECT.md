@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-12 (decoders checked for real, `Identify`, GNU Radio, local adapters, M17, FHSS) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-13 (`Dockerfile.full` — one command for the whole toolchain; DSSS despreading with a generated code library) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
 ---
 
@@ -18,7 +18,7 @@ Update it at the end of a session, not the start of the next one.
 
 MVP in the browser, the same tool with its engine in a container, and live radio into a
 ring recording. Static ES modules, no build step, no dependencies on either side.
-34 ADRs.
+35 ADRs.
 
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
@@ -55,8 +55,15 @@ Working end to end:
   all recovered from the signal — `grid` is a stream type with a canvas view of its own
 - Raster: a screen leaking, folded back into a picture, with the line and frame periods
   derived and the frames averaged
+- DSSS / CDMA: a despreader that finds the chip rate from the transitions, the carrier
+  offset by squaring, and the code by correlating against a generated library of the
+  standard families — every primitive polynomial to degree 11, the Gold sets, Barker,
+  Walsh. 557 codes in about a second, and it says what it skipped and why (ADR-0035)
+- `Dockerfile.full`: one command for Node, the five packaged decoders, the vendor capture
+  programs, GNU Radio, gr-lora_sdr, m17-cxx-demod and rx_sdr. 1.9 GB, and the banner then
+  reads **7 of 7 external decoders installed**
 
-Tests: 227 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 252 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -598,9 +605,9 @@ house rule.
 - **The CTF's remaining modulations.** The 2026 challenge list is NBFM, WBFM, USB/LSB, CW,
   FHSS, OFDM, FSK, M17, AFSK1200, APRS, ADS-B, BBC (gr-bbc), the AOL handshake, CDMA,
   FLEX/POCSAG, LoRa and TEMPEST (gr-tempest). Covered and verified: AFSK1200/APRS, ADS-B,
-  FLEX/POCSAG, CW, FSK, LoRa, M17, FHSS, OFDM. Have a node but never tested against a real signal of that
+  FLEX/POCSAG, CW, FSK, LoRa, M17, FHSS, OFDM, CDMA. Have a node but never tested against a real signal of that
   kind: NBFM, USB/LSB, WBFM — and WBFM has no de-emphasis, so broadcast audio will sound
-  wrong. Nothing at all: BBC, TEMPEST, CDMA, the AOL handshake.
+  wrong. Nothing at all: BBC, TEMPEST, the AOL handshake.
 - **A real TEMPEST capture.** All three folds are built (ADR-0033, ADR-0034) and the
   raster reads a synthetic screen. What is untested is a genuine leak: unknown pixel
   clock, harmonic carrier, interlace, nothing synchronized. The likely shape is the
@@ -616,9 +623,26 @@ house rule.
   records — M17, and anything vocoded — is half-connected until this exists. It wants an
   adapter whose `out` is `real` or `audio`, samples read back off stdout, and a rate
   declared the way `wants` declares the input rate.
-- **CDMA is unscoped.** Despreading needs the PN code. If it is a standard m-sequence or
-  Gold code it can be searched the way the framer searches the CRC catalog; if it is
-  arbitrary, that is a different problem. Waiting on how the challenge is generated.
+- ~~**CDMA is unscoped.**~~ Answered: a standard spreading code, not GPS. Built as
+  `core.despread` with a generated code library (ADR-0035) — the code is searched the way
+  the framer searches the CRC catalog, and the search reports what it declined to try.
+  What is **not** built, and is the honest limit: the chip timing is estimated before any
+  despreading and so has none of the processing gain behind it, which means this works on
+  a signal you can see and not on one under the noise. Below about 0 dB per chip the
+  timing goes first and everything follows; the suite records the measured limit as an
+  assertion. Fixing it means a joint acquisition search over code, timing and frequency
+  together, which is a different and much larger machine.
+- **`Identify` runs adapters, not the tool's own nodes.** So a spread signal comes back
+  as "nothing decoded this" — true of every decoder it tried, and not the whole story,
+  because `Despread (DSSS)` would have read it. Same for the hop map, the OFDM grid and
+  the raster. `identify.js` plans over the adapter table; making it plan over native
+  analyzers as well is a real feature and a structural change, not a line.
+- **A spread signal that is spread twice.** IS-95 puts Walsh on top of a PN sequence, and
+  that is why Walsh is in the catalog and out of the sweep: a Walsh row repeated is
+  another Walsh row, so there is no measurement that separates them without already
+  knowing where the code starts. Two despreaders in series would do it and nothing stops
+  you chaining them today — except that the second one's input is bytes, not IQ. A real
+  answer is a despreader whose output can be chips.
 
 - **SoapySDR, for the long tail of hardware.** The `rx_sdr` process driver already
   covers whatever SoapySDR knows about, so this is not a coverage gap — it is the same

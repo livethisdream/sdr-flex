@@ -546,3 +546,52 @@ export function amCarrier(signal, { seed = 0x2b1f, noise = 0.01 } = {}) {
   }
   return iq;
 }
+
+// ── Direct-sequence spread spectrum ─────────────────────────────────────────
+
+/**
+ * BPSK, spread by a code, with a carrier offset on it.
+ *
+ * The inverse of the despreader, chip for chip, which is the point: a fixture built by
+ * the same person who wrote the receiver and from the same assumptions proves that the
+ * two agree with each other and nothing else. This one goes further than most here in
+ * one respect — it puts a frequency offset on the signal by default, because a receiver
+ * that only works at exactly zero offset passes every test and no capture.
+ *
+ * One code period carries one bit. That is the short-code arrangement, and it is what a
+ * challenge means by "spread with an m-sequence": the code is the symbol, its sign is
+ * the data, and the processing gain is the code length.
+ */
+export function dsss(text, {
+  rate = 240_000, chipRate = 60_000, code, offsetHz = 900, amplitude = 0.5,
+  seed = 0x5d55, noise = 0.02, leadChips = 0, invert = false,
+} = {}) {
+  if (!code || !code.length) throw new Error('dsss needs a spreading code');
+  const bytes = typeof text === 'string' ? [...text].map((c) => c.charCodeAt(0)) : Array.from(text);
+  const bits = [];
+  for (const b of bytes) for (let i = 7; i >= 0; i--) bits.push((b >> i) & 1);
+
+  const L = code.length;
+  const sps = rate / chipRate;
+  const chips = new Int8Array(bits.length * L);
+  for (let k = 0; k < bits.length; k++) {
+    const sign = (bits[k] ? 1 : -1) * (invert ? -1 : 1);
+    for (let i = 0; i < L; i++) chips[k * L + i] = sign * code[i];
+  }
+
+  const nChips = leadChips + chips.length;
+  const n = Math.floor(nChips * sps);
+  const iq = new Float32Array(n * 2);
+  const rand = rng(seed);
+  let phase = 0;
+  for (let i = 0; i < n; i++) {
+    const c = Math.floor(i / sps) - leadChips;
+    const v = c >= 0 && c < chips.length ? chips[c] : 0;
+    phase += (2 * Math.PI * offsetHz) / rate;
+    if (phase > Math.PI * 2) phase -= Math.PI * 2;
+    iq[i * 2] = amplitude * v * Math.cos(phase) + (rand() - 0.5) * noise;
+    iq[i * 2 + 1] = amplitude * v * Math.sin(phase) + (rand() - 0.5) * noise;
+  }
+  return { iq, samples: n, chips, bits, bytes, chipRate, sps, code, offsetHz,
+           spreadHz: chipRate * 2 };
+}

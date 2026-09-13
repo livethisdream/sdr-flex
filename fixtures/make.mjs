@@ -22,6 +22,9 @@ import { fileURLToPath } from 'node:url';
 // assumed. Importing them here rather than copying them means a fixture and the test
 // that generated its signal cannot drift apart.
 import * as mod from '../web/test/support/modulate.mjs';
+// And the code library, for the same reason: the fixture is spread by exactly the
+// sequence the search will be looking for, generated rather than pasted in.
+import * as codes from '../web/src/codes.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -384,8 +387,41 @@ function tempestRaster() {
   return { dir, bytes, samples: iq.length / 2, rate };
 }
 
+// ── 10. Direct-sequence spread spectrum, for the despreader ──────────────
+// BPSK spread by a 127-chip m-sequence, one code period per bit: 21 dB of processing
+// gain, and unreadable until the code is known. Which is the point — the question a
+// spread-spectrum challenge asks is "which code", and everything else follows from it.
+//
+// The polynomial is x^7 + x^4 + 1, which is the one nearly everybody reaches for at that
+// length. Nothing in the capture says so, and nothing needs to: the chip rate comes from
+// the transitions, the carrier offset from the squared signal, and the code from a
+// correlation search over six hundred and seventy-odd standard codes.
+//
+// **It carries a carrier offset on purpose.** A receiver that only works at exactly zero
+// offset passes every test written for it and no capture off the air, and this one is
+// worse than most: a coherent correlation across a whole code period is where a small
+// offset does the most damage.
+function dsssSpread() {
+  const rate = 240_000, centerHz = 915_000_000;
+  const text = 'SPREAD PAYLOAD 12345';
+  // The same preamble the Manchester fixture uses, so the sync-word path has something
+  // to find and a reader can see the byte alignment was right rather than assume it.
+  const payload = [0xaa, 0xaa, 0x2d, 0xd4, ...[...text].map((c) => c.charCodeAt(0))];
+  const code = codes.byId('m127/0x48');
+  const g = mod.dsss(payload, { rate, chipRate: 60_000, code: code.chips,
+                                offsetHz: 900, noise: 0.03, seed: 0x5d55 });
+  const dir = path.join(HERE, 'dsss-m127');
+  const bytes = writeSigmf(dir, 'capture', g.iq, {
+    sampleRate: rate, centerHz,
+    note: `Synthetic DSSS: BPSK spread by a 127-chip m-sequence (${codes.polyText(7, code.poly)}) ` +
+          `at 60 kchip/s, one code period per bit, 4 samples per chip, with a 900 Hz ` +
+          `carrier offset on it. 21 dB of processing gain. Nobody transmitted this.`,
+  });
+  return { dir, bytes, samples: g.samples, rate };
+}
+
 for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm, fhssHopping,
-                    ofdmGrid, tempestRaster]) {
+                    ofdmGrid, tempestRaster, dsssSpread]) {
   const r = make();
   if (r.skipped) {
     console.log(`${path.basename(r.dir).padEnd(20)} skipped — ${r.skipped}`);

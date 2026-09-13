@@ -1,0 +1,16 @@
+{
+  "global": {
+    "core:datatype": "cu8",
+    "core:sample_rate": 240000,
+    "core:description": "Synthetic DSSS: BPSK spread by a 127-chip m-sequence (x^7 + x^4 + 1) at 60 kchip/s, one code period per bit, 4 samples per chip, with a 900 Hz carrier offset on it. 21 dB of processing gain. Nobody transmitted this.",
+    "core:license": "CC0-1.0",
+    "core:recorder": "sdr-flex fixtures/make.mjs (synthesized, not recorded)"
+  },
+  "captures": [
+    {
+      "core:sample_start": 0,
+      "core:frequency": 915000000
+    }
+  ],
+  "annotations": []
+}

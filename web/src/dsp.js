@@ -1454,3 +1454,370 @@ function packBits(bits, opts = {}) {
 }
 
 export { unpackBits, packBits };
+
+// ── Direct-sequence spread spectrum ────────────────────────────────────────
+//
+// A spread signal is wide, flat and nearly invisible until you know its code, at which
+// point it collapses to a narrow one and reads like anything else. So the whole problem
+// is three numbers and a name: the chip rate, where the chips start, and which code.
+//
+// Those are found in that order, because each one narrows the next. The chip rate comes
+// from the transitions, which are visible without knowing anything; the chip phase falls
+// out of the same transitions; and the code is then a correlation search over a chip
+// stream rather than over samples, which is what makes searching several hundred codes
+// something that finishes.
+
+/**
+ * The polarity of a BPSK signal, without recovering its carrier.
+ *
+ * `Re(x[i] · conj(x[i-1]))` is positive while the chip holds and negative where it
+ * flips, and a frequency offset small compared with the sample rate only tilts it. So
+ * the sign of that, accumulated, is a ±1 waveform that follows the chips — which is
+ * exactly the shape the NRZ symbol estimator already knows how to read.
+ *
+ * The threshold is a fraction of the running signal power rather than zero: at zero,
+ * every noise sample that happens to land the wrong way is a chip transition, and the
+ * estimate comes back as one sample per chip no matter what the signal is doing.
+ */
+export function bpskPolarity(iq, count) {
+  const out = new Float32Array(count);
+  let power = 0;
+  for (let i = 0; i < count; i++) power += iq[2 * i] * iq[2 * i] + iq[2 * i + 1] * iq[2 * i + 1];
+  power /= Math.max(1, count);
+  const floor = -0.3 * power;
+  let s = 1;
+  out[0] = s;
+  for (let i = 1; i < count; i++) {
+    const ar = iq[2 * i], ai = iq[2 * i + 1];
+    const br = iq[2 * (i - 1)], bi = iq[2 * (i - 1) + 1];
+    if (ar * br + ai * bi < floor) s = -s;
+    out[i] = s;
+  }
+  return out;
+}
+
+/**
+ * How long a chip is, and where the first one starts.
+ *
+ * The period is the NRZ estimator's problem and it is the same problem — runs of a ±1
+ * waveform, and the answer is the longest period that explains all of them. The phase is
+ * then the circular mean of where the transitions fell within that period, which is a
+ * mean of angles rather than of numbers because a transition at 0.01 chips and one at
+ * 0.99 chips are a hundredth of a chip apart and not most of one.
+ */
+export function estimateChip(iq, count, sampleRate) {
+  const pol = bpskPolarity(iq, count);
+  const est = estimateNrzSymbol(pol, 0, sampleRate);
+  if (!(est.value > 0)) {
+    return { samplesPerChip: 0, chipRate: 0, phase: 0, confident: false,
+             reason: 'no chip transitions to measure', agreement: est.agreement || 0 };
+  }
+  const sps = (est.value * 1e-6) * sampleRate;
+  if (sps < 2) {
+    return { samplesPerChip: sps, chipRate: sampleRate / sps, phase: 0, confident: false,
+             reason: 'fewer than two samples per chip — the capture is too slow for this signal',
+             agreement: est.agreement };
+  }
+
+  let sx = 0, sy = 0, n = 0;
+  for (let i = 1; i < count; i++) {
+    if (pol[i] === pol[i - 1]) continue;
+    const a = (2 * Math.PI * (i % sps)) / sps;
+    sx += Math.cos(a); sy += Math.sin(a); n++;
+  }
+  let phase = 0;
+  if (n > 0) {
+    // `atan2` returns the offset nearest zero, in (-sps/2, sps/2], which is what is
+    // wanted: a mean transition instant a hair *before* the start of the window is the
+    // same boundary as one at zero, not one a whole chip later. Rotating it up into
+    // [0, sps) instead — the obvious way to make a phase positive — starts the chip
+    // stream one chip in, and that costs the first bit of the message.
+    //
+    // Which is not an abstract loss. The bits after it still decode perfectly, so the
+    // symptom is a clean-looking decode of a message shifted by one bit: every byte is
+    // the tail of one character and the head of the next, and nothing reports an error.
+    phase = (Math.atan2(sy, sx) / (2 * Math.PI)) * sps;
+    if (phase < 0) phase = 0;                   // there is nothing before the window
+  }
+
+  return {
+    samplesPerChip: sps,
+    chipRate: sampleRate / sps,
+    phase,
+    transitions: n,
+    agreement: est.agreement,
+    confident: est.confident && n > 20,
+    reason: est.confident ? '' : 'the runs do not agree on one chip length',
+  };
+}
+
+/**
+ * Samples to chips: integrate and dump, one complex value per chip.
+ *
+ * Integrating the whole chip rather than sampling its middle is the matched filter for a
+ * rectangular chip, and it is worth about 3 dB over a point sample — which for a code
+ * search is the difference between the right code standing out and the top twenty being
+ * a coin toss.
+ */
+export function chipStream(iq, count, samplesPerChip, phase, maxChips = 1 << 18) {
+  const n = Math.max(0, Math.min(maxChips, Math.floor((count - phase) / samplesPerChip)));
+  const re = new Float32Array(n), im = new Float32Array(n);
+  for (let k = 0; k < n; k++) {
+    const a = Math.round(phase + k * samplesPerChip);
+    const b = Math.round(phase + (k + 1) * samplesPerChip);
+    let sr = 0, si = 0;
+    for (let i = a; i < b; i++) { sr += iq[2 * i]; si += iq[2 * i + 1]; }
+    const m = Math.max(1, b - a);
+    re[k] = sr / m; im[k] = si / m;
+  }
+  return { re, im, n };
+}
+
+/**
+ * The carrier offset of a BPSK signal, without knowing its data.
+ *
+ * Squaring doubles the phase, and (±1 · e^{jφ})² is e^{j2φ} either way — so the data
+ * disappears and what is left is a tone at twice the offset. The angle the squared
+ * signal advances per sample is then the whole estimate, and it needs no transform.
+ *
+ * This has to happen *before* the code search, not after it. A correlation over one code
+ * period is a coherent integration over that whole period, and a 900 Hz offset at 60
+ * kchip/s turns a 127-chip integration into two full rotations that sum to nothing. The
+ * right code then scores no better than the wrong ones, and the search reports — quite
+ * correctly, and quite uselessly — that this is not any code it knows.
+ */
+export function estimateBpskOffset(iq, count, sampleRate) {
+  if (count < 3) return { hz: 0, confident: false, reason: 'not enough samples' };
+  let ax = 0, ay = 0, mag = 0;
+  let pr = iq[0] * iq[0] - iq[1] * iq[1], pi = 2 * iq[0] * iq[1];
+  for (let i = 1; i < count; i++) {
+    const xr = iq[2 * i], xi = iq[2 * i + 1];
+    const qr = xr * xr - xi * xi, qi = 2 * xr * xi;
+    ax += qr * pr + qi * pi;
+    ay += qi * pr - qr * pi;
+    mag += Math.sqrt(qr * qr + qi * qi);
+    pr = qr; pi = qi;
+  }
+  const norm = Math.sqrt(ax * ax + ay * ay) / (mag * mag / (count - 1) || 1);
+  return {
+    hz: (Math.atan2(ay, ax) * sampleRate) / (4 * Math.PI),
+    // How nearly the squared signal is one tone rather than a cloud. Low means either
+    // there is no carrier to find or this is not BPSK.
+    coherence: Math.min(1, norm),
+    confident: norm > 0.2,
+  };
+}
+
+/** Spin a chip stream back by a fixed angle per chip, in place. */
+export function derotateChips(chips, radiansPerChip) {
+  for (let k = 0; k < chips.n; k++) {
+    const a = -radiansPerChip * k;
+    const c = Math.cos(a), s = Math.sin(a);
+    const re = chips.re[k], im = chips.im[k];
+    chips.re[k] = re * c - im * s;
+    chips.im[k] = re * s + im * c;
+  }
+  return chips;
+}
+
+function nextPow2(n) { let p = 1; while (p < n) p <<= 1; return p; }
+
+/** The inverse transform, by conjugating either side of the forward one. */
+function ifft(buf) {
+  for (let i = 1; i < buf.length; i += 2) buf[i] = -buf[i];
+  fft(buf);
+  const n = buf.length / 2;
+  for (let i = 0; i < buf.length; i += 2) { buf[i] /= n; buf[i + 1] = -buf[i + 1] / n; }
+  return buf;
+}
+
+/**
+ * Correlate a chip stream against one code at every offset, in one transform.
+ *
+ * Done directly this costs L² per code per period, which for a length-1023 code and
+ * twenty periods is twenty million multiply-accumulates — per candidate, and there are
+ * hundreds of candidates. Through the transform it is three passes of N log N, the
+ * forward transform of the data is shared by every code of the same length, and the
+ * whole search finishes in about the time it takes to notice it started.
+ */
+function correlateCode(Y, N, code, useChips) {
+  const L = code.length;
+  const C = new Float32Array(2 * N);
+  for (let i = 0; i < L; i++) C[2 * i] = code[i];
+  fft(C);
+  const R = new Float32Array(2 * N);
+  for (let i = 0; i < N; i++) {
+    const yr = Y[2 * i], yi = Y[2 * i + 1];
+    const cr = C[2 * i], ci = -C[2 * i + 1];      // conjugate: correlation, not convolution
+    R[2 * i] = yr * cr - yi * ci;
+    R[2 * i + 1] = yr * ci + yi * cr;
+  }
+  ifft(R);
+  return R;
+}
+
+/**
+ * Which code this is, and where it starts.
+ *
+ * A code that is right gives a correlation of L every code period; a code that is wrong
+ * gives about √L, wherever you put it. So the score is the mean correlation magnitude
+ * over the periods in hand, divided by what a perfect match would give — near 1 for the
+ * right code, near 1/√L for every other one — and the gap between the best and the
+ * runner-up is the evidence, not the score by itself (ADR-0017). One code scoring 0.9
+ * where the next scores 0.1 is an answer. Two codes scoring 0.4 is not.
+ */
+export function searchCodes(chips, candidates, { periods = 12, minPeriods = 8, top = 6 } = {}) {
+  if (!chips.n || !candidates.length) return { ranked: [], reason: 'nothing to search' };
+
+  let energy = 0;
+  for (let i = 0; i < chips.n; i++) energy += chips.re[i] * chips.re[i] + chips.im[i] * chips.im[i];
+  const rms = Math.sqrt(energy / chips.n) || 1;
+
+  // Grouped by length so the forward transform of the chip stream is computed once for
+  // each distinct length rather than once per candidate.
+  const byLength = new Map();
+  for (const c of candidates) {
+    if (!byLength.has(c.length)) byLength.set(c.length, []);
+    byLength.get(c.length).push(c);
+  }
+
+  const ranked = [];
+  const skipped = [];
+  for (const [L, group] of byLength) {
+    const use = Math.min(chips.n, periods * L + L);
+    // A code long enough to reach across the whole capture is a code that cannot be
+    // wrong: the peak is then the best of L offsets averaged over two or three values,
+    // and the best of two thousand noisy numbers is always a big one. A length-2047
+    // m-sequence scored 6 against a 4,608-chip capture of something else entirely and
+    // beat the code that was actually there.
+    //
+    // So a candidate has to fit several times over or it is not tried, and the report
+    // says which ones were left out. "Nothing matched" and "nothing long enough to
+    // match was tried" are different answers (ADR-0031).
+    if (Math.floor(chips.n / L) < minPeriods) {
+      skipped.push({ length: L, count: group.length, have: Math.floor(chips.n / L),
+                     need: minPeriods });
+      continue;
+    }
+    const N = nextPow2(use + L);
+    const Y = new Float32Array(2 * N);
+    for (let i = 0; i < use; i++) { Y[2 * i] = chips.re[i]; Y[2 * i + 1] = chips.im[i]; }
+    fft(Y);
+
+    for (const cand of group) {
+      const R = correlateCode(Y, N, cand.chips, use);
+      const mean = new Float64Array(L);
+      let bestOffset = 0, total = 0;
+      for (let off = 0; off < L; off++) {
+        let acc = 0, k = 0;
+        for (let p = off; p + L <= use; p += L) {
+          const re = R[2 * p], im = R[2 * p + 1];
+          acc += Math.sqrt(re * re + im * im);
+          k++;
+        }
+        mean[off] = k ? acc / k : 0;
+        total += mean[off];
+        if (mean[off] > mean[bestOffset]) bestOffset = off;
+      }
+      // Peak against the rest of the same code's own offsets. That is the statistic that
+      // means the same thing for a 7-chip word and a 1023-chip one: a wrong code has no
+      // offset it likes, so its peak sits about where its average does. A raw
+      // correlation score does not compare across lengths at all — a Barker 7 correlates
+      // with noise at 1/√7, which is 0.38, and next to a noisy 127-chip hit at 0.35 it
+      // wins and is wrong.
+      const background = L > 1 ? (total - mean[bestOffset]) / (L - 1) : mean[bestOffset];
+      ranked.push({
+        code: cand, offset: bestOffset,
+        score: mean[bestOffset] / (L * rms),
+        psr: mean[bestOffset] / (background || 1e-12),
+        periods: Math.floor(use / L),
+      });
+    }
+  }
+
+  ranked.sort((a, b) => b.psr - a.psr);
+  const best = ranked[0];
+  // The runner-up has to be a *different* code. A Gold set contains rotations of the
+  // same sequence, and the second-place entry is routinely the right answer read at a
+  // different offset — reporting that as "no clear winner" would throw away every hit.
+  const rival = ranked.find((r) => r.code.id !== best?.code.id);
+  return {
+    ranked: ranked.slice(0, top),
+    best: best || null,
+    margin: best && rival ? best.psr / (rival.psr || 1e-9) : Infinity,
+    rival: rival || null,
+    tried: ranked.length,
+    skipped,
+  };
+}
+
+/**
+ * The bits, once the code is known.
+ *
+ * One correlation per code period is one soft symbol, and it arrives with whatever phase
+ * the carrier happened to have. Squaring removes the data — (±1·e^{jθ})² is e^{j2θ}
+ * either way — so the residual frequency offset can be measured from the symbols
+ * themselves without a training sequence, and then divided out.
+ *
+ * What squaring cannot resolve is the sign of the whole stream, because it was thrown
+ * away to get the frequency. That is not a flaw to be engineered around: a BPSK signal
+ * with no known preamble genuinely does not say which polarity is a one, and the honest
+ * thing is to hand back both and let something downstream — a CRC, a sync word, or a
+ * human reading text — decide. `invert` is that decision.
+ */
+export function despread(chips, code, offset, { invert = false } = {}) {
+  const L = code.length;
+  const K = Math.max(0, Math.floor((chips.n - offset) / L));
+  const sr = new Float32Array(K), si = new Float32Array(K);
+  for (let k = 0; k < K; k++) {
+    const base = offset + k * L;
+    let ar = 0, ai = 0;
+    for (let i = 0; i < L; i++) {
+      const c = code[i];
+      ar += chips.re[base + i] * c;
+      ai += chips.im[base + i] * c;
+    }
+    sr[k] = ar / L; si[k] = ai / L;
+  }
+  if (K < 2) return { bits: new Uint8Array(0), symbols: K, eye: 0, offsetHz: 0 };
+
+  // Frequency, from the squared symbols: the angle each one advances on the last.
+  let dx = 0, dy = 0;
+  let px = sr[0] * sr[0] - si[0] * si[0], py = 2 * sr[0] * si[0];
+  for (let k = 1; k < K; k++) {
+    const qx = sr[k] * sr[k] - si[k] * si[k], qy = 2 * sr[k] * si[k];
+    dx += qx * px + qy * py;
+    dy += qy * px - qx * py;
+    px = qx; py = qy;
+  }
+  const step = Math.atan2(dy, dx) / 2;           // radians per symbol
+
+  // Then the starting phase, from the same squared symbols with the rotation taken out.
+  let ax = 0, ay = 0;
+  for (let k = 0; k < K; k++) {
+    const qx = sr[k] * sr[k] - si[k] * si[k], qy = 2 * sr[k] * si[k];
+    const a = -2 * step * k;
+    const c = Math.cos(a), s = Math.sin(a);
+    ax += qx * c - qy * s;
+    ay += qx * s + qy * c;
+  }
+  const theta0 = Math.atan2(ay, ax) / 2;
+
+  const bits = new Uint8Array(K);
+  let on = 0, off = 0;
+  for (let k = 0; k < K; k++) {
+    const a = -(theta0 + step * k);
+    const c = Math.cos(a), s = Math.sin(a);
+    const re = sr[k] * c - si[k] * s;
+    const im = sr[k] * s + si[k] * c;
+    bits[k] = (re > 0) !== invert ? 1 : 0;
+    on += Math.abs(re); off += Math.abs(im);
+  }
+  return {
+    bits, symbols: K,
+    // How much of each symbol landed on the axis it was supposed to. One is a clean
+    // decision; a half is a coin toss dressed as a decode.
+    eye: on / (on + off || 1),
+    radiansPerSymbol: step,
+  };
+}

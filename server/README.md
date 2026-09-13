@@ -345,6 +345,12 @@ Two parts of the report matter more than the list of hits:
 It costs about 1.8 s for eight seconds at 250 kS/s and 4.8 s at 2.4 MS/s, with the first
 row back in roughly half that.
 
+**It runs decoders, not the tool's own nodes.** So the native chain is not in it, and
+neither is the despreader — a spread signal comes back from `Identify` as "nothing
+decoded this", which is true of every decoder it tried and is not the whole story. Drop
+`Despread (DSSS)` on the node yourself; it searches the code catalog and takes about a
+second. Folding the native analyzers into `Identify` is wanted and not built.
+
 Three things are worth knowing:
 
 - **These nodes are opaque.** You cannot drill into somebody else's decoder, adjust its

@@ -11,6 +11,7 @@ import * as plugins from './plugins.js';
 import { plan as identifyPlan } from './identify.js';
 import { Graph } from './graph.js';
 import * as frames from './frames.js';
+import * as spreading from './codes.js';
 
 /**
  * What can be put in front of an audio decoder when the stream is IQ.
@@ -81,6 +82,14 @@ export const OPS = {
   // code that guarantees a transition every symbol tells you its own symbol rate.
   'core.manchester': {
     name: 'Manchester slicer', group: 'Decode', in: 'real', out: 'bytes',
+  },
+  // The fourth slicer, and the only one that takes IQ: a spread signal has to be
+  // despread before there is a waveform to slice, and the correlation that despreads it
+  // *is* the decision — the sign of one correlation is one bit. Splitting that into a
+  // despreader and a slicer would put a node in the chain whose input is one sample per
+  // symbol, which is not a waveform and has nothing to slice.
+  'core.despread': {
+    name: 'Despread (DSSS)', group: 'Decode', in: 'iq', out: 'bytes',
   },
   // A line code on top of a line code. Cheap to try, and a stream that sliced to noise
   // sometimes reads perfectly on the other side of it.
@@ -317,6 +326,46 @@ async function inParallel(items, limit, work) {
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runner));
 }
 
+/** Bits to bytes, in whichever order the chain is reading them. */
+function bytesOf(bits, msbFirst = true) {
+  const out = new Uint8Array(Math.floor(bits.length / 8));
+  for (let b = 0; b < out.length; b++) {
+    let v = 0;
+    for (let k = 0; k < 8; k++) {
+      const bit = bits[b * 8 + k];
+      v |= msbFirst ? (bit << (7 - k)) : (bit << k);
+    }
+    out[b] = v;
+  }
+  return out;
+}
+
+/**
+ * How much of a byte stream reads as text.
+ *
+ * A weak test used for exactly one thing: choosing between a decode and its own inverse,
+ * where nothing in the signal decides and the two are otherwise indistinguishable. It is
+ * not evidence that something decoded — the external decoder runner has the same measure
+ * for the same reason, and there it is a reason to *refuse* a result rather than accept
+ * one (ADR-0031).
+ */
+function printableRatio(bytes) {
+  if (!bytes.length) return 0;
+  let n = 0;
+  for (const v of bytes) if ((v >= 32 && v < 127) || v === 10 || v === 13 || v === 9) n++;
+  return n / bytes.length;
+}
+
+/** First occurrence of a byte pattern, or -1. */
+function findBytes(hay, needle) {
+  if (!needle.length) return -1;
+  outer: for (let i = 0; i + needle.length <= hay.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
 function param(value, mode = 'manual', auto = null) {
   return { value, mode, auto };
 }
@@ -437,6 +486,7 @@ export class MockEngine extends Graph {
     // Dispatching here rather than in three near-identical methods keeps the caching,
     // the span selection and the progress reporting in one place.
     if (n.op === 'core.differential') return this._sliceDifferential(n, p, onProgress, at);
+    if (n.op === 'core.despread') return this._sliceDespread(n, p, onProgress, at);
 
     const keys = n.op === 'core.manchester'
       ? ['threshold', 'symbolUs', 'polarity', 'syncHex', 'bitOrder']
@@ -522,6 +572,129 @@ export class MockEngine extends Graph {
                                 durationS: (g.end - g.start) / fs })),
     };
     return n._bursts;
+  }
+
+  /**
+   * Despread, in the order the three unknowns narrow each other.
+   *
+   * Chip rate first, because it comes from the transitions and needs nothing else.
+   * Carrier offset second, because a correlation over a code period is a coherent
+   * integration over that period and an uncorrected offset makes it sum to nothing —
+   * at 900 Hz and 60 kchip/s a 127-chip integration is two full rotations. The code
+   * last, because by then it is a correlation over chips rather than samples, which is
+   * what makes searching six hundred candidates something that finishes.
+   *
+   * Every one of them says what told it so (ADR-0017), and the search says what it did
+   * not try as well as what it found (ADR-0031).
+   */
+  async _sliceDespread(n, p, onProgress, at) {
+    const named = n.params.code.mode === 'manual' && n.params.code.value !== 'auto'
+      ? n.params.code.value : '';
+    const pinnedRate = n.params.chipRate.mode === 'manual' && n.params.chipRate.value > 0
+      ? n.params.chipRate.value : 0;
+    // Keyed on the question rather than the answer: this writes the chip rate and the
+    // code it found back into its own parameters, so a key built from their values
+    // changes the moment the work is done and never hits (the OFDM grid learned this
+    // the hard way).
+    const keyOf = () => [named || 'auto', pinnedRate || 'auto', n.params.invert.value,
+                         n.params.syncHex.value, n.params.bitOrder.value].join('|');
+    if (n._sliced && n._sliced.key === keyOf()) return n._sliced;
+
+    const span = await this._spanOf(p, at);
+    if (!span) return null;
+    const fs = span.sampleRate;
+    const fail = (why) => {
+      n._sliced = { key: keyOf(), bytes: new Uint8Array(0), bits: 0, error: why,
+                    t0: span.t0, t1: span.t1, sampleRate: fs };
+      return n._sliced;
+    };
+
+    const chip = pinnedRate
+      ? { chipRate: pinnedRate, samplesPerChip: fs / pinnedRate, phase: 0, confident: true,
+          agreement: 1, transitions: 0 }
+      : dsp.estimateChip(span.data, span.count, fs);
+    if (!(chip.samplesPerChip >= 2)) return fail(chip.reason || 'no chip rate could be measured');
+    n.params.chipRate = { ...n.params.chipRate, value: Math.round(chip.chipRate),
+      auto: { from: pinnedRate ? 'pinned'
+                : `every run between transitions is a multiple of ${chip.samplesPerChip.toFixed(2)} samples ` +
+                  `(${((chip.agreement || 0) * 100).toFixed(0)}% of ${chip.transitions} of them)`,
+              confident: !!chip.confident } };
+
+    const off = n.params.offsetHz.mode === 'manual'
+      ? { hz: n.params.offsetHz.value, coherence: 1, confident: true }
+      : dsp.estimateBpskOffset(span.data, span.count, fs);
+    n.params.offsetHz = { ...n.params.offsetHz, value: +off.hz.toFixed(1),
+      auto: { from: `the squared signal is a tone there (${(off.coherence * 100).toFixed(0)}% coherent)`,
+              confident: !!off.confident } };
+
+    const chips = dsp.chipStream(span.data, span.count, chip.samplesPerChip, chip.phase);
+    dsp.derotateChips(chips, (2 * Math.PI * off.hz) / chip.chipRate);
+    if (chips.n < 32) return fail('too few chips in this span to find a code');
+
+    let best, evidence, notTried = [];
+    if (named) {
+      const one = spreading.byId(named);
+      if (!one) return fail(`no code called ${named}`);
+      const found = dsp.searchCodes(chips, [one], { minPeriods: 1 });
+      if (!found.best) return fail(`${named} does not fit in this span`);
+      best = found.best;
+      evidence = `${one.name} \u2014 ${one.detail}, given rather than searched for; ` +
+                 `peak ${best.psr.toFixed(1)}\u00d7 its own sidelobes`;
+    } else {
+      const { candidates, excluded } = spreading.sweep();
+      const found = dsp.searchCodes(chips, candidates);
+      if (!found.best) return fail('no code long enough to check fits in this span');
+      best = found.best;
+      const m = found.margin;
+      evidence = `${found.tried} codes tried; ${best.code.name} (${best.code.detail}) ` +
+                 `peaks ${best.psr.toFixed(1)}\u00d7 its own sidelobes, ` +
+                 (isFinite(m) ? `${m.toFixed(1)}\u00d7 the next code` : 'and nothing else came close');
+      // What was not tried, and why — the half of the answer that is easy to leave out.
+      for (const e of excluded) notTried.push(`${e.family}: ${e.why}`);
+      for (const s of found.skipped) {
+        notTried.push(`${s.count} codes of ${s.length} chips: only ${s.have} periods in this span, ` +
+                      `and ${s.need} are needed before a peak means anything`);
+      }
+      n._ranked = found.ranked;
+    }
+
+    // A code found by correlation is not the same as a code that decoded something. The
+    // peak-to-sidelobe ratio is the evidence for the first; the eye is the evidence for
+    // the second, and they can disagree.
+    const confident = best.psr > 6;
+    n.params.code = { ...n.params.code, value: best.code.id,
+      auto: { from: evidence, confident, notTried } };
+
+    const msb = n.params.bitOrder.value !== 'lsb';
+    const want = n.params.invert.mode === 'manual' ? n.params.invert.value : 'auto';
+    const normal = dsp.despread(chips, best.code.chips, best.offset);
+    const flipped = want === 'auto' || want === 'inverted'
+      ? dsp.despread(chips, best.code.chips, best.offset, { invert: true }) : null;
+
+    let use = normal, chose = 'normal';
+    if (want === 'inverted') { use = flipped; chose = 'inverted'; }
+    else if (want === 'auto' && flipped) {
+      const score = (b) => printableRatio(bytesOf(b.bits, msb));
+      const a = score(normal), f = score(flipped);
+      if (f > a) { use = flipped; chose = 'inverted'; }
+      n.params.invert = { ...n.params.invert, value: chose,
+        auto: { from: `${(Math.max(a, f) * 100).toFixed(0)}% of the bytes are printable ` +
+                      `${chose === 'inverted' ? 'inverted' : 'as they are'}, against ` +
+                      `${(Math.min(a, f) * 100).toFixed(0)}% the other way`,
+                confident: Math.abs(a - f) > 0.2 } };
+    }
+
+    const all = bytesOf(use.bits, msb);
+    const sync = frames.bytesOfHex(n.params.syncHex.value);
+    const at8 = sync.length ? findBytes(all, sync) : -1;
+    const bytes = at8 >= 0 ? all.subarray(at8 + sync.length) : all;
+
+    n._sliced = {
+      key: keyOf(), bytes, bits: use.bits.length, sampleRate: fs, t0: span.t0, t1: span.t1,
+      syncAt: at8, sps: chip.samplesPerChip, eye: use.eye, psr: best.psr,
+      code: best.code.id, chipOffset: best.offset,
+    };
+    return n._sliced;
   }
 
   /** Differential sits on bytes, so its input is whatever the node above it sliced. */
@@ -1043,6 +1216,24 @@ export class MockEngine extends Graph {
       };
       node.out = { kind: 'bytes', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'Manchester';
+    } else if (op === 'core.despread') {
+      // Undecided, all of it. The chip rate, the code and the polarity are all derived
+      // from the span when it is despread — which is the only place they can be derived
+      // from, because a code search needs several code periods and a display window is
+      // not sized for that.
+      node.params = {
+        chipRate: param(0, 'auto', { from: 'not yet measured \u2014 from the chip transitions' }),
+        code: param('auto', 'auto', { from: 'not yet searched' }),
+        // BPSK does not say which polarity is a one; nothing in the signal does. `auto`
+        // is honest about the basis it picks on — printable text — and says so in the
+        // evidence rather than quietly choosing.
+        invert: param('auto', 'auto', { from: 'whichever reads as text' }),
+        offsetHz: param(0, 'auto', { from: 'not yet measured \u2014 from the squared signal' }),
+        syncHex: param(''),
+        bitOrder: param('msb'),
+      };
+      node.out = { kind: 'bytes', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = 'Despread';
     } else if (op === 'core.differential') {
       node.params = {
         mode: param('nrz-m'),

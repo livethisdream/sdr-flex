@@ -1,0 +1,50 @@
+{
+  "name": "Direct-sequence spread spectrum: which code, and then the bits",
+  "why": "A spread signal is unreadable until you know its code, so \"which code\" is the whole question and the rest follows from it. This pins the order the three unknowns have to be solved in — chip rate from the transitions, carrier offset from the squared signal, code by correlation — and in particular that the offset has to come out before the search rather than after it: a correlation across a code period is a coherent integration across it, and 900 Hz at 60 kchip/s is two full rotations over 127 chips, which makes the right code score like every wrong one. It also pins two things that are easy to get wrong and silent when you do: a chip phase rotated up into [0, chip) instead of taken nearest zero starts the stream one chip late and loses the first bit of the message, and a peak-to-sidelobe ratio measured over too few code periods makes a long code win against anything.",
+  "capture": "capture.sigmf-data",
+  "chain": [
+    {
+      "op": "core.despread",
+      "params": {
+        "syncHex": "aa aa 2d d4"
+      }
+    },
+    {
+      "op": "core.framer"
+    }
+  ],
+  "expect": {
+    "noError": true,
+    "fieldContains": {
+      "reads": [
+        "SPREAD PAYLOAD 12345"
+      ]
+    },
+    "note": "The chain is the despreader and then the ordinary framer, which is the claim being made: what comes out of a despreader is a byte stream like any other, and nothing downstream has to know where it came from. `reads` rather than `text` because `text` is the hex the frame is and `reads` is what it says."
+  },
+  "derive": [
+    {
+      "node": 0,
+      "param": "chipRate",
+      "about": 60000,
+      "within": 0.01,
+      "evidence": "every run between transitions is a multiple of",
+      "confident": true
+    },
+    {
+      "node": 0,
+      "param": "offsetHz",
+      "about": 900,
+      "within": 0.03,
+      "evidence": "the squared signal is a tone there",
+      "confident": true
+    },
+    {
+      "node": 0,
+      "param": "code",
+      "evidence": "x^7 + x^4 + 1",
+      "confident": true
+    }
+  ],
+  "note": "No CRC on this one, so the framer reports that nothing in its catalog validates the frame — which is correct and is the honest answer for a payload that has no check on it. The detailed assertions are in web/test/dsss.test.mjs, including the controls: noise is not a spread signal, AFSK is not a spread signal, and leaving the carrier offset in loses the code."
+}
