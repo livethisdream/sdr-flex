@@ -8,7 +8,8 @@
 #   SDRFLEX_DOCKERFILE=Dockerfile.decoders docker compose up -d --build
 #
 # No radio programs here: this is the image for working on recordings. Dockerfile.radio
-# has both, because a radio with nothing to decode what it hears is half a tool.
+# has both, because a radio with nothing to decode what it hears is half a tool — and
+# Dockerfile.full has those plus GNU Radio and the decoders that have to be compiled.
 #
 # The tool still installs nothing of its own and links against none of this. Each one is
 # a program run at arm's length over a pipe, which is what keeps a GPL decoder's license

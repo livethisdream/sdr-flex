@@ -17,7 +17,8 @@ services:
   sdrflex:
     build:
       context: .
-      # Dockerfile.radio adds the vendor capture programs a live radio needs. The
+      # Dockerfile.radio adds the vendor capture programs a live radio needs, and
+      # Dockerfile.full adds GNU Radio and the decoders that have to be compiled. The
       # default has none of them, and every driver says so rather than failing oddly.
       dockerfile: ${SDRFLEX_DOCKERFILE:-Dockerfile}
     image: sdr-flex:latest

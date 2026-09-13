@@ -64,8 +64,15 @@ support for a radio means having its capture program installed, and nothing else
 | RTL-SDR | `rtl_sdr` | `rtl-sdr` | yes |
 | ADALM-PLUTO (via libiio) | `iio_readdev`, `iio_attr` | `libiio-utils` | yes |
 | USRP (UHD) | `uhd_rx_cfile` | `uhd-host` | no — it writes to `/dev/stdout` |
-| SoapySDR (anything else) | `rx_sdr` | `soapysdr-tools` | yes |
+| SoapySDR (anything else) | `rx_sdr` | **not packaged** — build [rx_tools](https://github.com/rxseger/rx_tools) | yes |
 | Synthetic signal | nothing | built in | yes |
+
+**SoapySDR is the one row with no package behind it.** `soapysdr-tools` sounds like the
+answer and is not: it installs `SoapySDRUtil`, which enumerates devices and cannot record
+one. The program that records is `rx_sdr`, from `rx_tools`, which no distribution ships —
+so that row needs `cmake`, `libsoapysdr-dev` and five minutes, or `Dockerfile.full`, which
+builds it. The driver's *probe* uses `SoapySDRUtil` and its capture uses `rx_sdr`, which is
+why the menu can say a Soapy radio is there and still not record it.
 
 **The Pluto needs nothing installed.** It is not a USB device to claim — it presents a
 USB-ethernet gadget answering on `192.168.2.1`, and `iiod` listens on port 30431, so the
@@ -111,6 +118,9 @@ The default image has none of these programs in it. Build the radio variant inst
 ```
 SDRFLEX_DOCKERFILE=Dockerfile.radio docker compose up -d --build
 ```
+
+Or `Dockerfile.full`, which is that plus GNU Radio and the two decoders that have to be
+built — see [everything in one command](#everything-in-one-command) below.
 
 How the container reaches the radio depends on how the radio attaches:
 
@@ -372,6 +382,50 @@ control. `chmod o-w` it.
 
 The full contract, with worked examples for a plain program and a GNU Radio flowgraph, is
 in [adding a decoder](../docs/10-adding-a-decoder.md).
+
+## Everything in one command
+
+Nine programs, four of which have to be compiled, one of which is a gigabyte of GNU
+Radio, and one of which has to be built against the right CPython or it installs
+perfectly and does not import. That is a bad afternoon on a laptop and it is one line
+here:
+
+```
+SDRFLEX_DOCKERFILE=Dockerfile.full docker compose up -d --build
+```
+
+Ten to twenty minutes, about 1.9 GB, and the startup banner then says **7 of 7 external
+decoders installed**. There are four images and this is the largest of them:
+
+| Image | Has |
+|---|---|
+| `Dockerfile` | Node and this repository, and nothing else |
+| `Dockerfile.decoders` | ...plus the five packaged decoders |
+| `Dockerfile.radio` | ...plus the vendor capture programs |
+| `Dockerfile.full` | ...plus GNU Radio, gr-lora_sdr, m17-cxx-demod and rx_sdr |
+
+Take a smaller one if you know you do not need LoRa, M17 or a Soapy radio — they build
+in seconds, and the four are otherwise the same server.
+
+Three things about the full image are worth knowing:
+
+- **It is Ubuntu where the other three are Debian.** GNU Radio is the reason it exists,
+  and 24.04 carries 3.10.9.2 where bookworm carries 3.10.5.1 — which is the version
+  every flowgraph in `server/flowgraphs/` was checked against. The quieter reason: GNU
+  Radio binds its Python against exactly one CPython, and the usual way this goes wrong
+  is a machine with several. Here `python3` is 3.12 and it is the one the bindings were
+  built for.
+- **The two from-source decoders are pinned to commits**, not to `HEAD`. They are the
+  commits the adapters were checked against; moving a pin is a one-line change and a
+  re-run of `web/test/adapters.test.mjs`.
+- **The build fails rather than the first click.** The last step imports `lora_sdr`, runs
+  `m17-demod` and looks for `rx_sdr`. A decoder that did not build shows up in this tool
+  as a greyed row in a menu, which is the right behavior at runtime and a terrible way
+  to find out that an image is wrong.
+
+The image was checked by running the adapter conformance suite inside it —
+`node --test web/test/adapters.test.mjs`, 23 of 23 — which is the same set of golden
+captures every adapter is checked against on a workstation (ADR-0025).
 
 ## Security posture, stated plainly
 

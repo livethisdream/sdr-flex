@@ -1,0 +1,198 @@
+# Everything. One command, and the tool can hear a radio and read what it says.
+#
+#   SDRFLEX_DOCKERFILE=Dockerfile.full docker compose up -d --build
+#
+# The other three images are each a deliberate subset:
+#
+#   Dockerfile           Node and this repository. Nothing else, because a server that
+#                        reads captures needs nothing else. Tens of megabytes.
+#   Dockerfile.decoders  ...plus the five decoders that come from a distribution.
+#   Dockerfile.radio     ...plus the vendor capture programs a live radio needs.
+#   Dockerfile.full      ...plus GNU Radio, and the two decoders that have to be built:
+#                        gr-lora_sdr and m17-cxx-demod.
+#
+# This one is a couple of gigabytes and takes ten to twenty minutes to build, nearly all
+# of it compiling gr-lora_sdr. That is the trade, and it is why it is a fourth file
+# rather than the default: most sessions never touch LoRa or M17, and the smaller images
+# build in seconds. Take this one when you want every decoder the adapter table knows
+# about without installing any of them on your own machine.
+#
+# The tool still installs nothing of its own and links against none of this. Every
+# decoder here is a program run at arm's length over a pipe — which is what keeps a GPL
+# decoder's license its own business (ADR-0015), a segfaulting one a broken pipe rather
+# than a dead session (ADR-0013), and a GNU Radio flowgraph just another program
+# (ADR-0032).
+#
+# **Ubuntu, where the other three are Debian.** Not a preference — GNU Radio is the
+# whole reason this file exists, and noble carries 3.10.9.2 where bookworm carries
+# 3.10.5.1. Every flowgraph in server/flowgraphs/ and both built decoders were checked
+# against 3.10.9.2. The second reason is quieter and bites harder: GNU Radio binds its
+# Python against exactly one CPython, and the commonest way for this to go wrong on a
+# real machine is to have several. Here `python3` is 3.12 and it is the one the
+# bindings were built for, so there is only ever one answer.
+
+# ---------------------------------------------------------------- build stage
+
+FROM ubuntu:24.04 AS build
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Compilers, GNU Radio's headers, and the two libraries m17-cxx-demod links against.
+# None of this reaches the final image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake git ca-certificates \
+      gnuradio-dev pybind11-dev python3-dev libspdlog-dev \
+      libcodec2-dev libboost-program-options-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Pinned, because "whatever HEAD was that day" is not a build you can repeat. These are
+# the commits the adapters in server/adapters.js were checked against. Moving a pin is a
+# one-line change and a re-run of web/test/adapters.test.mjs.
+ARG LORA_SDR_REF=862746dd1cf635c9c8a4bfbaa2c3a0ec3a5306c9
+ARG M17_REF=9b8cec24d3f8d5e9f7f6e9c23661439e32343d6b
+
+# Staged under its own prefix, so what gets copied into the runtime image is exactly the
+# two things built here and nothing the build stage happened to leave lying about.
+ENV OOT=/opt/oot
+
+# LoRa. gr-lora_sdr is a GNU Radio out-of-tree module rather than a program: there is no
+# binary, only a Python package that server/flowgraphs/lora.py imports.
+#
+# GR_PYTHON_DIR is named rather than left to be worked out. GNU Radio's cmake recognizes
+# a Debian layout and installs to `dist-packages` — but only when the prefix is one it
+# recognizes, and this one is not, so it falls back to `site-packages`, which is not on
+# a Debian interpreter's path. The module then installs perfectly and does not import.
+RUN PYDIR="$OOT/lib/python$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')/dist-packages" \
+ && git clone https://github.com/tapparelj/gr-lora_sdr /tmp/gr-lora_sdr \
+ && git -C /tmp/gr-lora_sdr checkout --quiet "$LORA_SDR_REF" \
+ && cmake -S /tmp/gr-lora_sdr -B /tmp/gr-lora_sdr/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX="$OOT" \
+      -DGR_PYTHON_DIR="$PYDIR" \
+      -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+ && cmake --build /tmp/gr-lora_sdr/build -j"$(nproc)" \
+ && cmake --install /tmp/gr-lora_sdr/build \
+ && rm -rf /tmp/gr-lora_sdr
+
+# M17. A plain command-line program, submodules and all.
+RUN git clone https://github.com/mobilinkd/m17-cxx-demod /tmp/m17 \
+ && git -C /tmp/m17 checkout --quiet "$M17_REF" \
+ && git -C /tmp/m17 submodule update --init --recursive \
+ && cmake -S /tmp/m17 -B /tmp/m17/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX="$OOT" \
+ && cmake --build /tmp/m17/build -j"$(nproc)" \
+ && cmake --install /tmp/m17/build \
+ && rm -rf /tmp/m17
+
+# SoapySDR's capture program. Not a decoder and not GNU Radio — it is here because it is
+# the one radio driver in server/radio.js whose program no distribution packages.
+# `soapysdr-tools` sounds like the answer and is not: it provides `SoapySDRUtil`, which
+# enumerates devices and cannot record one. `rx_sdr` comes from rx_tools, it is a few
+# hundred lines, and building it is the difference between the Soapy driver working in
+# this image and being listed greyed out in it.
+ARG RX_TOOLS_REF=811b21c4c8a592515279bd19f7460c6e4ff0551c
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libsoapysdr-dev librtlsdr-dev pkg-config \
+ && rm -rf /var/lib/apt/lists/* \
+ && git clone https://github.com/rxseger/rx_tools /tmp/rx_tools \
+ && git -C /tmp/rx_tools checkout --quiet "$RX_TOOLS_REF" \
+ && cmake -S /tmp/rx_tools -B /tmp/rx_tools/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX="$OOT" \
+ && cmake --build /tmp/rx_tools/build -j"$(nproc)" \
+ && cmake --install /tmp/rx_tools/build \
+ && rm -rf /tmp/rx_tools
+
+# ---------------------------------------------------------------- runtime
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# The vendor capture programs, one per driver in server/radio.js. The Pluto needs none
+# of them — it is a network device, and the protocol is spoken directly (ADR-0030).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libiio-utils \
+      rtl-sdr \
+      soapysdr-tools soapysdr-module-rtlsdr \
+      uhd-host \
+      ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# The decoders that come packaged, one per adapter in server/adapters.js. An adapter
+# whose program is missing is still listed in the menu, greyed, naming what it wants —
+# so dropping any of these costs a decoder rather than breaking the image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      rtl-433 \
+      multimon-ng \
+      dump1090-mutability \
+      direwolf \
+      minimodem \
+ && rm -rf /var/lib/apt/lists/*
+
+# GNU Radio itself — runtime and Python bindings, not the headers. Most of the size of
+# this image, and the reason the other three do not have it.
+#
+# Then the shared libraries the two built programs need. They are named here rather than
+# left to arrive as a side effect of some -dev package, because a dependency that comes
+# in by accident goes out by accident too.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      gnuradio \
+      python3-numpy \
+      libcodec2-1.2 \
+      libboost-program-options1.83.0 \
+      libsoapysdr0.8 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Node, from the image that builds it properly. The server is Node's own http, net and
+# crypto and nothing else, so one binary is the whole runtime — no npm, no modules, no
+# package manager to add to this image. Node 22 or newer; Ubuntu 24.04 ships 18.
+COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+
+# The two that had to be built. ldconfig so the loader finds libgnuradio-lora_sdr, and
+# /usr/local/lib/python3.12/dist-packages is already on this Python's sys.path, so the
+# flowgraph imports it with no PYTHONPATH to set.
+COPY --from=build /opt/oot/ /usr/local/
+RUN ldconfig
+
+# Fail the build rather than the first click. A missing module shows up in this tool as
+# a greyed row in a menu, which is the correct behavior and a terrible way to find out
+# that an image did not build what it said it did.
+RUN node --version \
+ && python3 -c "from gnuradio import lora_sdr" && echo 'lora_sdr ok' \
+ && m17-demod --help > /dev/null && m17-mod --help > /dev/null && echo 'm17 ok' \
+ && command -v rx_sdr > /dev/null && echo 'rx_sdr ok'
+
+RUN useradd --system --create-home --shell /usr/sbin/nologin sdrflex
+WORKDIR /app
+
+COPY web ./web
+COPY server ./server
+COPY fixtures ./fixtures
+COPY seed-captures.mjs ./
+
+VOLUME /captures
+ENV SDRFLEX_CAPTURES=/captures \
+    SDRFLEX_PORT=8722 \
+    SDRFLEX_BIND=0.0.0.0 \
+    SDRFLEX_RINGS=/rings
+
+# direwolf will not start without a config file on a machine with no sound card, and a
+# container is always that machine. The adapter writes one per run into a temp
+# directory, so this needs a writable TMPDIR and nothing else.
+ENV TMPDIR=/tmp
+
+# Ring recordings are scratch, and large: sixty seconds of 2.4 MS/s cu8 is 288 MB. Its
+# own directory so it can be mounted onto a real disk when the container's writable
+# layer is somewhere you would rather not put that.
+RUN mkdir -p /rings && chown sdrflex /rings
+VOLUME /rings
+
+EXPOSE 8722
+USER sdrflex
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=3s \
+  CMD node -e "fetch('http://127.0.0.1:8722/index.html').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "server/main.js"]
