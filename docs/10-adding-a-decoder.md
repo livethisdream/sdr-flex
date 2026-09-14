@@ -231,7 +231,15 @@ drifts the other stops agreeing.
 
 **And ship a control.** A decoder that finds something at every setting has found nothing.
 The LoRa fixture's control is that the same capture read at the wrong spreading factor
-returns nothing at all.
+returns nothing at all; the BBC fixture's is that *two* messages are superimposed in one
+codeword and both have to come back, because a decoder that returns the first and stops
+passes every single-message test there is.
+
+**A browser plugin gets a fixture the same way.** The harness loads every `.js` in
+`web/plugins` before it runs, exactly as the box serves them to a tab, so a `chain` step
+may name a plugin id (`ext.bbc`) wherever it may name an adapter. That mechanism did not
+exist for a year and the symptom was misleading: the reference plugin looked like it was
+merely missing a fixture, when in fact no chain ending in a plugin could be built at all.
 
 ## What it looks like when it works
 

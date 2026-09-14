@@ -25,6 +25,10 @@ import * as mod from '../web/test/support/modulate.mjs';
 // And the code library, for the same reason: the fixture is spread by exactly the
 // sequence the search will be looking for, generated rather than pasted in.
 import * as codes from '../web/src/codes.js';
+// And the BBC plugin, for its encoder. A decoder with no way to generate an input is a
+// decoder nobody can tell has broken (ADR-0025) — so the plugin carries both halves and
+// the fixture is built by the same file the tool loads at runtime.
+import * as bbc from '../web/plugins/bbc.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -420,8 +424,81 @@ function dsssSpread() {
   return { dir, bytes, samples: g.samples, rate };
 }
 
+// ── 11. BBC concurrent codes, for the plugin ─────────────────────────────
+// A sparse codeword with *two* messages OR'd into it, which is the whole property the
+// codec is named for: marks are set by any message and cleared by none, so superimposing
+// is a bitwise OR and every message OR'd in decodes back out.
+//
+// That is also the control. A decoder that reads element zero and stops passes every
+// single-message test there is and fails this one, which is why the fixture asserts both
+// messages rather than that something came back.
+//
+// Slow, and deliberately so: 1.67 kbit/s OOK at 20 kS/s, which is the shape of a 433 MHz
+// remote and is what makes 8,192 chips of codeword fit in a capture small enough to
+// commit. Two things had to be traded against each other to get there:
+//
+//   - **The AM detector's post-detection filter is 40 µs and not adjustable.** A symbol
+//     has to be several times longer than that or the edges smear into each other. At
+//     20 kS/s the filter is two samples and a symbol is twelve, which is comfortable;
+//     at 200 kS/s with the same symbol *rate* the filter would be eight samples against
+//     a twelve-sample symbol, and the Manchester estimator stops being able to say the
+//     runs come in two lengths.
+//   - **Plain NRZ rather than Manchester**, which halves the transitions and so halves
+//     the capture. The usual objection — that a 96%-zero codeword is two hundred idle
+//     bit periods with no clock in them — does not bite here, because the NRZ estimator
+//     scores every run as a whole number of symbols rather than assuming the shortest run
+//     is one.
+//
+// Worth recording, because it is the codec's entire point: run this same chain at 500 µs
+// instead and the slicer hands back a codeword with 23 marks *added* and none dropped —
+// and both messages still decode. BBC's channel is a Z channel, where a mark can be
+// created by noise or a jammer and never destroyed.
+function bbcConcurrent() {
+  const rate = 20_000, centerHz = 433_920_000, symbolUs = 600;
+  const params = { msgBytes: 16, codBytes: 1024, checkBits: 32 };
+  const rand = rng(0xbbc1);
+  const sps = symbolUs * 1e-6 * rate;
+
+  const text = (s) => Uint8Array.from([...s].map((c) => c.charCodeAt(0)));
+  const a = bbc.encode(text('FAN REMOTE DEMO '), params);
+  const b = bbc.encode(text('SDR FLEX  v1    '), params);
+  const codeword = a.map((v, i) => v | b[i]);
+
+  const bits = [];
+  const byte = (v) => { for (let k = 7; k >= 0; k--) bits.push((v >> k) & 1); };
+  for (let i = 0; i < 24; i++) bits.push(i % 2);          // preamble
+  byte(0x2d); byte(0xd4);                                  // sync
+  for (const v of codeword) byte(v);
+  // Tail, so that a last byte lost to the end of the capture does not shorten the
+  // codeword — the decoder refuses a short packet rather than guessing at it.
+  for (let i = 0; i < 8; i++) byte(0);
+
+  const lead = Math.round(rate * 0.02);
+  const n = Math.round(bits.length * sps) + lead + Math.round(rate * 0.01);
+  const iq = new Float32Array(n * 2);
+  bits.forEach((bit, i) => {
+    for (let s = 0; s < sps; s++) {
+      const k = lead + Math.round(i * sps) + s;
+      if (k < n) iq[k * 2] = bit ? 0.72 : 0.02;
+    }
+  });
+  for (let i = 0; i < n; i++) { iq[i * 2] += (rand() - 0.5) * 0.04; iq[i * 2 + 1] = (rand() - 0.5) * 0.04; }
+
+  const marks = [...codeword].reduce((t, v) => t + (v.toString(2).match(/1/g) || []).length, 0);
+  const dir = path.join(HERE, 'bbc-concurrent');
+  const bytes = writeSigmf(dir, 'capture', iq, {
+    sampleRate: rate, centerHz,
+    note: `Synthetic BBC (Baird-Bahn-Collins) concurrent codeword: two 16-byte messages ` +
+          `OR'd into one 1024-byte codeword, ${marks} marks of 8192 cells ` +
+          `(${(marks / 81.92).toFixed(1)}% density), 32 zero-fill check bits each. ` +
+          `OOK NRZ at ${symbolUs} \u00b5s with a 24-bit preamble and a 2d d4 sync. ` +
+          `Nobody transmitted this.`,
+  });
+  return { dir, bytes, samples: n, rate };
+}
+
 for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm, fhssHopping,
-                    ofdmGrid, tempestRaster, dsssSpread]) {
+                    ofdmGrid, tempestRaster, dsssSpread, bbcConcurrent]) {
   const r = make();
   if (r.skipped) {
     console.log(`${path.basename(r.dir).padEnd(20)} skipped — ${r.skipped}`);

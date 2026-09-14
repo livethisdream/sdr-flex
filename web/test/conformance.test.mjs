@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { MockEngine } from '../src/engine.js';
 import { Capture } from '../src/capture.js';
 import * as adapters from '../../server/adapters.js';
+import * as plugins from '../src/plugins.js';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures');
 
@@ -38,6 +39,23 @@ function load(dir) {
   });
   return { spec, capture, meta };
 }
+
+const PLUGINS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'plugins');
+
+/**
+ * The plugins the box serves every tab, loaded once for the whole suite.
+ *
+ * Without this a fixture whose chain ends in a plugin cannot run at all, which is how
+ * `web/plugins/bbc.js` went a year with no conformance fixture: the harness had no way to
+ * reach it, so the gap looked like a missing fixture rather than a missing mechanism.
+ */
+const pluginsReady = (async () => {
+  if (!fs.existsSync(PLUGINS)) return { loaded: [], failed: [] };
+  const files = fs.readdirSync(PLUGINS).filter((f) => f.endsWith('.js'));
+  return plugins.loadAll(files.map((f) => ({
+    filename: f, source: fs.readFileSync(path.join(PLUGINS, f), 'utf8'),
+  })));
+})();
 
 /** An engine with the adapter table wired in, the way the server wires it. */
 function engineWithAdapters() {
@@ -111,6 +129,7 @@ for (const name of dirs) {
       return;
     }
 
+    await pluginsReady;
     const { capture } = load(dir);
     const e = engineWithAdapters();
     await e.createSession();

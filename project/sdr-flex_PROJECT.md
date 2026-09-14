@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-13 (`Dockerfile.full` — one command for the whole toolchain; DSSS despreading with a generated code library) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-14 (`Dockerfile.full`; DSSS despreading; BBC finally has a fixture, checked against upstream gr-bbc) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
 ---
 
@@ -59,11 +59,14 @@ Working end to end:
   offset by squaring, and the code by correlating against a generated library of the
   standard families — every primitive polynomial to degree 11, the Gold sets, Barker,
   Walsh. 557 codes in about a second, and it says what it skipped and why (ADR-0035)
+- BBC concurrent codes: the reference plugin (ADR-0028) now with both halves — `encode()`
+  as well as `decode()` — a golden capture, and a cross-check against the upstream GNU
+  Radio implementation
 - `Dockerfile.full`: one command for Node, the five packaged decoders, the vendor capture
   programs, GNU Radio, gr-lora_sdr, m17-cxx-demod and rx_sdr. 1.9 GB, and the banner then
   reads **7 of 7 external decoders installed**
 
-Tests: 252 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 265 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -605,9 +608,9 @@ house rule.
 - **The CTF's remaining modulations.** The 2026 challenge list is NBFM, WBFM, USB/LSB, CW,
   FHSS, OFDM, FSK, M17, AFSK1200, APRS, ADS-B, BBC (gr-bbc), the AOL handshake, CDMA,
   FLEX/POCSAG, LoRa and TEMPEST (gr-tempest). Covered and verified: AFSK1200/APRS, ADS-B,
-  FLEX/POCSAG, CW, FSK, LoRa, M17, FHSS, OFDM, CDMA. Have a node but never tested against a real signal of that
+  FLEX/POCSAG, CW, FSK, LoRa, M17, FHSS, OFDM, CDMA, BBC. Have a node but never tested against a real signal of that
   kind: NBFM, USB/LSB, WBFM — and WBFM has no de-emphasis, so broadcast audio will sound
-  wrong. Nothing at all: BBC, TEMPEST, the AOL handshake.
+  wrong. Nothing at all: TEMPEST, the AOL handshake.
 - **A real TEMPEST capture.** All three folds are built (ADR-0033, ADR-0034) and the
   raster reads a synthetic screen. What is untested is a genuine leak: unknown pixel
   clock, harmonic carrier, interlace, nothing synchronized. The likely shape is the
@@ -686,7 +689,14 @@ house rule.
   `SDRFLEX_PLUGINS` (default `web/plugins`, so `bbc.js` is finally live) to every tab,
   and a file dropped on the window is kept in that browser. Both still *run* in the
   tab, never on the server.
-- That plugin has no ADR-0025 conformance fixture.
+- ~~That plugin has no ADR-0025 conformance fixture.~~ Fixed: `fixtures/bbc-concurrent`
+  carries two messages OR'd into one codeword, and the harness now loads `web/plugins/*.js`
+  the way the box serves them — which was the actual blocker. The gap looked like a missing
+  fixture and was a missing mechanism: a chain ending in a plugin could not be built at all.
+  The codec is anchored on two things that are not our own encoder: upstream's published
+  glowworm check value, and byte-for-byte agreement with
+  [xeno00/gr-bbc](https://github.com/xeno00/gr-bbc) when `SDRFLEX_GRBBC` points at a
+  checkout.
 - `web/test/plugin.mjs` (Playwright) depends on capture files that were removed in the
   security cleanup, so it fails for that reason rather than a regression. Needs
   re-pointing at a fixture that can live in a public repo.

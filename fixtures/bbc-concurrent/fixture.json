@@ -1,0 +1,34 @@
+{
+  "name": "BBC concurrent codes: two messages in one codeword",
+  "why": "The plugin boundary end to end (ADR-0028) and the property the codec is named for. A BBC codeword is a Z channel: marks are set by any message and cleared by none, so several messages superimpose as a bitwise OR and all of them decode back out. A decoder that returns the first message and stops passes every single-message test there is, which is why this asserts both. It is also the only fixture whose chain ends in a browser plugin rather than a native node or an external program, so it is what proves the harness can reach one at all — the reason this decoder went without a fixture was that it could not.",
+  "capture": "capture.sigmf-data",
+  "chain": [
+    { "op": "core.am_envelope" },
+    { "op": "core.nrz_slicer", "params": { "syncHex": "2d d4" } },
+    { "op": "ext.bbc", "params": { "msgBytes": 16, "codBytes": 1024, "checkBits": 32 } }
+  ],
+  "expect": {
+    "records": 2,
+    "texts": ["FAN REMOTE DEMO ", "SDR FLEX  v1    "],
+    "noError": true,
+    "note": "Two records, in the order the tree walk reaches them. The count is the assertion: one record means the concurrent property has been lost somewhere, and one record is exactly what a plausible-looking regression produces."
+  },
+  "derive": [
+    {
+      "node": 1,
+      "param": "symbolUs",
+      "mode": "auto",
+      "about": 600,
+      "within": 0.02,
+      "evidence": "every run is a multiple of",
+      "confident": true
+    },
+    {
+      "node": 1,
+      "param": "threshold",
+      "mode": "auto",
+      "evidence": "Otsu over all"
+    }
+  ],
+  "note": "The codeword is 96% zeros, so the NRZ slicer has to hold a symbol clock through runs of two hundred idle bit periods. It manages because the symbol estimator scores every run as a whole number of symbols rather than assuming the shortest run is one symbol — the rewrite that fixtures/fhss-6ch forced. Revert that and this fixture is one of the places it shows."
+}

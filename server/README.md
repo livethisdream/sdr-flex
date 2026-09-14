@@ -225,6 +225,13 @@ A stored decoder that stops loading — edited into something broken, or rejecte
 newer build — is forgotten rather than retried on every startup, with a notice saying
 what happened.
 
+`web/plugins/bbc.js` ships in that directory: BBC concurrent codes, the reference
+implementation of the plugin boundary. It carries both halves — `encode()` as well as
+`decode()` — and `fixtures/bbc-concurrent` is its golden capture, two messages
+superimposed in one codeword. The hash is pinned against the published check value of the
+upstream GNU Radio module, and `SDRFLEX_GRBBC=<checkout> node --test web/test/bbc.test.mjs`
+compares codewords with it byte for byte.
+
 ## Decoders somebody else wrote
 
 External programs are run as decoders, fed a span of samples on stdin and read back as

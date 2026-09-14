@@ -37,7 +37,19 @@ const REGISTER_WORDS = 32;
 
 // 64-bit words as high/low 32-bit halves. BigInt would be clearer and is far too
 // slow here: the tree walk runs the hash hundreds of thousands of times.
-class Glowworm {
+/**
+ * The hash of the empty string after the warm-up, as upstream publishes it.
+ *
+ * It is here for one reason. The register words are 64 bits, so the shifts wrap modulo
+ * 2^64 — but the inversion applied when the folded bit is 1 is only **32** bits wide,
+ * which reads like a C integer-width accident and is not. Widening it moves every mark
+ * and silently stops interoperating with every other BBC implementation; nothing else in
+ * the codec complains, the density looks right, and messages simply do not come back.
+ * Upstream carries the same constant for the same reason.
+ */
+export const CHECKVALUE = { hi: 0xCCA4220F, lo: 0xC78D45E0 };
+
+export class Glowworm {
   constructor() {
     this.hi = new Int32Array(REGISTER_WORDS);
     this.lo = new Int32Array(REGISTER_WORDS);
@@ -92,6 +104,50 @@ function markOf(worm, codBits) {
   if ((codBits & (codBits - 1)) === 0) return worm._l & (codBits - 1);
   // general case: (hi * 2^32 + lo) mod codBits, without BigInt
   return ((((worm._h % codBits) * (4294967296 % codBits)) % codBits) + (worm._l % codBits)) % codBits;
+}
+
+/**
+ * The other half: a message to a codeword.
+ *
+ * Here because the decoder had no fixture and could not have one without it
+ * ([ADR-0025](../../docs/adr/0025-golden-capture-conformance.md)) — a decoder nobody can
+ * generate an input for is a decoder nobody can tell has broken. It is nine lines because
+ * encoding *is* the walk the decoder replays: feed each bit to the glowworm, mark the cell
+ * it names, and that is the whole codec.
+ *
+ * Superimposing is a bitwise OR, so encoding two messages into one codeword is `encode`
+ * twice and `|=`. That is the property BBC is named for and the thing a fixture has to
+ * exercise, because a decoder that returns the first message and stops passes every
+ * single-message test there is.
+ *
+ * The register is re-seeded per message. Without it the second message hashes against a
+ * register the decoder has already unwound, and nothing comes back — upstream carries the
+ * same comment on the same line.
+ */
+export function encode(message, params = {}) {
+  const msgBytes = +params.msgBytes || 64;
+  const codBytes = +params.codBytes || 8192;
+  const checkBits = params.checkBits === undefined ? 32 : +params.checkBits;
+  if (codBytes <= msgBytes) {
+    throw new Error(`codeword (${codBytes} B) must be longer than the message (${msgBytes} B)`);
+  }
+  const msg = new Uint8Array(msgBytes);
+  msg.set(message.subarray ? message.subarray(0, msgBytes) : message.slice(0, msgBytes));
+
+  const codBits = codBytes * 8;
+  const worm = new Glowworm();
+  const codeword = new Uint8Array(codBytes);
+  const mark = (bit) => {
+    worm.addBit(bit);
+    const at = markOf(worm, codBits);
+    codeword[at >> 3] |= 1 << (at & 7);
+  };
+  for (let i = 0; i < msgBytes * 8; i++) mark((msg[i >> 3] >> (i & 7)) & 1);
+  // Zero-fill check bits: the published wire format. What prunes a false path is that its
+  // glowworm state puts these marks somewhere else, not the values — so zeros work as well
+  // as any hash, and are what every other implementation writes.
+  for (let j = 0; j < checkBits; j++) mark(0);
+  return codeword;
 }
 
 /**
