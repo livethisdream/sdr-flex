@@ -247,6 +247,18 @@ never renamed never has to know the menu is there. Menu depth stays at 1
 ([ADR-0018](adr/0018-contextual-menu.md)) — it is the same flat widget the operations
 palette uses, with two entries instead of twenty.
 
+### A demo scene says what is in it
+
+Accent marks what the user placed. The synthetic scene's contents were not placed by
+anyone, so they are labeled dim and dashed, never clickable, and only on the source's own
+spectrum — gone the moment a real capture is open or you have drilled into a channel.
+
+The reason they exist at all is that two of the five are genuinely ambiguous from the
+display: an AM detector slope-detects the NBFM channel and hands back a clean tone, and
+the USB pair looks like 2FSK until you demodulate it. Guessing is the exercise a *capture*
+sets. A demo scene owes you the answer, so you can go and prove it with a demodulator
+instead of playing a quiz against the person who wrote the generator.
+
 ### Removal lives on the thing being removed
 
 An `✕` appears on the current breadcrumb entry and on the current block tab, and

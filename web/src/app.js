@@ -17,6 +17,9 @@ import * as plugins from './plugins.js';
 import { AudioMixer, meterLevel } from './audio.js';
 import { COLORMAPS, cssGradient, floorColor, lut } from './colormap.js';
 import { WINDOWS } from './dsp.js';
+// Only for its SIGNALS table: the synthetic scene is the one source whose contents are
+// known in advance, so it is the one source that can just say what is in it.
+import * as scene from './scene.js';
 import { CRCS } from './frames.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -635,7 +638,7 @@ class App {
     const span = hi - lo;
     const host = $('#markers');
     const kids = this.engine.children(n.id).filter((k) => k.params && k.params.centerHz && k.params.widthHz);
-    host.innerHTML = kids.map((k) => {
+    host.innerHTML = this.sceneMarks(n, lo, span) + kids.map((k) => {
       const w = k.params.widthHz.value;
       const left = ((k.params.centerHz.value - w / 2 - lo) / span) * 100;
       const width = (w / span) * 100;
@@ -647,6 +650,47 @@ class App {
       m.addEventListener('pointerdown', (e) => e.stopPropagation());
       m.addEventListener('click', (e) => { e.stopPropagation(); this.goChannel(m.dataset.id); });
     }
+  }
+
+  /**
+   * Are we looking at the synthetic scene's own spectrum?
+   *
+   * The in-tab engine with no capture open is drawing it directly; a server running the
+   * synthetic source is writing it into a ring and calls itself so. Any other source is
+   * a recording or a radio, and what is in it is the question rather than the answer.
+   */
+  onSyntheticSource() {
+    const n = this.node();
+    if (!n || !this.engine.root || n.id !== this.engine.root.id) return false;
+    const cap = this.engine.capture;
+    if (!cap) return true;
+    return cap.driver === 'synthetic' || cap.kind === 'synthetic';
+  }
+
+  /**
+   * What is in the band, on the one source that knows.
+   *
+   * `scene.SIGNALS` has carried these labels since the scene was written and was
+   * referenced by nothing — so the only way to find out what the synthetic source
+   * contains was to read `scene.js`. Two of the five are genuinely ambiguous from the
+   * display alone: an AM detector slope-detects the NBFM channel and hands back a clean
+   * tone, and the USB pair looks like 2FSK until you demodulate it. Guessing is the
+   * exercise a capture sets; a demo scene owes you the answer so you can go and *prove*
+   * it with a demodulator.
+   *
+   * Drawn dim and dashed, and never clickable. Accent marks what the user placed
+   * (08-ui-principles); these were here before you arrived.
+   */
+  sceneMarks(n, lo, span) {
+    if (!this.onSyntheticSource()) return '';
+    return scene.SIGNALS.map((s) => {
+      const center = n.out.centerHz + s.offsetHz;
+      const left = ((center - s.widthHz / 2 - lo) / span) * 100;
+      const width = (s.widthHz / span) * 100;
+      if (left > 100 || left + width < 0) return '';
+      return `<span class="scenemark" style="left:${left}%;width:${width}%">` +
+             `<i>${attr(s.label)}</i></span>`;
+    }).join('');
   }
 
   /** The frequency window currently on screen, in Hz. */

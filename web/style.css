@@ -730,3 +730,19 @@ input.rn {
 input.rn::placeholder { color:var(--dim); font-weight:400; }
 /* The letter is not part of the name, so it is not in the field — see renameField. */
 .naming .rnl { font-weight:600; color:var(--bright); margin-right:.28rem; font-style:normal; }
+
+/* What is in the synthetic band. Dashed and dim, never clickable: accent marks what the
+   user placed, and these were here before they arrived. Labels sit at the top so they do
+   not collide with a channel marker's letter, which sits at the bottom. */
+.scenemark {
+  position:absolute; top:0; bottom:0; pointer-events:none;
+  border-left:1px dashed var(--on-stage-dim, var(--dim));
+  border-right:1px dashed var(--on-stage-dim, var(--dim));
+  opacity:.55;
+}
+.scenemark i {
+  position:absolute; left:1px; top:3px; white-space:nowrap; font-style:normal;
+  font-family:var(--mono); font-size:.56rem; letter-spacing:.01em;
+  color:var(--on-stage-dim, var(--dim)); background:var(--stage-veil);
+  padding:.05rem .26rem; border-radius:2px;
+}

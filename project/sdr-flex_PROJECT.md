@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-14 (`Dockerfile.full`; DSSS despreading; BBC fixture vs upstream gr-bbc; nodes can be named) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-14 (`Dockerfile.full`; DSSS; BBC fixture; nodes can be named; the scene has a real WBFM and says what is in it) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
 ---
 
@@ -59,6 +59,9 @@ Working end to end:
   offset by squaring, and the code by correlating against a generated library of the
   standard families — every primitive polynomial to degree 11, the Gold sets, Barker,
   Walsh. 557 codes in about a second, and it says what it skipped and why (ADR-0035)
+- The synthetic scene has a real WBFM where a meaningless "wideband hump" used to be —
+  ±65 kHz, 19 kHz pilot, pre-emphasized audio — and labels what is in the band, which
+  `scene.SIGNALS` had described since it was written and nothing had ever rendered
 - Nodes can be named. `A · Tuner` becomes `A · fan remote` — right-click or long-press
   the crumb or the tab. The letter and the operation both survive, and the operation is
   on hover, so a renamed node is never one nobody can identify
@@ -612,8 +615,8 @@ house rule.
   FHSS, OFDM, FSK, M17, AFSK1200, APRS, ADS-B, BBC (gr-bbc), the AOL handshake, CDMA,
   FLEX/POCSAG, LoRa and TEMPEST (gr-tempest). Covered and verified: AFSK1200/APRS, ADS-B,
   FLEX/POCSAG, CW, FSK, LoRa, M17, FHSS, OFDM, CDMA, BBC. Have a node but never tested against a real signal of that
-  kind: NBFM, USB/LSB, WBFM — and WBFM has no de-emphasis, so broadcast audio will sound
-  wrong. Nothing at all: TEMPEST, the AOL handshake.
+  kind: NBFM, USB/LSB, WBFM — all three now have a synthetic signal to work against, and
+  WBFM still has no de-emphasis, so broadcast audio will sound bright. Nothing at all: TEMPEST, the AOL handshake.
 - **A real TEMPEST capture.** All three folds are built (ADR-0033, ADR-0034) and the
   raster reads a synthetic screen. What is untested is a genuine leak: unknown pixel
   clock, harmonic carrier, interlace, nothing synchronized. The likely shape is the
@@ -622,8 +625,12 @@ house rule.
   periods.
 - **The AM detector's post-detection filter is fixed at 40 µs.** Right for speech, wrong
   for anything wider — it smears eight pixels of a video leak together. The raster works
-  around it by taking IQ; a bandwidth parameter on the AM node is the real fix, and the
-  same gap is why WBFM has no de-emphasis.
+  around it by taking IQ; a bandwidth parameter on the AM node is the real fix.
+- **The FM path has no de-emphasis**, and this is no longer a note in a list: the scene's
+  WBFM signal is pre-emphasized by the standard 75 µs curve, and
+  `web/test/detectors.test.mjs` asserts that 4 kHz comes back **6.25 dB hot**. Add
+  de-emphasis and that assertion fails and says what to change it to. A gap with a
+  failing test attached is a gap somebody eventually closes.
 - **An adapter cannot hand audio back to the graph.** M17 decodes voice and the node
   throws it away, saying how much there was. Every decoder that produces audio rather than
   records — M17, and anything vocoded — is half-connected until this exists. It wants an

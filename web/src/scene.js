@@ -21,16 +21,64 @@ export const BURST_PERIOD_S = 0.9;
  * demonstrate one detector.
  */
 export const SIGNALS = [
-  { offsetHz: -180_000, kind: 'cw',   label: 'keyed carrier' },
-  { offsetHz:  -90_000, kind: 'ssb',  label: 'USB, two tones' },
-  { offsetHz:  -25_000, kind: 'ook',  label: 'OOK burst train' },
-  { offsetHz:   60_000, kind: 'nbfm', label: 'NBFM, ±3 kHz' },
-  { offsetHz:  150_000, kind: 'wide', label: 'wideband hump' },
+  { offsetHz: -180_000, widthHz:   2_000, kind: 'cw',   label: 'keyed carrier' },
+  { offsetHz: -140_000, widthHz:  16_000, kind: 'nbfm', label: 'NBFM, ±3 kHz' },
+  { offsetHz:  -90_000, widthHz:   6_000, kind: 'ssb',  label: 'USB, two tones' },
+  { offsetHz:  -25_000, widthHz:  50_000, kind: 'ook',  label: 'OOK burst train' },
+  { offsetHz:  130_000, widthHz: 180_000, kind: 'wbfm', label: 'WBFM, \u00b165 kHz + pilot' },
 ];
 
 // NBFM: a 600 Hz tone at ±3 kHz deviation, with a slow warble so it is obviously
 // modulation rather than a stuck tone.
-const FM_OFF = 60_000, FM_TONE = 600, FM_DEV = 3_000, FM_WARBLE = 0.35;
+const FM_OFF = -140_000, FM_TONE = 600, FM_DEV = 3_000, FM_WARBLE = 0.35;
+
+// WBFM: the wideband half of the FM pair, and the only signal here with a question in
+// it that the tool currently gets wrong.
+//
+// What used to sit at this end of the band was a comb of sixteen static phasors called
+// a "wideband hump". It was wide, and it was nothing — no modulation, no answer to
+// "what is that", and nothing any detector could be right or wrong about. The scene had
+// four signals and a smear.
+//
+// Two audio tones that were **equal at the microphone** and are unequal on the air,
+// because a broadcast FM transmitter pre-emphasizes: it boosts treble by 1 + j2πfτ with
+// τ = 75 µs, and the receiver is supposed to undo it. So an FM demodulator with no
+// de-emphasis recovers 4 kHz about 6.2 dB hot, and one with it recovers the two tones
+// equal. That is a gap this tool has, now made visible in a signal rather than recorded
+// in a list — and `web/test/detectors.test.mjs` asserts the number, so adding
+// de-emphasis will fail that test loudly instead of silently changing what you hear.
+//
+// **Broadcast-shaped rather than broadcast.** A real ±75 kHz stereo signal is a quarter
+// of a megahertz of composite baseband, which is most of this 480 kHz band and would
+// leave nowhere for the other four. ±65 kHz with the pilot and no stereo subcarrier is
+// 168 kHz by Carson, fits with room, and is wideband by every measure that matters
+// here: the deviation dwarfs the audio, it needs a wide channel, and it needs the
+// de-emphasis.
+const WFM_OFF = 130_000, WFM_DEV = 65_000;
+const WFM_PILOT = 19_000, WFM_PILOT_SHARE = 0.10;    // 10% injection, as the standard asks
+const WFM_TONES = [600, 4_000];
+const PREEMPH_S = 75e-6;                             // the US time constant; 50 µs in Europe
+
+/** How much a transmitter lifts a tone before sending it. */
+const preemph = (f) => Math.hypot(1, 2 * Math.PI * f * PREEMPH_S);
+
+// Deviation is split between the audio and the pilot, and then between the tones in the
+// pre-emphasized proportion — which is what makes the receiver's job recoverable rather
+// than a matter of taste.
+const WFM_AMP = WFM_TONES.map(preemph);
+const WFM_SUM = WFM_AMP.reduce((a, b) => a + b, 0);
+const WFM_BETA = WFM_TONES.map((f, i) =>
+  (WFM_DEV * (1 - WFM_PILOT_SHARE) * (WFM_AMP[i] / WFM_SUM)) / f);
+const WFM_PILOT_BETA = (WFM_DEV * WFM_PILOT_SHARE) / WFM_PILOT;
+
+/**
+ * How far off a correct de-emphasis the recovered audio is, in dB, at each tone.
+ *
+ * Exported so the test asserts the scene's own arithmetic rather than a number somebody
+ * typed twice. Zero once the FM path de-emphasizes.
+ */
+export const WFM_PREEMPH_DB = 20 * Math.log10(preemph(WFM_TONES[1]) / preemph(WFM_TONES[0]));
+export const WFM_INFO = { offsetHz: WFM_OFF, devHz: WFM_DEV, pilotHz: WFM_PILOT, tones: WFM_TONES };
 // USB: two audio tones above a suppressed carrier. Two, because one tone is
 // indistinguishable from a carrier and would prove nothing about sideband choice.
 const SSB_OFF = -90_000, SSB_TONES = [700, 1_150];
@@ -66,17 +114,6 @@ function hash(n) {
   x ^= x >>> 13; x = Math.imul(x, 3266489917);
   x ^= x >>> 16;
   return (x >>> 0) / 4294967296;
-}
-
-// wideband hump: a fixed comb of tones, tapered — cheap and deterministic
-const HUMP = [];
-{
-  const n = 16, center = 150_000, width = 34_000;
-  for (let i = 0; i < n; i++) {
-    const f = center + ((i / (n - 1)) - 0.5) * 2 * width;
-    const t = (f - center) / width;
-    HUMP.push({ f, a: 0.09 * Math.exp(-1.6 * t * t), p: hash(9000 + i) * Math.PI * 2 });
-  }
 }
 
 /** Envelope of the OOK burst train at time t (seconds): 0..1. */
@@ -120,9 +157,6 @@ function fill(start, count) {
 
   const cwR = rot(CW_OFF), cw = at(CW_OFF, 0);
   const ookR = rot(OOK_OFF), ook = at(OOK_OFF, 0);
-  const hR = HUMP.map((h) => rot(h.f));
-  const hP = HUMP.map((h) => at(h.f, h.p));
-  const nh = HUMP.length;
 
   // SSB is two ordinary tones offset from a suppressed carrier, so it costs two
   // more phasors and nothing else.
@@ -138,6 +172,14 @@ function fill(start, count) {
   const fmBeta = FM_DEV / FM_TONE;              // modulation index
   const fmW = (2 * Math.PI * FM_OFF) / fs;
 
+  // WBFM, the same way: the baseband is three phasors — two audio tones and the pilot —
+  // summed into the carrier's phase. Three sines and one carrier, against the sixteen
+  // phasors the static hump used to cost.
+  const aR = WFM_TONES.map((f) => rot(f));
+  const aP = WFM_TONES.map((f, i) => at(f, hash(7700 + i) * Math.PI * 2));
+  const pR = rot(WFM_PILOT), pP = at(WFM_PILOT, 0);
+  const wfmW = (2 * Math.PI * WFM_OFF) / fs;
+
   for (let i = 0; i < count; i++) {
     const n = start + i;
     let re = (hash(n * 2) + hash(n * 2 + 7919) - 1) * 0.030;
@@ -145,12 +187,6 @@ function fill(start, count) {
 
     const key = cwKey(n / fs);
     if (key) { re += 0.26 * cw.c; im += 0.26 * cw.s; }
-
-    for (let h = 0; h < nh; h++) {
-      const a = HUMP[h].a, ph = hP[h];
-      re += a * ph.c;
-      im += a * ph.s;
-    }
 
     for (let k = 0; k < sP.length; k++) {
       re += 0.11 * sP[k].c;
@@ -163,6 +199,12 @@ function fill(start, count) {
     re += 0.20 * Math.cos(phi);
     im += 0.20 * Math.sin(phi);
 
+    // e^{j(w_c n + Σ beta_k sin(w_k n))} — the pilot is just another term in the sum.
+    let wphi = wfmW * n + WFM_PILOT_BETA * pP.s;
+    for (let k = 0; k < aP.length; k++) wphi += WFM_BETA[k] * aP[k].s;
+    re += 0.17 * Math.cos(wphi);
+    im += 0.17 * Math.sin(wphi);
+
     const env = burstEnvelope(n / fs);
     if (env > 0) { const g = 0.42 * env; re += g * ook.c; im += g * ook.s; }
 
@@ -173,19 +215,15 @@ function fill(start, count) {
     cw.s = cw.c * cwR.rs + cw.s * cwR.rc; cw.c = nc;
     nc = ook.c * ookR.rc - ook.s * ookR.rs;
     ook.s = ook.c * ookR.rs + ook.s * ookR.rc; ook.c = nc;
-    for (let h = 0; h < nh; h++) {
-      const ph = hP[h], r = hR[h];
-      const c2 = ph.c * r.rc - ph.s * r.rs;
-      ph.s = ph.c * r.rs + ph.s * r.rc; ph.c = c2;
-    }
-    for (const [ph, r] of [[m, mR], [w, wR], [sP[0], sR[0]], [sP[1], sR[1]]]) {
+    for (const [ph, r] of [[m, mR], [w, wR], [sP[0], sR[0]], [sP[1], sR[1]],
+                           [pP, pR], [aP[0], aR[0]], [aP[1], aR[1]]]) {
       const c2 = ph.c * r.rc - ph.s * r.rs;
       ph.s = ph.c * r.rs + ph.s * r.rc; ph.c = c2;
     }
     if ((i & 4095) === 4095) {
       const norm = (v) => { const g = Math.hypot(v.c, v.s) || 1; v.c /= g; v.s /= g; };
       norm(cw); norm(ook); norm(m); norm(w); norm(sP[0]); norm(sP[1]);
-      for (let h = 0; h < nh; h++) norm(hP[h]);
+      norm(pP); norm(aP[0]); norm(aP[1]);
     }
   }
   return out;
