@@ -716,3 +716,17 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .moreitem.mn { border-left-color:var(--accent); }
 .moreitem .mk { font-family:var(--mono); font-size:.58rem; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); }
 .moreitem .mv { font-family:var(--mono); font-size:.76rem; color:var(--bright); font-variant-numeric:tabular-nums; }
+
+/* A name being edited, in the crumb or the tab it belongs to.
+   Sized from the text so the row does not jump on the way in or out — an editor that
+   resizes the strip it is in makes every neighbor move while you are reading them. */
+.crumb.naming, .tab.naming { display:inline-flex; align-items:center; padding:.16rem .3rem; }
+.tab.naming { padding:.3rem .42rem; }
+input.rn {
+  font:inherit; color:var(--bright); background:var(--raised);
+  border:0; border-bottom:1.5px solid var(--accent); border-radius:2px;
+  padding:0 .22rem; min-width:5rem; width:8.5rem; max-width:11rem; outline:none;
+}
+input.rn::placeholder { color:var(--dim); font-weight:400; }
+/* The letter is not part of the name, so it is not in the field — see renameField. */
+.naming .rnl { font-weight:600; color:var(--bright); margin-right:.28rem; font-style:normal; }

@@ -26,6 +26,10 @@
 import { Graph } from './graph.js';
 import { encode, decode } from './proto.js';
 import * as plugins from './plugins.js';
+// The one piece of the mock engine a remote node still needs locally: a plugin node
+// lives only in this tab, so its rename never reaches the server and has to be cleaned
+// by the same rule the server would have used.
+import { cleanName } from './engine.js';
 
 const PREFETCH_BATCH = 64;
 const PREFETCH_MAX = 2048;     // rows kept from prefill; a waterfall is ~260
@@ -278,6 +282,28 @@ export class RemoteEngine extends Graph {
     const n = this.node(nodeId);
     if (n && n.local) { n.params[key] = { ...n.params[key], mode }; return n; }
     await this.call('setMode', { nodeId, key, mode });
+    return this.node(nodeId);
+  }
+
+  /**
+   * A rename is the one graph edit that does not invalidate a single sample.
+   *
+   * So it deliberately does not `_forget()`, where every other mutation here does. The
+   * spectrum, the pre-fetched spans and the frames in flight are all still correct and
+   * still about the same node; throwing them away to change a word would put a visible
+   * stutter on the cheapest edit in the tool.
+   *
+   * The name comes back the same way every other graph change does — every reply carries
+   * the snapshot — so there is nothing to apply here by hand.
+   */
+  async renameNode(nodeId, name) {
+    const n = this.node(nodeId);
+    if (n && n.local) {
+      const clean = cleanName(name);
+      if (clean) n.name = clean; else delete n.name;
+      return n;
+    }
+    await this.call('renameNode', { nodeId, name });
     return this.node(nodeId);
   }
 

@@ -366,6 +366,22 @@ function findBytes(hay, needle) {
   return -1;
 }
 
+/**
+ * A name somebody typed, made safe to put in a one-line strip.
+ *
+ * Control characters and newlines are stripped rather than escaped: a name is a label,
+ * and a label containing a newline is a rendering bug waiting for the first person who
+ * pastes one in. Runs of whitespace collapse for the same reason.
+ */
+export function cleanName(name) {
+  return String(name ?? '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 32);
+}
+
 function param(value, mode = 'manual', auto = null) {
   return { value, mode, auto };
 }
@@ -1366,6 +1382,33 @@ export class MockEngine extends Graph {
     const n = this.node(nodeId);
     await this._sleep(LATENCY.paramMs);
     n.params[key] = { ...n.params[key], mode };
+    return n;
+  }
+
+  /**
+   * What to call this node, when what it does is not what it is.
+   *
+   * A name sits *beside* the operation rather than replacing it. `label` stays what the
+   * node does — the palette put it there and it is how the flow view, the export
+   * filename and every error message refer to the node — and `name` is what the person
+   * building the graph calls it. Six tuners across a band are six things called "Tuner",
+   * and the letter answers which one but not what it is; "fan remote" answers what it is.
+   *
+   * The letter is untouched on purpose. It is the handle the channel markers, the
+   * torn-off tiles and the export filenames all use, so a rename that took it away would
+   * quietly rename things nobody was looking at.
+   *
+   * Capped and squeezed, because this lands in the most horizontally constrained row in
+   * the layout and a name long enough to push a sibling off the strip has cost more than
+   * it bought (`docs/08-ui-principles.md`). Empty clears it and the node goes back to
+   * being called what it does.
+   */
+  async renameNode(nodeId, name) {
+    const n = this.node(nodeId);
+    if (!n) return null;
+    await this._sleep(LATENCY.paramMs);
+    const clean = cleanName(name);
+    if (clean) n.name = clean; else delete n.name;
     return n;
   }
 

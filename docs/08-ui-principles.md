@@ -215,6 +215,38 @@ that hides the others reads as though the tool forgot what you built.
 The prefix does become right in one place: a **torn-off tile** has no breadcrumb above
 it, so a floating pane is labeled with its full path, `B · Tuner › PWM`.
 
+### A name is not a label
+
+`label` is what a node *does* and the palette put it there. `name` is what you call it,
+and it stands in for the label wherever the node is written down. Six tuners across a
+band are six things called `Tuner`; the letter answers which one and not what it is.
+`B · fan remote` answers both.
+
+Three things the rename deliberately does not touch:
+
+- **The letter.** It is the handle the channel markers, the torn-off tiles and the export
+  filenames all use, so a rename that consumed it would quietly rename things nobody was
+  looking at. It also stays *outside* the editing field, because losing it mid-edit is
+  disorienting in precisely the case this exists for.
+- **The operation.** `label` is still how the flow view and every error message refer to
+  the node, and hovering a renamed one says `fan remote — Tuner`. A name never makes a
+  node unidentifiable.
+- **Anything computed.** A rename is the only graph edit that invalidates no samples, so
+  it is the only one that does not throw away the frames in flight.
+
+Names are squeezed onto one line and capped at 32 characters. That is not tidiness: this
+lands in the row the word budget above is about, and a name long enough to push a sibling
+off the strip has cost more than it bought.
+
+**It lives behind a press, not behind an icon.** `✕` is already on the current crumb and
+the current tab; a second icon beside it doubles the clutter on the two most-used
+navigation rows to expose something used once per channel. So the two things you can do
+*to* a node rather than *with* it — rename, remove — are grouped in a two-entry menu on
+right-click, or a long press on a touch screen. Removal keeps its `✕`; a node that is
+never renamed never has to know the menu is there. Menu depth stays at 1
+([ADR-0018](adr/0018-contextual-menu.md)) — it is the same flat widget the operations
+palette uses, with two entries instead of twenty.
+
 ### Removal lives on the thing being removed
 
 An `✕` appears on the current breadcrumb entry and on the current block tab, and

@@ -2,7 +2,7 @@
 // contextual menu on drag-release, cell strip. The engine behind it is the mock
 // (ADR-0021) — the client cannot tell, which is the point.
 
-import { MockEngine, OPS, LATENCY, demodsFor } from './engine.js';
+import { MockEngine, OPS, LATENCY, demodsFor, cleanName } from './engine.js';
 import { RemoteEngine } from './remote.js';
 import { Waterfall } from './waterfall.js';
 import { SpectrumTrace, TimeSeries, BitRaster } from './views.js';
@@ -20,6 +20,10 @@ import { WINDOWS } from './dsp.js';
 import { CRCS } from './frames.js';
 
 const $ = (s, r = document) => r.querySelector(s);
+
+/** Safe inside an attribute as well as in text — a name is whatever somebody typed. */
+const attr = (x) => String(x ?? '').replace(/[<>&"']/g, (c) =>
+  ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtHz = (hz) => (hz / 1e6).toFixed(4);
 const fmtRate = (r) => (r >= 1e6 ? (r / 1e6).toFixed(3) + ' MS/s' : (r / 1e3).toFixed(1) + ' kS/s');
 
@@ -57,6 +61,10 @@ class App {
     this.engine = new MockEngine();
     this.viewParams = new Map();   // nodeId -> params
     this.tabs = new Map();         // channelId -> 'spectrum' | 'flow' | blockNodeId
+    // The node whose name is being edited, and the draft so far. Held here rather than
+    // in the DOM because the rows it lives in are rebuilt from state, and a live source
+    // rebuilds them without being asked.
+    this.renaming = null;          // { id, draft } | null
     this.selection = null;
     this.metrics = new Metrics($('#metrics'));
     this.menu = new ContextMenu(document.body);
@@ -136,8 +144,21 @@ class App {
    */
   isChannel(n) { return !!(n && n.out && n.out.kind === 'iq'); }
 
-  /** How a node is written down. Only channels carry a letter (engine.addNode). */
-  tag(n) { return n.letter ? `${n.letter} · ${n.label}` : n.label; }
+  /**
+   * How a node is written down. Only channels carry a letter (engine.addNode).
+   *
+   * A name, where somebody has given one, stands in for what the node does — that is
+   * what renaming means. The letter stays either way, because it is the handle the
+   * channel markers and the torn-off tiles use, and `titleOf` keeps the operation
+   * reachable on hover so a renamed node never becomes one nobody can identify.
+   */
+  tag(n) {
+    const what = n.name || n.label;
+    return n.letter ? `${n.letter} · ${what}` : what;
+  }
+
+  /** What to say on hover: the operation, once a name has replaced it. */
+  titleOf(n) { return n.name ? `${n.name} — ${n.label}` : n.label; }
 
   /** Everything under a node, in any direction — used to stop what is about to vanish. */
   descendants(id) {
@@ -205,11 +226,15 @@ class App {
     // say it is still making noise.
     const audible = this.audibleChannels();
     const spk = (n) => (audible.has(n.id) ? ' <b class="spk" title="audible">\u{1F508}</b>' : '');
-    const crumb = (n, cls) =>
-      `<button class="crumb ${cls}" data-id="${n.id}">${this.tag(n)}${pin(n)}${spk(n)}` +
-      (cls === 'cur' && n.id !== root.id
-        ? `<i class="x" data-del="${n.id}" role="button" tabindex="0" title="remove ${this.tag(n)} and everything under it">✕</i>` : '') +
-      `</button>`;
+    const crumb = (n, cls) => {
+      if (this.renaming && this.renaming.id === n.id) return this.renameField(n, `crumb ${cls} naming`);
+      return `<button class="crumb ${cls}" data-id="${n.id}"` +
+        (n.id === root.id ? '' : ` data-menu="${n.id}"`) +
+        ` title="${attr(this.titleOf(n))}">${this.tag(n)}${pin(n)}${spk(n)}` +
+        (cls === 'cur' && n.id !== root.id
+          ? `<i class="x" data-del="${n.id}" role="button" tabindex="0" title="remove ${attr(this.tag(n))} and everything under it">✕</i>` : '') +
+        `</button>`;
+    };
 
     // The device's center and rate are its node's parameters, so they live in the
     // strip when the source is selected. Repeating them here made the top row a
@@ -245,6 +270,152 @@ class App {
       });
     }
     this.wireRemove(el);
+    this.wireNodeMenu(el);
+    this.wireRename(el);
+  }
+
+  /**
+   * The menu on a name.
+   *
+   * Renaming had nowhere to live. `✕` is already on the current crumb and the current
+   * tab, and 08-ui-principles names that row as the most horizontally constrained in the
+   * layout — a second icon beside it doubles the clutter on the two most-used navigation
+   * rows to expose something used once per channel. So the two things you can do *to* a
+   * node rather than *with* it are grouped behind one press, on the node itself.
+   *
+   * Right-click on a pointer, long-press on a touch screen, and nowhere else: this is not
+   * a discoverable gesture and it is not meant to be the only way to do anything. Removal
+   * keeps its `✕`, and a node that is never renamed never has to know this menu exists.
+   *
+   * Menu depth stays 1 (ADR-0018) — it is the same flat widget the operations palette
+   * uses, with two entries instead of twenty.
+   */
+  nodeMenuAt(id, x, y) {
+    const n = this.engine.node(id);
+    if (!n || n.id === this.engine.root.id) return;
+    const items = [{ id: 'rename', name: n.name ? 'Rename…' : 'Give it a name…', group: 'node' }];
+    // Only offered once there is something to undo, because "use its operation name" on
+    // a node already called what it does is a menu entry that does nothing.
+    if (n.name) items.push({ id: 'clear', name: `Call it “${n.label}” again`, group: 'node' });
+    items.push({ id: 'remove', name: 'Remove', group: 'node' });
+    this.menu.open(x, y, items, (op) => {
+      if (op === 'rename') this.beginRename(id);
+      else if (op === 'clear') this.commitRename(id, '');
+      else if (op === 'remove') this.removeNode(id);
+    });
+  }
+
+  /**
+   * Right-click, or hold.
+   *
+   * The long press is written out rather than left to the browser's own context menu,
+   * because on a touch screen there is no right button and the browser's long-press is a
+   * text-selection callout. Cancelled by movement — a press that turns into a scroll was
+   * a scroll — and the click that follows a fired press is swallowed, or a long press on
+   * a crumb would open the menu and then navigate away from what it is about.
+   */
+  wireNodeMenu(el) {
+    for (const b of el.querySelectorAll('[data-menu]')) {
+      const id = b.dataset.menu;
+      const open = (x, y) => { this.menu.close(); this.nodeMenuAt(id, x, y); };
+      b.addEventListener('contextmenu', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        open(e.clientX, e.clientY);
+      });
+
+      let timer = null, sx = 0, sy = 0, fired = false;
+      const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+      b.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse') return;        // a mouse has a right button
+        sx = e.clientX; sy = e.clientY; fired = false;
+        cancel();
+        timer = setTimeout(() => { timer = null; fired = true; open(sx, sy); }, 480);
+      });
+      b.addEventListener('pointermove', (e) => {
+        if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel();
+      });
+      b.addEventListener('pointerup', cancel);
+      b.addEventListener('pointercancel', cancel);
+      b.addEventListener('click', (e) => {
+        if (!fired) return;
+        fired = false;
+        e.preventDefault(); e.stopPropagation();
+      }, true);
+    }
+  }
+
+  /**
+   * The crumb or tab, with an input where its name was.
+   *
+   * The letter stays outside the field, because it is not part of what is being edited
+   * and because losing it is disorienting in exactly the case this exists for: three
+   * tuners all called "Tuner", and an editor that shows only "Tuner" has taken away the
+   * one thing that said which of them you opened. The placeholder is the operation, so
+   * the field also says what the node goes back to being called if you leave it empty.
+   */
+  renameField(n, cls) {
+    return `<span class="${cls}">` +
+      (n.letter ? `<b class="rnl">${n.letter} ·</b>` : '') +
+      `<input class="rn" data-rn="${n.id}" type="text" maxlength="32"` +
+      ` spellcheck="false" autocomplete="off" value="${attr(this.renaming.draft)}"` +
+      ` placeholder="${attr(n.label)}" aria-label="name for ${attr(n.label)}"></span>`;
+  }
+
+  beginRename(id) {
+    const n = this.engine.node(id);
+    if (!n) return;
+    this.renaming = { id, draft: n.name || '' };
+    this.refresh();
+  }
+
+  cancelRename() {
+    if (!this.renaming) return;
+    this.renaming = null;
+    this.refresh();
+  }
+
+  /**
+   * Nothing is sent when nothing changed.
+   *
+   * Committing on blur is what makes this feel like a label rather than a dialog, and it
+   * means the common case — open the editor, think better of it, click away — has to cost
+   * nothing. `cleanName` is applied on both sides of the comparison so that trailing
+   * space is not a change.
+   */
+  async commitRename(id, value) {
+    const n = this.engine.node(id);
+    this.renaming = null;
+    if (n && (n.name || '') !== cleanName(value)) await this.engine.renameNode(id, value);
+    this.refresh();
+  }
+
+  /**
+   * Focus and caret survive a re-render, because one will happen.
+   *
+   * A live source moves on its own and redraws the top row underneath whatever is
+   * happening in it. So the editor is rendered from state rather than poked into the DOM,
+   * and this puts the cursor back where it was each time the row is rebuilt.
+   */
+  wireRename(el) {
+    const input = $('.rn', el);
+    if (!input) return;
+    const id = input.dataset.rn;
+    input.addEventListener('input', () => { if (this.renaming) this.renaming.draft = input.value; });
+    // The app listens for bare keys — space plays, `/` opens the palette — and an editor
+    // that let those through would play the capture while you typed a name with a space
+    // in it.
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); this.commitRename(id, input.value); }
+      else if (e.key === 'Escape') { e.preventDefault(); this.cancelRename(); }
+    });
+    input.addEventListener('blur', () => {
+      if (this.renaming && this.renaming.id === id) this.commitRename(id, input.value);
+    });
+    if (document.activeElement !== input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
   }
 
   /**
@@ -304,7 +475,7 @@ class App {
     if (key !== 'spectrum' && key !== 'flow' && !blocks.some((b) => b.id === key)) this.setTab('spectrum');
 
     const items = [{ k: 'spectrum', label: 'Spectrum' }]
-      .concat(blocks.map((b) => ({ k: b.id, label: this.tag(b), kind: b.out.kind, del: b.id,
+      .concat(blocks.map((b) => ({ k: b.id, label: this.tag(b), kind: b.out.kind, del: b.id, node: b,
                                    live: b.out.kind === 'audio' && this.mixer.has(b.id),
                                    // ADR-0013 requires a node you cannot see inside to
                                    // look different from one you can. `opaque` is set
@@ -314,14 +485,19 @@ class App {
       .concat([{ k: 'flow', label: 'Flow' }]);
 
     const el = $('#tabs');
-    el.innerHTML = items.map((it) =>
-      `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}${it.live ? ' live' : ''}" data-k="${it.k}">` +
+    el.innerHTML = items.map((it) => {
+      if (it.node && this.renaming && this.renaming.id === it.node.id) {
+        return this.renameField(it.node, 'tab on naming');
+      }
+      return `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}${it.live ? ' live' : ''}" data-k="${it.k}"` +
+      (it.node ? ` data-menu="${it.node.id}" title="${attr(this.titleOf(it.node))}"` : '') + '>' +
       `${it.live ? '<span class="spk">\u{1F508}</span>' : ''}` +
       `${it.label}${it.kind ? `<span class="tk">${it.kind}</span>` : ''}` +
       `${it.live ? '<i class="alvl"></i>' : ''}` +
       (it.del && it.k === this.tabKey()
-        ? `<i class="x" data-del="${it.del}" role="button" tabindex="0" title="remove ${it.label} and everything after it">✕</i>` : '') +
-      `</button>`).join('') +
+        ? `<i class="x" data-del="${it.del}" role="button" tabindex="0" title="remove ${attr(it.label)} and everything after it">✕</i>` : '') +
+      `</button>`;
+    }).join('') +
       // `+` is choosing a decoder by hand; Identify is the auto mode of the same
       // choice (ADR-0017). They belong next to each other, and Identify has to be one
       // click from here or UC-1' does not fit in its three interactions.
@@ -329,6 +505,8 @@ class App {
       '<button class="tab plus" title="operations valid here">+</button>';
 
     this.wireRemove(el);
+    this.wireNodeMenu(el);
+    this.wireRename(el);
     for (const b of el.querySelectorAll('.tab[data-k]')) {
       b.addEventListener('click', () => {
         this.clearSelection();

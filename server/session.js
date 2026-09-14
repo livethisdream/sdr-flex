@@ -213,6 +213,11 @@ const METHODS = {
     return {};
   },
 
+  async renameNode({ nodeId, name }) {
+    await this.engine.renameNode(nodeId, name);
+    return {};
+  },
+
   /**
    * A batch, not a call. The waterfall prefills two hundred and sixty rows at
    * arbitrary moments, and asking for those one at a time over a network is two

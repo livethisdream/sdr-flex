@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-14 (`Dockerfile.full`; DSSS despreading; BBC finally has a fixture, checked against upstream gr-bbc) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-14 (`Dockerfile.full`; DSSS despreading; BBC fixture vs upstream gr-bbc; nodes can be named) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
 
 ---
 
@@ -59,6 +59,9 @@ Working end to end:
   offset by squaring, and the code by correlating against a generated library of the
   standard families — every primitive polynomial to degree 11, the Gold sets, Barker,
   Walsh. 557 codes in about a second, and it says what it skipped and why (ADR-0035)
+- Nodes can be named. `A · Tuner` becomes `A · fan remote` — right-click or long-press
+  the crumb or the tab. The letter and the operation both survive, and the operation is
+  on hover, so a renamed node is never one nobody can identify
 - BBC concurrent codes: the reference plugin (ADR-0028) now with both halves — `encode()`
   as well as `decode()` — a golden capture, and a cross-check against the upstream GNU
   Radio implementation
@@ -66,7 +69,7 @@ Working end to end:
   programs, GNU Radio, gr-lora_sdr, m17-cxx-demod and rx_sdr. 1.9 GB, and the banner then
   reads **7 of 7 external decoders installed**
 
-Tests: 265 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 273 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.

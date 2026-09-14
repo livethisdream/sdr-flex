@@ -166,6 +166,37 @@ test('a parameter change lands on both and changes the same thing', async (t) =>
   assert.equal(worst, 0);
 });
 
+test('a rename lands on both, and survives the round trip', async (t) => {
+  const f = await fixture(t);
+  const m = await script(f.mock, f.inMemory());
+  const r = await script(f.remote, f.id);
+
+  await f.mock.renameNode(m.tuner.id, '  fan  remote ');
+  await f.remote.renameNode(r.tuner.id, '  fan  remote ');
+
+  // Squeezed the same way on both sides, which is the point of `cleanName` being one
+  // function: a name typed into a tab talking to a server and the same name typed into
+  // a tab with the engine in it have to come out identical or the two are not one tool.
+  assert.equal(f.mock.node(m.tuner.id).name, 'fan remote');
+  assert.equal(f.remote.node(r.tuner.id).name, 'fan remote');
+
+  // It is on the *server's* node, not only in the reply — the snapshot every call
+  // carries is what the client is reading back here.
+  await f.remote.palette(r.root.id);
+  assert.equal(f.remote.node(r.tuner.id).name, 'fan remote');
+
+  // The letter and the operation are untouched: a rename says what this node is *to
+  // you*, and the letter is what every marker and torn-off tile refers to it by.
+  assert.equal(f.remote.node(r.tuner.id).letter, f.mock.node(m.tuner.id).letter);
+  assert.equal(f.remote.node(r.tuner.id).label, 'Tuner');
+
+  // Empty clears it on both, rather than setting an empty name.
+  await f.mock.renameNode(m.tuner.id, '   ');
+  await f.remote.renameNode(r.tuner.id, '   ');
+  assert.equal(f.mock.node(m.tuner.id).name, undefined);
+  assert.equal(f.remote.node(r.tuner.id).name, undefined);
+});
+
 test('removing a node removes what hung off it, on both', async (t) => {
   const f = await fixture(t);
   const m = await script(f.mock, f.inMemory());
