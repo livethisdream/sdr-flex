@@ -268,6 +268,25 @@ mistargets. Putting it on the one you are looking at answers "how do I get rid o
 this?" in the place the question gets asked, and it is never the thing your thumb
 lands on by accident.
 
+### A derived parameter has to actually be derived
+
+The tuner's tap count carried an `auto` badge and the words "transition width" for a year
+and was the constant `65`. Nothing was ever measured. It is the failure mode
+[ADR-0017](adr/0017-derived-parameters-show-their-evidence.md) exists to prevent, and it
+hid in the one place nobody looks — a value that was right often enough.
+
+It cost this: sixteen carriers 4 kHz apart, three of them decoded. The symbol rate still
+derived correctly, the pane still filled with bytes, and the bytes were partly the
+neighbouring channel's. A wrong value that produces confident-looking output is worse
+than a missing one.
+
+The rule that follows: **if a parameter shows evidence, the evidence has to be a
+measurement of this signal, and it has to be able to say the answer is poor.** The tap
+count now evaluates the filter at every frequency that folds into the passband and quotes
+the worst — and when no affordable filter reaches the target, it says the channel is
+narrow enough that a neighbour will leak and that a wider selection is the fix. An
+`auto` badge on a number nobody checked is a lie the interface tells on the code's behalf.
+
 ### The display range has to follow the data
 
 Narrowing a channel narrows its FFT bins, so its noise floor sits ten to twenty dB

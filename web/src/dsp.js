@@ -127,6 +127,75 @@ export function lowPassTaps(numTaps, cutoffHz, fs) {
 }
 
 /**
+ * How much of the rest of the band folds into this channel, in dB.
+ *
+ * Decimating by D makes every band around a multiple of the output rate land on top of
+ * the channel: content at `k·rate ± cutoff` arrives inside the passband and is
+ * indistinguishable from signal once it is there. So the number that matters is not the
+ * filter's cutoff, it is the worst gain anywhere in those bands — and that is what this
+ * measures, by evaluating the response rather than estimating it from a rule.
+ *
+ * Negative and large is good. Zero means a neighbouring channel arrives at full strength
+ * in the middle of this one.
+ */
+export function aliasRejectionDb(taps, fs, cutoffHz, decim) {
+  if (decim <= 1) return -Infinity;              // nothing folds when nothing is dropped
+  const rate = fs / decim;
+  const gainAt = (hz) => {
+    let re = 0, im = 0;
+    for (let i = 0; i < taps.length; i++) {
+      const a = (-2 * Math.PI * hz * i) / fs;
+      re += taps[i] * Math.cos(a);
+      im += taps[i] * Math.sin(a);
+    }
+    return Math.hypot(re, im);
+  };
+  let worst = 0;
+  for (let k = 1; k * rate - cutoffHz < fs / 2; k++) {
+    for (let j = 0; j <= 8; j++) {
+      const hz = k * rate - cutoffHz + (2 * cutoffHz * j) / 8;
+      if (hz > fs / 2) break;
+      worst = Math.max(worst, gainAt(hz));
+    }
+  }
+  return 20 * Math.log10(worst + 1e-12);
+}
+
+/** Tap counts the tuner will consider, shortest first. Odd, so the filter is linear phase. */
+const TAP_CHOICES = [65, 97, 129, 161, 193, 225, 255];
+
+/**
+ * How long the channel filter has to be, measured rather than assumed.
+ *
+ * The old answer was 65, always, with an `auto` badge and the words "transition width"
+ * underneath — which was not a derivation, it was a constant wearing one. It is fine for
+ * a wide channel and it is nowhere near enough for a narrow one: at 200 kS/s decimated
+ * by 80, sixty-five taps put a carrier 4 kHz away only 10 dB down, and sixteen carriers
+ * 4 kHz apart decoded three times out of sixteen. At 129 taps that neighbour is 38 dB
+ * down and all sixteen read.
+ *
+ * So: try the candidates shortest first and take the first that puts everything which
+ * folds below `targetDb`. Filtering costs time proportional to the tap count and every
+ * frame pays it, so a channel that does not need a long filter does not get one.
+ *
+ * **It cannot always be met, and then it says so rather than pretending.** A single-stage
+ * FIR decimating by eighty has a transition band a thousandth of the input rate wide;
+ * no tap count inside any sane budget makes that brick-walled, and the honest report is
+ * the number achieved. `met: false` is the tuner's cue to say the channel is narrow
+ * enough that neighbours will leak, which is a thing to know and not a thing to hide.
+ */
+export function chooseTaps(fs, widthHz, decim, { targetDb = 60, choices = TAP_CHOICES } = {}) {
+  const cutoff = Math.max(1, widthHz / 2);
+  let last = { taps: choices[0], rejectionDb: 0, met: false };
+  for (const n of choices) {
+    const db = aliasRejectionDb(lowPassTaps(n, cutoff, fs), fs, cutoff, decim);
+    last = { taps: n, rejectionDb: db, met: db <= -targetDb };
+    if (last.met) return last;
+  }
+  return last;
+}
+
+/**
  * Frequency-translating FIR filter + decimator — the Tuner, in one function.
  * Mixes `offsetHz` down to DC, low-pass filters, and keeps every `decim`th sample.
  *

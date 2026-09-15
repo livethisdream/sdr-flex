@@ -382,6 +382,32 @@ export function cleanName(name) {
     .slice(0, 32);
 }
 
+/**
+ * What to say about a tap count, including when it is not enough.
+ *
+ * Decimating drops everything around a multiple of the output rate on top of the
+ * channel, and a short filter lets it in. The figure quoted is the worst gain anywhere
+ * that folds — so "48 dB down" means a neighbouring channel arrives at a thousandth of
+ * its real strength, and "10 dB down" means it arrives at a third of it and your bytes
+ * are somebody else's.
+ *
+ * When no affordable tap count reaches the target the evidence says so plainly, because
+ * a narrow channel on a fast source genuinely cannot be brick-walled by one FIR and the
+ * useful response is to widen the selection rather than to keep turning the knob.
+ */
+function tapEvidence(filt, decim) {
+  if (decim <= 1) {
+    return { from: 'nothing is decimated here, so nothing folds in', confident: true };
+  }
+  const db = Math.abs(filt.rejectionDb).toFixed(0);
+  return filt.met
+    ? { from: `the worst of what folds in lands ${db} dB down`, confident: true }
+    : { from: `the worst of what folds in is only ${db} dB down — this channel is narrow ` +
+              'enough that a neighbour will leak into it. A wider selection is the fix, ' +
+              'not more taps',
+        confident: false };
+}
+
 function param(value, mode = 'manual', auto = null) {
   return { value, mode, auto };
 }
@@ -1113,13 +1139,17 @@ export class MockEngine extends Graph {
       const target = widthHz * 1.25;
       const decim = dsp.chooseDecimation(p.out.sampleRate, target);
       const rate = p.out.sampleRate / decim;
-      const numTaps = 65;
+      // Measured, not assumed. This said `auto` and "transition width" for a year and
+      // was the number 65 — which is plenty for a wide channel and nowhere near enough
+      // for a narrow one. See dsp.chooseTaps.
+      const filt = dsp.chooseTaps(p.out.sampleRate, widthHz, decim);
+      const numTaps = filt.taps;
       const pinned = selection.t0 != null && selection.t1 != null;
       node.params = {
         centerHz: param(centerHz, 'auto', { from: 'selection center' }),
         widthHz: param(widthHz, 'auto', { from: 'selection width' }),
         decim: param(decim, 'auto', { from: `${(p.out.sampleRate / 1e3).toFixed(0)} kS/s ÷ ${(target / 1e3).toFixed(1)} kHz` }),
-        taps: param(numTaps, 'auto', { from: 'transition width' }),
+        taps: param(numTaps, 'auto', tapEvidence(filt, decim)),
         // time is a property of the channel, not a node of its own (ADR-0023)
         timeMode: param(pinned ? 'pinned' : 'live'),
         rate: param(1, 'auto', { from: 'window length — about four seconds to watch' }),

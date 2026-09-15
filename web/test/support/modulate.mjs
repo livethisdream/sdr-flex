@@ -595,3 +595,60 @@ export function dsss(text, {
   return { iq, samples: n, chips, bits, bytes, chipRate, sps, code, offsetHz,
            spreadHz: chipRate * 2 };
 }
+
+// ── Multitone ───────────────────────────────────────────────────────────────
+
+/**
+ * Several narrowband OOK carriers at once, evenly spaced.
+ *
+ * The inverse of the *tuner* rather than of a decoder, which is why it is here and not
+ * beside a modulation: what it exercises is channel separation. Carriers close together
+ * are the case where a channel filter either works or quietly hands you the neighbour's
+ * bits, and nothing else in this suite puts two signals near enough for that to happen.
+ *
+ * Each carrier sends its own text behind the same preamble and sync, so a decode that
+ * comes back with the wrong index is leakage rather than noise — a distinction worth
+ * being able to make.
+ */
+export function multitone(texts, {
+  rate = 200_000, spacingHz = 4_000, baud = 200, amplitude = 0.085,
+  taper = 0, seed = 0x70e5, noise = 0.004, syncHex = [0x2d, 0xd4],
+} = {}) {
+  const sps = rate / baud;
+  const trains = texts.map((t) => {
+    const bits = [];
+    const push = (b) => { for (let k = 7; k >= 0; k--) bits.push((b >> k) & 1); };
+    for (let i = 0; i < 24; i++) bits.push(i % 2);
+    for (const b of syncHex) push(b);
+    for (const c of t) push(c.charCodeAt(0) & 0xff);
+    return bits;
+  });
+
+  const longest = Math.max(...trains.map((t) => t.length));
+  const lead = Math.round(rate * 0.02);
+  const n = lead + Math.ceil(longest * sps) + Math.round(rate * 0.02);
+  const iq = new Float32Array(n * 2);
+  const half = (texts.length - 1) / 2;
+  const plan = [];
+
+  for (let k = 0; k < texts.length; k++) {
+    const f = (k - half) * spacingHz;
+    const t = half === 0 ? 0 : (k - half) / half;
+    const a = amplitude * Math.exp(-taper * t * t);
+    plan.push({ offsetHz: f, amplitude: a, text: texts[k] });
+    const bits = trains[k];
+    const w = (2 * Math.PI * f) / rate;
+    let c = 1, s = 0;
+    const rc = Math.cos(w), rs = Math.sin(w);
+    for (let i = 0; i < n; i++) {
+      const at = i - lead;
+      if (at >= 0 && bits[Math.floor(at / sps)]) { iq[i * 2] += a * c; iq[i * 2 + 1] += a * s; }
+      const nc = c * rc - s * rs;
+      s = c * rs + s * rc; c = nc;
+      if ((i & 4095) === 4095) { const g = Math.hypot(c, s) || 1; c /= g; s /= g; }
+    }
+  }
+  const rand = rng(seed);
+  for (let i = 0; i < n * 2; i++) iq[i] += (rand() - 0.5) * noise;
+  return { iq, samples: n, plan, rate, spacingHz, baud, symbolUs: 1e6 / baud };
+}
