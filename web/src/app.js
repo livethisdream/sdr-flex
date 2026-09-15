@@ -16,7 +16,7 @@ import * as out from './export.js';
 import * as plugins from './plugins.js';
 import { AudioMixer, meterLevel } from './audio.js';
 import { COLORMAPS, cssGradient, floorColor, lut } from './colormap.js';
-import { WINDOWS } from './dsp.js';
+import { WINDOWS, spectrumHasSignal } from './dsp.js';
 // Only for its SIGNALS table: the synthetic scene is the one source whose contents are
 // known in advance, so it is the one source that can just say what is in it.
 import * as scene from './scene.js';
@@ -1011,6 +1011,17 @@ class App {
     this._rowAcc = 0;
     this._specAcc = 0;
     this._specData = null;
+    // The range that was right a moment ago is not right for what is about to arrive.
+    // Everything that calls this — opening a capture, changing channel, retuning,
+    // changing the FFT size — changes what a decibel means here: narrowing a channel
+    // narrows its bins, so its noise floor sits ten to twenty dB below its parent's.
+    //
+    // Easing towards that over seventeen seconds is not smoothing, it is being wrong
+    // slowly. The follower exists so a *burst* does not make the display breathe; it was
+    // never meant to arbitrate between two different signals. So the next spectrum to
+    // arrive sets the range outright, and the easing resumes after it.
+    this._autoSnap = true;
+    this._autoAcc = 0;
     const p = this.vp(this.current);
     const span = this.waterfall.rows / Math.max(1, p.speed);
     const pf = {
@@ -1079,6 +1090,9 @@ class App {
   applyAutoRange(data, snap) {
     const p = this.vp(this.current);
     if (!p.dbAuto || !data) return;
+    // Not yet. Keep whatever range is showing and keep the snap armed, so the first
+    // frame that *is* data gets it rather than the first frame that merely exists.
+    if (!spectrumHasSignal(data)) return;
     const { lo, hi } = this.fitRange(data);
     const k = snap ? 1 : 0.12;
     p.dbMin += (lo - p.dbMin) * k;
@@ -2318,7 +2332,10 @@ class App {
           // comes back to that moment.
           if (f.kind === 'pending') break;
           if (f.kind === 'spectrum') {
-            if (pf.row === 0) this.applyAutoRange(f.data, true);
+            if (pf.row === 0 && spectrumHasSignal(f.data)) {
+              this._autoSnap = false;
+              this.applyAutoRange(f.data, true);
+            }
             this.waterfall.push(f.data);
             this.trace.push(f.data);
           }
@@ -2348,8 +2365,18 @@ class App {
           if (f.kind === 'spectrum') this._specData = f.data;
         }
         if (this._specData) {
-          this._autoAcc = (this._autoAcc || 0) + 1;
-          if (this._autoAcc > 20) { this._autoAcc = 0; this.applyAutoRange(this._specData, false); }
+          if (this._autoSnap && spectrumHasSignal(this._specData)) {
+            // First spectrum since the context changed: take the range, do not approach
+            // it. Cleared here rather than in the prefill loop because a remote engine's
+            // first rows come back `pending`, and a snap that only happens on a row that
+            // may never arrive is a snap that does not happen.
+            this._autoSnap = false;
+            this._autoAcc = 0;
+            this.applyAutoRange(this._specData, true);
+          } else {
+            this._autoAcc = (this._autoAcc || 0) + 1;
+            if (this._autoAcc > 20) { this._autoAcc = 0; this.applyAutoRange(this._specData, false); }
+          }
           this.trace.push(this._specData);
           if (rowDue) { this._rowAcc = 0; this.waterfall.push(this._specData); }
           this.trace.draw();

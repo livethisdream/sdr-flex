@@ -305,6 +305,30 @@ is not a default, it is an assumption about every child.** Anything that scales 
 sample rate, bin width or bandwidth has to be re-derived per node or it will be wrong
 everywhere except where it was chosen.
 
+### An auto-range snaps to a new signal and eases within one
+
+The display range follows the data through a one-pole filter, and it should: a burst
+arriving should not make the whole waterfall breathe, and the range settling is not more
+important than the signal being readable while it settles.
+
+But the follower was arbitrating two different things. Easing is right for *drift* —
+the same signal getting louder. It is wrong for a *change of subject*: opening a
+capture, changing channel, retuning, changing the FFT size. Narrowing a channel narrows
+its bins, so its noise floor drops ten to twenty dB; the old range is not a worse
+estimate of the new signal, it is an estimate of a different one. Approaching it at 12%
+every 21 frames took seventeen seconds to be right about something that was knowable in
+one frame.
+
+So: **snap when the subject changes, ease while it stays the same.** Everything that
+resets the waterfall arms the snap, and the next real spectrum takes the range outright.
+
+The word "real" is the other half, and it was the actual bug. A node that has not
+produced samples answers with a frame of zeros — a valid spectrum of silence at about
+−200 dBFS in every bin. Ranging to that puts the floor where no signal will ever reach
+and leaves the follower climbing back out of a hole for the next seventeen seconds. What
+looked like a slow filter was one empty frame poisoning it. Flatness is the tell: real
+data, even pure noise, has several dB between floor and peak; a placeholder has none.
+
 ### Zooming is not tuning
 
 Two operations narrow the frequency you are looking at, and confusing them would be

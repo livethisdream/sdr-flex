@@ -154,3 +154,35 @@ test('a pinned tap count is still a pinned tap count', async () => {
   assert.equal(e.node(tu.id).params.taps.value, 97);
   assert.equal(e.node(tu.id).params.taps.mode, 'manual');
 });
+
+// ── what the display ranges to ──────────────────────────────────────────────
+
+test('a frame with nothing in it is not a measurement', () => {
+  // A channel that has not produced samples answers with zeros. That is a valid
+  // spectrum of silence at about -200 dBFS, and ranging a display to it puts the floor
+  // somewhere no signal reaches — after which the auto-range spends seventeen seconds
+  // climbing back. The symptom reads as a slow filter and is one empty frame.
+  const empty = new Float32Array(1024).fill(-200);
+  assert.equal(dsp.spectrumHasSignal(empty), false);
+  assert.equal(dsp.spectrumHasSignal(new Float32Array(1024)), false, 'flat at zero is still flat');
+  assert.equal(dsp.spectrumHasSignal(new Float32Array(0)), false);
+  assert.equal(dsp.spectrumHasSignal(null), false);
+});
+
+test('noise is a measurement, and reads as one', () => {
+  // The distinction has to survive the quietest thing that is still real, or the
+  // display refuses to range on an empty band.
+  const rand = mod.rng(0x515e);
+  const noise = Float32Array.from({ length: 1024 }, () => -110 + (rand() - 0.5) * 12);
+  assert.equal(dsp.spectrumHasSignal(noise), true);
+
+  const g = comb();
+  const spec = dsp.spectrum(g.iq.subarray(0, 2048), 1024, 'Hann');
+  assert.equal(dsp.spectrumHasSignal(spec), true);
+});
+
+test('a strong flat signal is still not a spectrum', () => {
+  // Guard against the obvious wrong fix, which is to test the level rather than the
+  // spread. Every bin at -20 dBFS is not a loud signal, it is a broken one.
+  assert.equal(dsp.spectrumHasSignal(new Float32Array(1024).fill(-20)), false);
+});

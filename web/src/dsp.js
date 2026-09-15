@@ -478,6 +478,33 @@ export function envelopeWindow(sampleRate) {
 }
 
 /**
+ * Is this a spectrum, or a node that has not produced samples yet?
+ *
+ * A channel whose buffers are still empty answers with a frame of zeros. That is a
+ * perfectly valid spectrum of silence and reads as about -200 dBFS in every bin, and
+ * anything that ranges a display to it puts the floor somewhere no signal will ever
+ * reach — after which an auto-range has to crawl all the way back up.
+ *
+ * That crawl is what "the auto scale takes a while to dial in" actually was. Not a slow
+ * filter: one empty frame poisoning it, and every frame after that spent recovering from
+ * a number that was never a measurement.
+ *
+ * Flatness is the tell, and it is a strong one. Real data — even pure noise — has several
+ * dB between its floor and its peak, because a periodogram of noise is itself noisy. A
+ * placeholder has exactly none, every bin holding the same number.
+ */
+export function spectrumHasSignal(data) {
+  if (!data || !data.length) return false;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < data.length; i++) {
+    const v = data[i];
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return hi - lo > 3 && hi > -150;
+}
+
+/**
  * The range a histogram should cover: the bulk of the data, not its extremes.
  *
  * Half a percent trimmed from each end, estimated from a subsample so this stays cheap on
