@@ -94,10 +94,22 @@ Everything required, with `rtl_433` as the example:
 | `title` | which field is the headline of a record, in order of preference |
 | `sweep` | what "try everything" means for this decoder, used by **Identify** |
 | `recordsOn` | `"stderr"`, for a program whose stdout is not records — see below |
+| `minRate` | the narrowest stream that could contain what this decodes — see below |
 
 **A flag whose value is empty is left out, with its flag.** That is what the `if` form is
 for: "restrict to one protocol" and "restrict to no protocol" are different command
 lines, and `-R ''` is neither of them.
+
+**`wants.rate` is a preference; `minRate` is a floor.** Almost every decoder handed a
+channel narrower than it likes decodes worse, which is a trade a person can make. A few
+cannot decode at all, because what they read is not in a narrow channel in the first
+place: `redsea` reads a subcarrier at 57 kHz, so a 40 kHz stream does not contain the
+signal whatever it is resampled to. Say so with `minRate` and two things follow —
+**Identify** skips it with that reason instead of reporting an empty result, and it stops
+paying to demodulate a wide span speculatively on every capture to look for something
+that could not be there. Leave it out unless your decoder has this property; a floor on a
+decoder that merely prefers more bandwidth hides it from the one place it might have
+worked.
 
 **A rate that follows a knob** is said without writing a function:
 

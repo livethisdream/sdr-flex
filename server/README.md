@@ -119,7 +119,7 @@ The default image has none of these programs in it. Build the radio variant inst
 SDRFLEX_DOCKERFILE=Dockerfile.radio docker compose up -d --build
 ```
 
-Or `Dockerfile.full`, which is that plus GNU Radio and the two decoders that have to be
+Or `Dockerfile.full`, which is that plus GNU Radio and the three decoders that have to be
 built — see [everything in one command](#everything-in-one-command) below.
 
 How the container reaches the radio depends on how the radio attaches:
@@ -246,6 +246,7 @@ program and the decoder appears in the menu wherever its input type fits.
 | direwolf | audio | `direwolf` | `direwolf` | APRS / AX.25 |
 | minimodem | audio | `minimodem` | `minimodem` | RTTY, Bell 103/202, any N-baud FSK |
 | M17 | audio | `m17-demod` | build it, see below | M17 — 4FSK digital voice and data |
+| redsea | the FM composite | `redsea` | build it, see below | RDS — station name, radiotext, program type |
 | LoRa | IQ | a GNU Radio module | see below | LoRa — chirp spread spectrum, SF7 to SF12 |
 
 The first five at once:
@@ -273,6 +274,41 @@ audio to stdout, and the record says how many seconds of it there were. If you n
 hear it, run `m17-demod` yourself against an exported channel. Carrying decoded audio back
 into the graph is a real gap and not a small one — see
 [ADR-0013](../docs/adr/0013-external-decoders-as-subprocesses.md).
+
+### redsea
+
+Also unpackaged, and also a couple of minutes:
+
+```sh
+sudo apt install meson ninja-build build-essential libsndfile1-dev libliquid-dev nlohmann-json3-dev
+git clone https://github.com/windytan/redsea && cd redsea
+meson setup build --buildtype=release && sudo meson install -C build
+```
+
+**It reads the composite, not the audio.** RDS rides a suppressed 57 kHz subcarrier —
+the third harmonic of the 19 kHz stereo pilot — so what this decoder needs is the FM
+discriminator's whole output rather than the part of it you can hear. That has one
+consequence and it is the only thing worth knowing about this adapter:
+
+> **Draw the channel wide.** 200 kHz, not 20. A channel sized for listening has already
+> filtered the subcarrier away before the demodulator runs, and the decode then finds
+> nothing with no error anywhere to say why.
+
+Put an FM demod on the wide channel and switch its `domain` to *frequency*
+([ADR-0036](../docs/adr/0036-a-domain-is-a-view-parameter.md)) — if there is a spike at
+57 kHz, there is RDS to read, and if there is not, no decoder setting will conjure one.
+The same picture answers "is this station in stereo" from the 38 kHz subcarrier, which
+nothing decodes yet.
+
+Two knobs. **region** is `rds` or `rbds`: the same five bits are a different program type
+in North America, and the PI code translates to a callsign there. **show partial** prints
+a name or radiotext before all of its segments have arrived, which is wrong on a long
+recording and the only useful setting on a short one — a station sends its name two
+characters at a time and a receiver will not commit to one until it has seen all four
+segments twice, which is about a second and a half of air.
+
+Below 128 kHz redsea exits rather than decoding badly, and the adapter declares that
+floor, so `Identify` skips it on a narrow channel and says why instead of guessing.
 
 ### Decoders that are GNU Radio flowgraphs
 
@@ -398,7 +434,7 @@ in [adding a decoder](../docs/10-adding-a-decoder.md).
 
 ## Everything in one command
 
-Nine programs, four of which have to be compiled, one of which is a gigabyte of GNU
+Ten programs, five of which have to be compiled, one of which is a gigabyte of GNU
 Radio, and one of which has to be built against the right CPython or it installs
 perfectly and does not import. That is a bad afternoon on a laptop and it is one line
 here:
@@ -407,7 +443,7 @@ here:
 SDRFLEX_DOCKERFILE=Dockerfile.full docker compose up -d --build
 ```
 
-Ten to twenty minutes, about 1.9 GB, and the startup banner then says **7 of 7 external
+Ten to twenty minutes, about 1.9 GB, and the startup banner then says **8 of 8 external
 decoders installed**. There are four images and this is the largest of them:
 
 | Image | Has |
@@ -415,9 +451,9 @@ decoders installed**. There are four images and this is the largest of them:
 | `Dockerfile` | Node and this repository, and nothing else |
 | `Dockerfile.decoders` | ...plus the five packaged decoders |
 | `Dockerfile.radio` | ...plus the vendor capture programs |
-| `Dockerfile.full` | ...plus GNU Radio, gr-lora_sdr, m17-cxx-demod and rx_sdr |
+| `Dockerfile.full` | ...plus GNU Radio, gr-lora_sdr, m17-cxx-demod, redsea and rx_sdr |
 
-Take a smaller one if you know you do not need LoRa, M17 or a Soapy radio — they build
+Take a smaller one if you know you do not need LoRa, M17, RDS or a Soapy radio — they build
 in seconds, and the four are otherwise the same server.
 
 Three things about the full image are worth knowing:
@@ -428,16 +464,16 @@ Three things about the full image are worth knowing:
   Radio binds its Python against exactly one CPython, and the usual way this goes wrong
   is a machine with several. Here `python3` is 3.12 and it is the one the bindings were
   built for.
-- **The two from-source decoders are pinned to commits**, not to `HEAD`. They are the
-  commits the adapters were checked against; moving a pin is a one-line change and a
-  re-run of `web/test/adapters.test.mjs`.
+- **The from-source decoders are pinned**, not left at `HEAD` — two to commits and
+  redsea to a release tag. They are the versions the adapters were checked against;
+  moving a pin is a one-line change and a re-run of `web/test/adapters.test.mjs`.
 - **The build fails rather than the first click.** The last step imports `lora_sdr`, runs
-  `m17-demod` and looks for `rx_sdr`. A decoder that did not build shows up in this tool
+  `m17-demod`, runs `redsea` and looks for `rx_sdr`. A decoder that did not build shows up in this tool
   as a greyed row in a menu, which is the right behavior at runtime and a terrible way
   to find out that an image is wrong.
 
 The image was checked by running the adapter conformance suite inside it —
-`node --test web/test/adapters.test.mjs`, 23 of 23 — which is the same set of golden
+`node --test web/test/adapters.test.mjs`, 31 of 31 — which is the same set of golden
 captures every adapter is checked against on a workstation (ADR-0025).
 
 ## Security posture, stated plainly

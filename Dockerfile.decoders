@@ -9,7 +9,10 @@
 #
 # No radio programs here: this is the image for working on recordings. Dockerfile.radio
 # has both, because a radio with nothing to decode what it hears is half a tool — and
-# Dockerfile.full has those plus GNU Radio and the decoders that have to be compiled.
+# Dockerfile.full has those plus GNU Radio and the three decoders that have to be
+# compiled: gr-lora_sdr, m17-cxx-demod and redsea. The line between this image and that
+# one is packaging rather than importance — no distribution ships redsea, so reading RDS
+# means the full image or a two-minute meson build of your own (see server/README.md).
 #
 # The tool still installs nothing of its own and links against none of this. Each one is
 # a program run at arm's length over a pipe, which is what keeps a GPL decoder's license

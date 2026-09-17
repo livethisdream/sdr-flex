@@ -36,6 +36,11 @@ const TABLE = [
     available: true, command: 'greedy', params: [] },
   { id: 'a.absent', name: 'absent', in: 'iq', out: 'events', wants: { format: 'cu8', rate: 250_000 },
     available: false, command: 'absent-a / absent-b', params: [] },
+  // One that reads a subcarrier rather than audio, so a narrow channel does not contain
+  // what it is looking for however it is resampled.
+  { id: 'a.subcarrier', name: 'subdec', in: 'real', out: 'events',
+    wants: { format: 's16', rate: 171_000 }, minRate: 128_000,
+    available: true, command: 'subdec', params: [] },
 ];
 
 const by = (rows, id, via = null) => rows.find((r) => r.id === id && (r.via || null) === via);
@@ -73,6 +78,47 @@ test('the headroom is a threshold, not a ban on resampling up', () => {
   assert.ok(by(under.tried, 'a.greedy'), 'exactly at the headroom it is still tried');
   const over = plan(TABLE, { kind: 'iq', sampleRate: 2_400_000 / RATE_HEADROOM - 1, demods: DEMODS });
   assert.ok(!by(over.tried, 'a.greedy'), 'a hair past it, it is not');
+});
+
+test('a decoder whose signal cannot be in this channel at all is skipped, and says so', () => {
+  // `wants.rate` and `minRate` are different claims and the report has to keep them
+  // apart. Under `wants.rate` a decoder reads a worse version of the signal; under
+  // `minRate` the thing it reads is not in the samples — redsea's subcarrier is at
+  // 57 kHz, and a 48 kHz channel does not contain 57 kHz whatever it is resampled to.
+  const { tried, skipped } = plan(TABLE, { kind: 'iq', sampleRate: 48_000, demods: DEMODS });
+  assert.ok(!tried.some((r) => r.id === 'a.subcarrier'), 'not tried');
+  const row = by(skipped, 'a.subcarrier');
+  assert.match(row.why, /at least 128/, 'the floor is quoted');
+  assert.match(row.why, /48/, 'and so is what it was given');
+  assert.ok(!/put back bandwidth/.test(row.why),
+            'and it is not the resampling-up reason, which is a different thing');
+});
+
+test('and is tried once the channel is wide enough to hold it', () => {
+  const { tried } = plan(TABLE, { kind: 'iq', sampleRate: 200_000, demods: DEMODS });
+  assert.ok(tried.some((r) => r.id === 'a.subcarrier'), 'wide enough now');
+  // Which is the point of the floor being a floor rather than a ban: the cost of trying
+  // it is a demodulation over a span four times wider than every other audio decoder
+  // needs, and that is worth paying where it could work and nowhere else.
+  const narrow = plan(TABLE, { kind: 'iq', sampleRate: 96_000, demods: DEMODS });
+  assert.ok(!narrow.tried.some((r) => r.id === 'a.subcarrier'));
+});
+
+test('a floor is not a headroom rule — 171 kS/s on a 48 kHz stream passes one and not the other', () => {
+  // Without the floor this is exactly the case that slipped through: 171 kHz is inside
+  // four times 48 kHz, so the headroom rule says "try it" about a decode that cannot
+  // happen.
+  const a = TABLE.find((r) => r.id === 'a.subcarrier');
+  assert.ok(a.wants.rate <= 48_000 * RATE_HEADROOM, 'the headroom rule alone would have allowed it');
+  const { tried } = plan([a], { kind: 'real', sampleRate: 48_000, demods: [] });
+  assert.equal(tried.length, 0, 'the floor is what stops it');
+});
+
+test('the shipped redsea adapter declares the floor its own program enforces', () => {
+  const row = adapters.list().find((r) => r.id === 'ext.redsea');
+  assert.equal(row.minRate, 128_000,
+               'redsea exits below 128 kHz rather than decoding badly, and the plan knows it');
+  assert.ok(row.wants.rate >= row.minRate, 'and what it wants is above its own floor');
 });
 
 test('a decoder that is not installed is named, not dropped', () => {

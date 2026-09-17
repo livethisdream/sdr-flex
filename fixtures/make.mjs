@@ -497,8 +497,61 @@ function bbcConcurrent() {
   return { dir, bytes, samples: n, rate };
 }
 
+// ── 12. RDS on an FM broadcast composite, for redsea ─────────────────────
+// The first fixture whose decoder reads something you cannot hear. RDS rides a
+// suppressed 57 kHz subcarrier, so the chain is a *wide* tuner and an FM demod and then
+// redsea on the whole composite — and the failure this protects against is a narrow one:
+// a channel sized for audio filters the subcarrier away and the decode goes quiet with
+// no error anywhere to say why.
+//
+// Three numbers are tighter here than anywhere else in this file, and they pull against
+// each other:
+//
+//   - **RDS is slow.** A group is 104 bits at 1187.5 bps, which is 87.6 ms, and a
+//     receiver needs about twelve of them before it will commit to an eight-character
+//     name. That is a second and a bit of air, and it is not negotiable — it is what the
+//     protocol costs.
+//   - **57 kHz has to survive.** The composite reaches 59.4 kHz, so the discriminator's
+//     output has to run at more than twice that, which puts a floor under the capture
+//     rate. 140 kS/s leaves ten kilohertz of margin above the subcarrier's sidebands.
+//   - **ADR-0025 caps this file at a few hundred kilobytes.** A second and a quarter at
+//     140 kS/s in cu8 is 343 kB, which fits. At the 171 kS/s redsea would rather have,
+//     the same signal is 419 kB and does not — so the adapter's resampler earns its
+//     place rather than being an inefficiency to design out.
+//
+// Fourteen groups, and the radiotext is seven characters rather than a sentence: each
+// has to be received twice before a receiver will commit to it, a radiotext segment
+// carries four characters, and every extra segment is two more groups — 49 kB — of a
+// budget that has none to spare. The name lands on the twelfth group and the last two
+// are margin for the sync, which costs a little more through a discriminator than it
+// does on a clean composite.
+function rdsBroadcast() {
+  const rate = 140_000, centerHz = 98_500_000;   // an FM broadcast channel
+  const composite = mod.rdsMpx(mod.rdsGroups({
+    pi: 0x2af1, pty: 10, ps: 'SDR FLEX', radiotext: 'SDR RDS\r', groups: 14,
+  }), { rate, seed: 0x5d5a });
+
+  // Six kilohertz of deviation rather than a broadcaster's seventy-five. Carson puts
+  // this signal at 2 × (6 + 59.4) = 131 kHz, which fits inside 140 kS/s; at real
+  // broadcast deviation it would be 269 kHz and most of it would fold back on itself.
+  // What is being tested is the decoder and the path to it, not the transmitter.
+  const iq = narrowbandFm(composite, rate, rate, 6_000, 0x7c31);
+
+  const n = iq.length / 2;
+  const dir = path.join(HERE, 'rds-fm');
+  const bytes = writeSigmf(dir, 'capture', iq, {
+    sampleRate: rate, centerHz,
+    note: 'Synthetic FM broadcast composite carrying RDS: a 1 kHz mono tone, a 19 kHz ' +
+          'pilot, and 14 RDS groups on a suppressed 57 kHz subcarrier at 1187.5 bps — ' +
+          'PI 0x2AF1, program service "SDR FLEX", radiotext "SDR RDS". No 38 kHz ' +
+          'stereo subcarrier, and the decoder-identification bit says so. FM at 6 kHz ' +
+          'deviation. Nobody transmitted this.',
+  });
+  return { dir, bytes, samples: n, rate };
+}
+
 for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm, fhssHopping,
-                    ofdmGrid, tempestRaster, dsssSpread, bbcConcurrent]) {
+                    ofdmGrid, tempestRaster, dsssSpread, bbcConcurrent, rdsBroadcast]) {
   const r = make();
   if (r.skipped) {
     console.log(`${path.basename(r.dir).padEnd(20)} skipped — ${r.skipped}`);

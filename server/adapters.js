@@ -374,6 +374,124 @@ export const ADAPTERS = {
     title: ['text'],
   },
 
+  // The sixth, and the one the tool had to grow a view for before it could be aimed.
+  //
+  // redsea reads the FM composite itself rather than audio: RDS rides a suppressed 57 kHz
+  // subcarrier, so what this wants is the discriminator's *whole* output, not the part of
+  // it you can hear. That is why the chain in front of it is a wide tuner and an FM demod
+  // and nothing else — a channel narrow enough to listen to has already filtered away the
+  // thing being decoded, silently, and the decode then fails by finding nothing.
+  'ext.redsea': {
+    name: 'redsea', group: 'Decode', in: 'real', out: 'events',
+    command: ['redsea'],
+    blurb: 'RDS — station name, radiotext, program type',
+    // 171 kHz is not a preference, it is redsea's own internal rate: it resamples
+    // whatever it is given to exactly this before demodulating, so handing it 171 kHz
+    // means one resample here instead of two. Below 128 kHz it refuses outright, and it
+    // is right to — 57 kHz plus its sidebands is above Nyquist by then and the
+    // subcarrier being decoded is not in the samples at all.
+    wants: { format: 's16', rate: 171_000 },
+    // And the floor under the stream it is given, which is a different claim from the
+    // rate it wants. Every other adapter can be handed a channel narrower than it likes
+    // and will decode worse; this one cannot decode at all, because what it reads sits
+    // at 57 kHz and a 40 kHz channel does not contain 57 kHz — no amount of resampling
+    // on the way in puts it back. Saying so is what keeps `Identify` from demodulating
+    // a wide span speculatively on every capture to look for something that provably is
+    // not in it (ADR-0031).
+    minRate: 128_000,
+    params: [
+      // RDS and RBDS number their program types differently, so the same five bits are
+      // "Serious classical" in Europe and "Nostalgia" in North America. Nothing in the
+      // signal says which, which is exactly the kind of thing that belongs on a knob
+      // rather than in a guess — and the PI-to-callsign translation rides on it.
+      { id: 'region', type: 'enum', default: 'rds', values: ['rds', 'rbds'],
+        label: 'region',
+        hint: 'rbds is North America: different program-type names, and the PI code ' +
+              'translates to a callsign' },
+      // A station name arrives two characters at a time and a receiver holds it back
+      // until it is sure. That is the right default and the wrong one for a short span,
+      // where everything is partial and the alternative to a partial answer is none.
+      { id: 'partial', type: 'enum', default: 'no', values: ['no', 'yes'],
+        label: 'show partial',
+        hint: 'print a name or radiotext before every segment has arrived — useful on a ' +
+              'span too short to have seen them all, and it will show gaps' },
+    ],
+    // What "try everything" means here. `Identify` gets one pass over a couple of
+    // seconds, which is a dozen groups or so — and a dozen groups is not enough for a
+    // receiver to commit to a station name, so with the default this adapter would
+    // report nothing about a station that is plainly transmitting.
+    sweep: { partial: 'yes' },
+    // `--bler` is not a knob because there is no reason to turn it off: it puts the
+    // block error rate on every group, and on a stream that decoded badly that is the
+    // difference between "not RDS" and "RDS, and the signal is poor" — which point at
+    // completely different next moves (ADR-0017).
+    args: ({ rate, params }) => [
+      '--input', 'mpx',
+      '--samplerate', String(Math.round(rate)),
+      '--output', 'json',
+      ...(params.region === 'rbds' ? ['--rbds'] : []),
+      ...(params.partial === 'yes' ? ['--show-partial'] : []),
+      '--bler',
+    ],
+    // redsea prints one line per group, and a station sends ten groups a second — so a
+    // minute of a healthy signal is six hundred lines of which four are news. Almost all
+    // of them repeat the name and the program type that the line before already carried.
+    //
+    // So a group becomes a record when it *said* something: a name, radiotext or a
+    // clock — or when it is the first sighting of a PI code, which is the station
+    // announcing itself and is always worth one row. A callsign is not in that list
+    // because it is not separately announced: it is the PI code read under the North
+    // American rules, so it rides on the station's own row rather than making one.
+    //
+    // A repeat is dropped, and "repeat" is per field rather than per line. A station
+    // whose name and whose radiotext are the same string — which is most of them, for
+    // the first few seconds — says two different things that happen to read alike, and a
+    // filter comparing only the text swallowed the second. Comparing the last value of
+    // each field also keeps a radiotext that changes for the next song and changes back,
+    // which a set of everything seen would not.
+    parse: (stdout) => {
+      const out = [];
+      const lastSaid = new Map();            // "<pi>|<field>" → the last value it carried
+      // Partial fields arrive space-padded to their full width — eight characters for a
+      // name, sixty-four for radiotext — so an empty one is eight spaces rather than
+      // absent, and reading it as "it said something" fills the pane with blank rows.
+      const said = (v) => (v == null || !String(v).trim() ? null : String(v).replace(/\s+$/, ''));
+      for (const line of String(stdout).split('\n')) {
+        if (!line.trim()) continue;
+        let g;
+        try { g = JSON.parse(line); } catch { continue; }
+        let kind = null, news = null;
+        for (const field of ['ps', 'radiotext', 'partial_ps', 'partial_radiotext', 'clock_time']) {
+          const v = said(g[field]);
+          if (v != null) { kind = field; news = v; break; }
+        }
+        const firstOfStation = g.pi && !out.some((r) => r.pi === g.pi);
+        if (news == null && !firstOfStation) continue;
+        const text = news != null ? news : `${g.pi}${g.callsign ? ` (${g.callsign})` : ''}`;
+        const key = `${g.pi}|${kind || 'pi'}`;
+        if (lastSaid.get(key) === text) continue;
+        lastSaid.set(key, text);
+        out.push({
+          text,
+          ...(g.pi ? { pi: g.pi } : {}),
+          ...(g.group ? { group: g.group } : {}),
+          ...(said(g.ps) ? { ps: said(g.ps) } : {}),
+          ...(said(g.partial_ps) ? { partialPs: said(g.partial_ps) } : {}),
+          ...(said(g.radiotext) ? { radiotext: said(g.radiotext) } : {}),
+          ...(said(g.partial_radiotext) ? { partialRadiotext: said(g.partial_radiotext) } : {}),
+          ...(g.callsign ? { callsign: g.callsign } : {}),
+          ...(g.prog_type ? { progType: g.prog_type } : {}),
+          ...(g.clock_time ? { clockTime: g.clock_time } : {}),
+          // On a stream that decoded badly this is the difference between "not RDS" and
+          // "RDS, and the signal is poor" — which point at completely different fixes.
+          ...(g.bler != null ? { blerPct: g.bler } : {}),
+        });
+      }
+      return out;
+    },
+    title: ['text'],
+  },
+
   // ── and one that is not a program at all ──────────────────────────────────
   //
   // A GNU Radio flowgraph satisfies the same contract every other row does: samples in
@@ -559,6 +677,8 @@ export function list() {
       command: a.module ? commandNames(a) : (found || commandNames(a)),
       blurb: a.blurb, params: a.params,
       sweep: a.sweep || null, wants: wants(a, defaults(a)),
+      // The narrowest stream this decoder could possibly read, when it has an opinion.
+      ...(a.minRate ? { minRate: a.minRate } : {}),
       available: available(id),
       // Yours or ours. The UI says so, because a decoder you added behaving oddly and
       // one that shipped behaving oddly are different problems.

@@ -44,7 +44,7 @@ dependency.
 | **direwolf** | audio, stdin | KISS / AGWPE over TCP | APRS, AX.25 |
 | **dsd / dsd-fme** | audio, stdin | audio + metadata | DMR, P25, NXDN, D-STAR |
 | **acarsdec** | IQ or audio | JSON | ACARS |
-| **redsea** | demodulated FM MPX | JSON | RDS |
+| **redsea** | demodulated FM MPX | JSON | RDS — built, see [09-demods](09-demods-and-decoders.md) |
 | **AIS decoders** (aisdecoder, rtl-ais) | audio / IQ | NMEA | AIS |
 
 One manifest each. Roughly 20 lines. **Day-one coverage of most of what people

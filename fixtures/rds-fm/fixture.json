@@ -1,0 +1,43 @@
+{
+  "name": "redsea over RDS on an FM broadcast composite",
+  "why": "The only chain in the suite whose decoder reads something nobody could listen to. RDS rides a suppressed 57 kHz subcarrier, so what redsea needs is the FM discriminator's whole output rather than the audible part of it — and the way that goes wrong is silent: size the tuner for audio, or put a post-detection filter on the demodulator, and the subcarrier is gone three nodes before the decoder, which then finds nothing and has nothing to report. This pins the wide path end to end: a 140 kHz channel, decimation left at 1, a discriminator that filters nothing, and 57 kHz still there on the other side. It also pins the two things about redsea that a manifest gets wrong from documentation — that raw samples on stdin need --input mpx rather than the default file reader, and that below 128 kHz it exits rather than decoding badly.",
+  "capture": "capture.sigmf-data",
+  "needs": "ext.redsea",
+  "chain": [
+    {
+      "op": "core.tuner",
+      "selection": { "f0": 98430000, "f1": 98570000 }
+    },
+    { "op": "core.fm_discriminator" },
+    { "op": "ext.redsea" }
+  ],
+  "expect": {
+    "records": 3,
+    "noError": true,
+    "fieldContains": {
+      "ps": ["SDR FLEX"],
+      "radiotext": ["SDR RDS"],
+      "pi": ["0x2AF1"]
+    },
+    "everyRecord": {
+      "pi": "^0x2AF1$"
+    },
+    "note": "Three records out of fourteen groups, which is the point of the parser: a station repeats its name ten times a second and the pane shows the three times it said something new — the PI code when it first appears, the radiotext, and the name once its four segments have arrived twice. The block error rate travels on each record rather than as a record of its own, because 'nothing decoded' and 'nothing decoded and a third of the blocks were bad' are different problems."
+  },
+  "derive": [
+    {
+      "node": 0,
+      "param": "decim",
+      "mode": "auto",
+      "about": 1,
+      "evidence": "140"
+    },
+    {
+      "node": 1,
+      "param": "deviationHz",
+      "mode": "auto",
+      "confident": true,
+      "evidence": "98th percentile"
+    }
+  ]
+}

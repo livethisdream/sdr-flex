@@ -1,0 +1,16 @@
+{
+  "global": {
+    "core:datatype": "cu8",
+    "core:sample_rate": 140000,
+    "core:description": "Synthetic FM broadcast composite carrying RDS: a 1 kHz mono tone, a 19 kHz pilot, and 14 RDS groups on a suppressed 57 kHz subcarrier at 1187.5 bps — PI 0x2AF1, program service \"SDR FLEX\", radiotext \"SDR RDS\". No 38 kHz stereo subcarrier, and the decoder-identification bit says so. FM at 6 kHz deviation. Nobody transmitted this.",
+    "core:license": "CC0-1.0",
+    "core:recorder": "sdr-flex fixtures/make.mjs (synthesized, not recorded)"
+  },
+  "captures": [
+    {
+      "core:sample_start": 0,
+      "core:frequency": 98500000
+    }
+  ],
+  "annotations": []
+}

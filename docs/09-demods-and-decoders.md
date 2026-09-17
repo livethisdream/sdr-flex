@@ -149,10 +149,22 @@ One manifest each ([ADR-0013](adr/0013-external-decoders-as-subprocesses.md),
 | 3 | **dump1090** | ADS-B | wants 2.4 MS/s cu8 — the first adapter whose rate constraint the engine has to honor upstream rather than by resampling |
 | 4 | **direwolf** | APRS, AX.25 | KISS over TCP rather than stdout: the first adapter with a socket transport |
 | 5 | **dsd / dsd-fme** | DMR, P25, NXDN, D-STAR | audio in, audio + metadata out — the first adapter that returns a *stream* as well as records |
-| 6 | **acarsdec**, **redsea**, **AIS** | ACARS, RDS, AIS | after the transports above, these are copies of patterns already proven |
+| 6 | **redsea**, then **acarsdec**, **AIS** | RDS, ACARS, AIS | copies of patterns already proven — except that redsea forced one new thing, below |
 
 Each entry above names the *new mechanism* it forces, which is the real reason for the
 order: by the sixth adapter, adding one is a manifest and a fixture.
+
+**redsea's, which was not predicted:** it is the first adapter whose input is not
+something a person could listen to. RDS sits on a suppressed 57 kHz subcarrier, so it
+needs the discriminator's whole output and a channel drawn ten times wider than one you
+would tune to hear — and the failure when it is not is silent, because a filtered-away
+subcarrier looks exactly like a station with no RDS. Two things came out of that. The
+baseband spectrum ([ADR-0036](adr/0036-a-domain-is-a-view-parameter.md)), so the question
+"is there anything at 57 kHz" is answerable before a decoder is even chosen. And a
+`minRate` on the manifest — distinct from `wants.rate`, which is a preference — saying
+the narrowest stream that could physically contain what this decoder reads, so `Identify`
+skips it with a reason rather than demodulating a wide span on every capture to look for
+something that is provably not in it (ADR-0031).
 
 Then **gr-satellites** as a single dependency (~100 decoders) and **Identify** over
 everything installed.

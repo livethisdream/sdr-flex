@@ -37,6 +37,7 @@ export function plan(adapters, { kind, sampleRate, demods = [] }) {
     if (!a.available) { skipped.push({ ...row, why: `${a.command} is not installed on this machine` }); continue; }
 
     if (a.in === kind) {
+      if (!wideEnough(a, sampleRate)) { skipped.push({ ...row, why: narrowWhy(a, sampleRate) }); continue; }
       if (fits(a, sampleRate)) tried.push({ ...row, via: null, viaLabel: null });
       else skipped.push({ ...row, why: rateWhy(a, sampleRate) });
       continue;
@@ -45,6 +46,7 @@ export function plan(adapters, { kind, sampleRate, demods = [] }) {
     // the chain the graph would build by hand, a demodulator and then the decoder. Both
     // demodulators go in the plan, because which one is right is the question being asked.
     if (a.in === 'real' && kind === 'iq' && demods.length) {
+      if (!wideEnough(a, sampleRate)) { skipped.push({ ...row, why: narrowWhy(a, sampleRate) }); continue; }
       if (!fits(a, sampleRate)) { skipped.push({ ...row, why: rateWhy(a, sampleRate) }); continue; }
       for (const d of demods) tried.push({ ...row, via: d.op, viaLabel: d.label });
       continue;
@@ -55,6 +57,19 @@ export function plan(adapters, { kind, sampleRate, demods = [] }) {
 }
 
 const fits = (a, sampleRate) => !(a.wants.rate > sampleRate * RATE_HEADROOM);
+
+/**
+ * Some decoders read something that is not in a narrow stream at all.
+ *
+ * `wants.rate` is a preference and being under it costs quality; `minRate` is a floor and
+ * being under it costs everything. redsea reads a subcarrier at 57 kHz, so a 40 kHz
+ * channel does not contain the signal whatever it is resampled to — and the difference
+ * matters twice over. The report is honest instead of empty, and the speculative pass
+ * does not decimate and demodulate a wide span on every capture to look for something
+ * that could not be there: on a 2.4 MS/s capture that alone was a second per
+ * demodulator, paid by every other decoder in the run.
+ */
+const wideEnough = (a, sampleRate) => !(a.minRate && sampleRate < a.minRate);
 
 /**
  * The settings to run an adapter with when nobody has chosen any.
@@ -79,6 +94,11 @@ function rateWhy(a, sampleRate) {
   const f = a.wants.rate / sampleRate;
   return `wants ${fmtRate(a.wants.rate)} and this stream is ${fmtRate(sampleRate)} — ` +
          `resampling up ${f.toFixed(f < 10 ? 1 : 0)}× cannot put back bandwidth the capture never had`;
+}
+
+function narrowWhy(a, sampleRate) {
+  return `needs at least ${fmtRate(a.minRate)} and this stream is ${fmtRate(sampleRate)} — ` +
+         `what it decodes is not inside a channel this narrow, so resampling cannot reach it`;
 }
 
 const say = (kind) => (kind === 'real' ? 'audio' : kind);

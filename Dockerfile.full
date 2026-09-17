@@ -8,8 +8,8 @@
 #                        reads captures needs nothing else. Tens of megabytes.
 #   Dockerfile.decoders  ...plus the five decoders that come from a distribution.
 #   Dockerfile.radio     ...plus the vendor capture programs a live radio needs.
-#   Dockerfile.full      ...plus GNU Radio, and the two decoders that have to be built:
-#                        gr-lora_sdr and m17-cxx-demod.
+#   Dockerfile.full      ...plus GNU Radio, and the three decoders that have to be built:
+#                        gr-lora_sdr, m17-cxx-demod and redsea.
 #
 # This one is a couple of gigabytes and takes ten to twenty minutes to build, nearly all
 # of it compiling gr-lora_sdr. That is the trade, and it is why it is a fourth file
@@ -37,12 +37,13 @@ FROM ubuntu:24.04 AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Compilers, GNU Radio's headers, and the two libraries m17-cxx-demod links against.
-# None of this reaches the final image.
+# Compilers, GNU Radio's headers, the two libraries m17-cxx-demod links against, and
+# redsea's three. None of this reaches the final image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential cmake git ca-certificates \
       gnuradio-dev pybind11-dev python3-dev libspdlog-dev \
       libcodec2-dev libboost-program-options-dev \
+      meson ninja-build libsndfile1-dev libliquid-dev nlohmann-json3-dev \
  && rm -rf /var/lib/apt/lists/*
 
 # Pinned, because "whatever HEAD was that day" is not a build you can repeat. These are
@@ -50,6 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # one-line change and a re-run of web/test/adapters.test.mjs.
 ARG LORA_SDR_REF=862746dd1cf635c9c8a4bfbaa2c3a0ec3a5306c9
 ARG M17_REF=9b8cec24d3f8d5e9f7f6e9c23661439e32343d6b
+ARG REDSEA_REF=v1.3.1
 
 # Staged under its own prefix, so what gets copied into the runtime image is exactly the
 # two things built here and nothing the build stage happened to leave lying about.
@@ -84,6 +86,15 @@ RUN git clone https://github.com/mobilinkd/m17-cxx-demod /tmp/m17 \
  && cmake --build /tmp/m17/build -j"$(nproc)" \
  && cmake --install /tmp/m17/build \
  && rm -rf /tmp/m17
+
+# RDS. Meson rather than cmake, and no distribution packages it — which is the only
+# reason it is here rather than in Dockerfile.decoders with the other five.
+RUN git clone https://github.com/windytan/redsea /tmp/redsea \
+ && git -C /tmp/redsea checkout --quiet "$REDSEA_REF" \
+ && meson setup /tmp/redsea/build /tmp/redsea \
+      --buildtype=release --prefix="$OOT" \
+ && meson install -C /tmp/redsea/build \
+ && rm -rf /tmp/redsea
 
 # SoapySDR's capture program. Not a decoder and not GNU Radio — it is here because it is
 # the one radio driver in server/radio.js whose program no distribution packages.
@@ -143,6 +154,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libcodec2-1.2 \
       libboost-program-options1.83.0 \
       libsoapysdr0.8 \
+      libsndfile1 libliquid1 \
  && rm -rf /var/lib/apt/lists/*
 
 # Node, from the image that builds it properly. The server is Node's own http, net and
@@ -150,7 +162,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # package manager to add to this image. Node 22 or newer; Ubuntu 24.04 ships 18.
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 
-# The two that had to be built. ldconfig so the loader finds libgnuradio-lora_sdr, and
+# The three that had to be built. ldconfig so the loader finds libgnuradio-lora_sdr, and
 # /usr/local/lib/python3.12/dist-packages is already on this Python's sys.path, so the
 # flowgraph imports it with no PYTHONPATH to set.
 COPY --from=build /opt/oot/ /usr/local/
@@ -162,6 +174,7 @@ RUN ldconfig
 RUN node --version \
  && python3 -c "from gnuradio import lora_sdr" && echo 'lora_sdr ok' \
  && m17-demod --help > /dev/null && m17-mod --help > /dev/null && echo 'm17 ok' \
+ && redsea --version > /dev/null && echo 'redsea ok' \
  && command -v rx_sdr > /dev/null && echo 'rx_sdr ok'
 
 RUN useradd --system --create-home --shell /usr/sbin/nologin sdrflex

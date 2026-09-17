@@ -90,6 +90,132 @@ test('a missing program is an error and not a crash', async () => {
   assert.equal(out.records.length, 0);
 });
 
+// ── redsea, on the composite rather than on audio ───────────────────────────
+//
+// The one adapter whose input is not something you could listen to. RDS rides a
+// suppressed 57 kHz subcarrier, so what redsea wants is the discriminator's whole
+// output — and the failure mode this protects against is the quiet one: hand it a
+// channel narrow enough to hear and it decodes nothing, with no error, because the
+// subcarrier it is looking for was filtered away three nodes upstream.
+
+const RDS_RATE = 171_000;             // redsea's own internal rate; see the adapter
+
+/**
+ * A composite carrying a station that calls itself SDR FLEX.
+ *
+ * Sixteen groups — two full passes of the four name segments — because one pass is not
+ * enough for anything: the first few groups go to finding block boundaries, and a name
+ * is then held back until its four segments have arrived twice. Eight groups of this
+ * decode to the PI code and nothing else.
+ */
+const rdsComposite = (opts = {}) =>
+  mod.rdsMpx(mod.rdsGroups({ pi: 0x2af1, ps: 'SDR FLEX', radiotext: 'SDR RDS\r',
+                             groups: 16, ...opts }),
+             { rate: RDS_RATE });
+
+test('redsea reads a station off the composite', async (t) => {
+  if (skip(t, 'ext.redsea')) return;
+  const out = await decode('ext.redsea', rdsComposite(), 'real', { sampleRate: RDS_RATE });
+  assert.equal(out.error, undefined, out.error);
+  const all = texts(out);
+  assert.match(all, /SDR FLEX/, 'the program service name comes back');
+  assert.ok(out.records.some((r) => r.ps === 'SDR FLEX'), 'as a field, not only as text');
+  assert.ok(out.records.some((r) => r.radiotext === 'SDR RDS'), 'and so does the radiotext');
+  assert.ok(out.records.every((r) => /^0x[0-9A-F]{4}$/.test(r.pi || '')),
+            `every record carries the station it came from: ${JSON.stringify(out.records[0])}`);
+  assert.equal(out.records[0].pi, '0x2AF1', 'and it is the PI the modulator sent');
+});
+
+test('the checkword is the standard one, not one that only agrees with itself', () => {
+  // Worth pinning separately from the round trip: a generator polynomial that is wrong
+  // in the same way at both ends would pass every decode test there is, and this one is
+  // checked against IEC 62106's own worked example rather than against redsea.
+  assert.equal(mod.rdsCheckword(0x0000), 0x000, 'an all-zero word has an all-zero checkword');
+  // Linearity: the code is cyclic, so the checkword of a XOR b is the XOR of theirs.
+  const a = 0x2af1, b = 0x1234;
+  assert.equal(mod.rdsCheckword(a ^ b), mod.rdsCheckword(a) ^ mod.rdsCheckword(b));
+});
+
+test('a group that repeats what the last one said is not a record', async (t) => {
+  if (skip(t, 'ext.redsea')) return;
+  // The control, and the one that decides whether this adapter is usable. redsea prints
+  // a line per group and a station sends ten a second, nearly all of them repeating the
+  // name and the program type the line before already carried. An adapter that turned
+  // each into a record would pass every decode test here and bury a real decode under
+  // four hundred identical rows on any real signal.
+  const out = await decode('ext.redsea', rdsComposite({ groups: 48 }), 'real', { sampleRate: RDS_RATE });
+  assert.equal(out.error, undefined, out.error);
+  assert.ok(out.records.length <= 8,
+            `forty-eight groups should still be a handful of records, ` +
+            `got ${out.records.length}: ${JSON.stringify(out.records.map((r) => r.text))}`);
+  assert.equal(out.records.filter((r) => r.ps === 'SDR FLEX').length, 1, 'the name is news once');
+  assert.equal(out.records.filter((r) => r.radiotext === 'SDR RDS').length, 1, 'and so is the radiotext');
+});
+
+test('a name and a radiotext that read alike are still two things said', async (t) => {
+  if (skip(t, 'ext.redsea')) return;
+  // Most stations put the same string in both for the first few seconds, and a filter
+  // that compared only the text dropped whichever arrived second — so the station with
+  // the simplest possible metadata was the one the adapter reported half of.
+  // More groups than the others need: 'SDR FLEX' plus its terminator is three radiotext
+  // segments rather than two, and each of them has to arrive twice.
+  const out = await decode('ext.redsea', rdsComposite({ radiotext: 'SDR FLEX\r', groups: 24 }), 'real',
+                           { sampleRate: RDS_RATE });
+  assert.ok(out.records.some((r) => r.ps === 'SDR FLEX'), 'the name');
+  assert.ok(out.records.some((r) => r.radiotext === 'SDR FLEX'), 'and the radiotext');
+});
+
+test('partial is off by default and reachable, because a short span is all partials', async (t) => {
+  if (skip(t, 'ext.redsea')) return;
+  // A name arrives two characters at a time and redsea withholds it until it has seen
+  // the same four segments twice, which is right and is useless on a span that is not
+  // long enough for two. The knob trades certainty for something rather than nothing,
+  // and it shows the gaps rather than filling them.
+  const quiet = await decode('ext.redsea', rdsComposite(), 'real', { sampleRate: RDS_RATE });
+  assert.ok(!quiet.records.some((r) => r.partialPs), 'no half-names by default');
+
+  const loud = await decode('ext.redsea', rdsComposite(), 'real',
+                            { sampleRate: RDS_RATE, params: { partial: 'yes' } });
+  const pieces = loud.records.map((r) => r.partialPs).filter(Boolean);
+  assert.ok(pieces.length > 1, `the name assembles: ${JSON.stringify(pieces)}`);
+  assert.ok(pieces.every((p) => 'SDR FLEX'.startsWith(p.replace(/\s+$/, '').slice(0, 2))),
+            `and every piece is part of the name it is building: ${JSON.stringify(pieces)}`);
+});
+
+test('an all-spaces partial is not something the station said', async (t) => {
+  if (skip(t, 'ext.redsea')) return;
+  // redsea pads a partial name to eight characters and radiotext to sixty-four, so the
+  // empty one is spaces rather than absent. Read as "it said something" that is a pane
+  // of blank rows, which is what the first version of this parser produced.
+  const out = await decode('ext.redsea', rdsComposite(), 'real',
+                           { sampleRate: RDS_RATE, params: { partial: 'yes' } });
+  assert.ok(out.records.every((r) => r.text.trim().length > 0), 'no blank rows');
+  assert.ok(out.records.every((r) => !/ $/.test(r.text)), 'and no padding left on the end');
+});
+
+test('redsea is told its own rate, and refuses one it cannot use', () => {
+  const a = ADAPTERS['ext.redsea'];
+  assert.equal(adapterWants(a, {}).rate, 171_000,
+               'redsea resamples to 171 kHz internally; feeding it that is one resample, not two');
+  assert.ok(adapterWants(a, {}).rate >= 128_000,
+            'below 128 kHz the 57 kHz subcarrier is above Nyquist and redsea exits');
+  const args = a.args({ rate: 171_000, params: { region: 'rds', partial: 'no' } });
+  assert.deepEqual(args.slice(0, 2), ['--input', 'mpx'], 'raw PCM on stdin, not a wave file');
+  assert.ok(!args.includes('--rbds'), 'Europe by default');
+  assert.ok(ADAPTERS['ext.redsea'].args({ rate: 171_000, params: { region: 'rbds' } }).includes('--rbds'));
+});
+
+test('RBDS is a different set of program types and a callsign', async (t) => {
+  if (skip(t, 'ext.redsea')) return;
+  const out = await decode('ext.redsea', rdsComposite(), 'real',
+                           { sampleRate: RDS_RATE, params: { region: 'rbds' } });
+  assert.equal(out.error, undefined, out.error);
+  // The same PI code, read under the North American rules, is a callsign. Nothing in the
+  // signal says which continent it came from, which is exactly why this is a knob.
+  assert.ok(out.records.some((r) => /^K[A-Z]{3}$/.test(r.callsign || '')),
+            `PI 0x2AF1 translates to a callsign under RBDS: ${JSON.stringify(out.records[0])}`);
+});
+
 // ── an adapter that is not a program ────────────────────────────────────────
 
 test('a flowgraph adapter names the module, not the interpreter', () => {

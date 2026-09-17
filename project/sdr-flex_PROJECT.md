@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-17 (the baseband spectrum — a demodulated stream read on the frequency axis) · branch `claude/pensive-meitner-p0annp`
+**Last updated:** 2026-09-17 (the baseband spectrum, and the redsea adapter that needed it) · branch `claude/pensive-meitner-p0annp`
 
 Previous: 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBFM in the scene; the tuner derives its tap count)
 
@@ -45,8 +45,9 @@ Working end to end:
   the page picks the server engine when one answers and the in-tab engine otherwise
 - Live radio: a capture program writes a ring recording, the engine reads it exactly as
   it reads a file, and you can scrub back into what already went past
-- Seven external decoders — rtl_433, multimon-ng, dump1090, direwolf, minimodem, M17, and
-  LoRa as a GNU Radio flowgraph — each checked against the real program, not its docs
+- Eight external decoders — rtl_433, multimon-ng, dump1090, direwolf, minimodem, M17,
+  redsea, and LoRa as a GNU Radio flowgraph — each checked against the real program, not
+  its docs
 - `Identify`: one button runs every decoder that could read this stream and says what
   each found, what it declined to try, and what it decoded but refuses to count
 - Decoders you add yourself: a directory of manifests in `SDRFLEX_ADAPTERS`, badged
@@ -86,8 +87,12 @@ Working end to end:
   never throwing any of it away; there was nowhere to look at it. Point it at the scene's
   own WBFM and the pilot stands about 39 dB over the floor and 38 kHz is empty, which is
   correct — that signal is mono
+- **redsea**, reading RDS off the composite the view above finally made visible: station
+  name, radiotext, program type, and the callsign a PI code becomes under the North
+  American rules. The first adapter whose input is not something you could listen to,
+  which is why it waited for the view
 
-Tests: 294 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 309 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -233,7 +238,7 @@ M4.5, and the roadmap was right that it is the best ratio in the plan.
 
 - **An adapter is a table row** in `server/adapters.js`: what to run, what samples it
   wants on stdin, how to read its output. `rtl_433`, `multimon-ng`, `dump1090`,
-  `direwolf`, `minimodem` — five rows.
+  `direwolf`, `minimodem`, `m17-demod`, `redsea` and a LoRa flowgraph — eight rows.
 - **Format negotiation is derived and reported.** The engine resamples and converts the
   span to what the program wants, and the record pane says which, because it changes
   what the decoder sees.
@@ -646,12 +651,15 @@ house rule.
   `web/test/detectors.test.mjs` asserts that 4 kHz comes back **6.25 dB hot**. Add
   de-emphasis and that assertion fails and says what to change it to. A gap with a
   failing test attached is a gap somebody eventually closes.
-- **Stereo and RDS are visible, not decoded.** The baseband spectrum (ADR-0036) shows you
-  the 19 kHz pilot, the 38 kHz subcarrier and RDS at 57 kHz; nothing reads them. Two
-  separate pieces of work, and the second is cheaper: a stereo decoder is a node nobody
-  has written (regenerate the 38 kHz from the pilot, demodulate L-R, matrix it back to
-  L and R), while RDS is `redsea` — an adapter that takes demodulated MPX in, which is
-  a copy of a pattern already proven six times and was only ever missing a way to aim it.
+- ~~**Stereo and RDS are visible, not decoded.**~~ Half answered: RDS is read by the
+  `redsea` adapter. **Stereo still is not** — the 38 kHz subcarrier is visible in the
+  baseband view and nothing demodulates it, which is a node nobody has written
+  (regenerate 38 kHz from the pilot, demodulate L-R, matrix it back to L and R). It
+  wants the audio sink to grow a second channel first, so it is not the one-afternoon
+  job the adapter was.
+- **Nothing carries audio back into the graph**, which bites RDS too: `redsea --feed-through`
+  echoes the composite while it decodes, and there is nowhere for that to go. Same gap
+  as M17's decoded voice, listed below.
 - **The baseband view does not label the subcarriers.** 19, 38 and 57 kHz are facts about
   broadcast FM, not about `real`, so they are not baked into a generic view — the same
   argument that keeps a bundled WBFM demod out of the palette. If markers are wanted they
