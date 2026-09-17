@@ -21,6 +21,20 @@
 // wait rather than an errand.
 const IDENTIFY_WINDOW_S = 8;
 
+/**
+ * Every input a node reads, in order, the first being the primary.
+ *
+ * `parent` keeps its name and keeps meaning the primary — it is the edge navigation
+ * follows, so "parent" is exactly what it is — and `inputs` is the whole list for the
+ * data flow. Renaming thirty-two call sites to `inputs[0]` would have said the same thing
+ * and touched every read in the engine to do it.
+ */
+export function inputsOf(n) {
+  if (!n) return [];
+  if (n.inputs && n.inputs.length) return n.inputs;
+  return n.parent ? [n.parent] : [];
+}
+
 export class Graph {
   constructor() {
     this.nodes = new Map();
@@ -98,8 +112,60 @@ export class Graph {
     return out;
   }
 
+  /**
+   * The nodes whose **primary** input is this one.
+   *
+   * This is the navigation question — "what did I make from this" — and it is what the
+   * breadcrumb, the tab bar and the flow view's indentation are drawn from. A node with a
+   * second input is not a child of that second one, because you did not get to it that
+   * way (ADR-0038).
+   */
   children(id) {
     return [...this.nodes.values()].filter((n) => n.parent === id);
+  }
+
+  /**
+   * The nodes that **read** this one, by any input.
+   *
+   * A different question from `children`, and the two were the same until a node could
+   * have two inputs. This is the one removal and invalidation want: a merge downstream of
+   * a branch you are deleting has to go too, even though it lives in another part of the
+   * tree and would never have been walked to from here.
+   */
+  consumers(id) {
+    return [...this.nodes.values()].filter((n) => inputsOf(n).includes(id));
+  }
+
+  /** Every node that reads this one, directly or through others. */
+  allConsumers(id) {
+    const seen = new Set();
+    const walk = (at) => {
+      for (const c of this.consumers(at)) {
+        if (seen.has(c.id)) continue;      // a diamond reaches the same node twice
+        seen.add(c.id);
+        walk(c.id);
+      }
+    };
+    walk(id);
+    return [...seen].map((i) => this.node(i)).filter(Boolean);
+  }
+
+  /**
+   * Could this node be the second input of that one?
+   *
+   * No if it is that node, and no if it reads it — directly or at any remove — because an
+   * input that is downstream of the node asking for it is a cycle, and a cycle in this
+   * engine is not an error message, it is `_detect` calling itself until the stack ends.
+   * Refused when it is chosen rather than discovered at the next frame (ADR-0038).
+   */
+  canFeed(candidateId, nodeId) {
+    if (candidateId === nodeId) return false;
+    if (!this.node(candidateId)) return false;
+    // A node still being built is not in the map yet, and nothing can be downstream of a
+    // node that does not exist — so the answer is yes rather than "I cannot tell". Asking
+    // the other way round returned false for every second input chosen at creation.
+    if (!this.node(nodeId)) return true;
+    return !this.allConsumers(nodeId).some((n) => n.id === candidateId);
   }
 
   isPinned(id) {

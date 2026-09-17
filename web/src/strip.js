@@ -200,8 +200,12 @@ export class Strip {
 
     let body = '';
     if (spec.type === 'enum') {
+      // Labelled through the cell's own formatter, so a list of node ids reads as the
+      // nodes and `0 µs` does not read as `0`. The pill has always formatted its value;
+      // the options beneath it were showing the raw one.
+      const label = (v) => (spec.fmt ? spec.fmt(v) : v);
       body = `<div class="popopts">${spec.values.map((v) =>
-        `<button class="opt${String(v) === String(spec.value) ? ' on' : ''}" data-v="${v}">${v}</button>`).join('')}</div>`;
+        `<button class="opt${String(v) === String(spec.value) ? ' on' : ''}" data-v="${v}">${label(v)}</button>`).join('')}</div>`;
     } else if (spec.type === 'text') {
       // A sync word is something you know and type, not something you slide to. It
       // had been falling through to the numeric control, which put a range slider

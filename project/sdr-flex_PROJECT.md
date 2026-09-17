@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 and its alignment half) · merged to `main`
+**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built — two-input nodes and `core.math`) · merged to `main`
 
 **`main` is the default branch**, as of this session. It was
 `claude/sdr-flex-toolkit-planning-c4ghl1` — the branch this project happened to be
@@ -110,7 +110,7 @@ Working end to end:
   Measured separation is 54–62 dB in the browser on a synthetic station; a good receiver
   off the air manages thirty to forty. De-emphasis lives here too, and nowhere upstream
 
-Tests: 345 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 358 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -674,30 +674,35 @@ house rule.
   **AGC is still one gain across the pair**, which is right, but it is also still one
   *sink*, so there is no balance control and no way to solo a channel except by changing
   the view's `channel` pill, which changes the picture and not the sound.
-- **A node still has one input, so the transparent half of a stereo decode cannot be
-  drawn.** [ADR-0038](../docs/adr/0038-a-node-may-have-two-inputs.md) decides how it
-  would: a real second edge, a primary input that navigation follows, and `t0` on every
-  stream so a merge can align what it is handed. `core.stereo` is the opaque node, and
-  the tool is supposed to have both — `core.math` between two hand-drawn tuners is the
-  other one, and it buys far more than stereo (difference two antennas, ratio for
-  direction finding, subtract a reference, remove a carrier).
+- ~~**A node still has one input.**~~ Built (ADR-0038): `core.math` takes two, with the
+  first as the primary that navigation follows. `children` is "what did I make from this"
+  and `consumers` is "what reads this" — a merge is a consumer of its second input
+  without being a child of it, which is what makes deleting a branch take a node nowhere
+  below it. Cycles are refused where the input is chosen. Two branches of one signal
+  subtract to 64 dB below either of them, which only happens if the shift is right and in
+  the right direction.
 
-  **Costed, and it changed the answer.** A sidechain named by parameter looked like a
-  tenth of the work and is not: it saves the traversal edits and none of the alignment,
-  pinning, cycle or tap-join work, and it costs the graph's honesty. Written up in the
-  ADR so nobody re-derives it.
+  **The bug worth remembering:** reading the second input over a window ending at
+  `tEnd + pad/rate` floors one input sample off, because `0.2502 × 480000` is
+  `120095.99999999999`. At a decimation of four that is a quarter of an output sample —
+  the read positioning was injecting the error the node exists to remove, and every test
+  still passed, just at −25 dB instead of −64. Both inputs are read to the same `tEnd`
+  now and the margin comes from asking for more samples.
 
-  **The alignment half is built** (`web/src/delay.js`): every node says how late its
-  samples are, `alignment()` says whether two branches can be lined up and by how much,
-  and the Flow pane shows the number per node. The second input is not built.
+  Not built: rate conversion inside a merge. Both inputs must be at the same rate and it
+  says so, naming both — which makes setting two tuners to the same decimation a thing
+  you do on purpose.
+- **The transparent stereo chain is now buildable but not built.** `core.math` plus
+  hand-drawn tuners on the baseband spectrum spells the whole decoder — a tuner on the
+  sum, one on the pilot, one on the subcarrier, a squarer to double the pilot, and a
+  conjugate product against it. What is missing for it is small and specific: a
+  `real → iq` node (analytic signal; `dsp.hilbertTaps` is already there for SSB), because
+  tuners take `iq` and a composite is `real`. Worth doing, because `core.stereo` is the
+  opaque node and the tool is supposed to have both.
 
-  Two things measuring it turned up. It is computed by walking to the source rather than
-  stored on `out`, because a stored one goes stale — `setParam` propagates a rate change
-  exactly one level. And **the tuner's delay does not depend on its decimation**, though
-  the arithmetic looks like it should: deriving it from the code gave a spurious `decim`
-  term, harmless at 1 and eight times wrong at 16. The test puts a pulse through and
-  measures where it lands, because a test that restated the formula would have agreed
-  with the bug.
+  And the trap, written down so nobody rediscovers it: a tuner on 38 kHz plus a detector
+  gives |L−R|, not L−R. The sign is gone, you get a fuzzy mono, and it looks like it
+  worked.
 - **Nothing carries audio back into the graph**, which bites RDS too: `redsea --feed-through`
   echoes the composite while it decodes, and there is nowhere for that to go. Same gap
   as M17's decoded voice, listed below.

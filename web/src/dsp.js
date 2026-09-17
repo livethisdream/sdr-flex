@@ -166,6 +166,70 @@ export function fir(x, taps, out) {
 }
 
 /**
+ * Move a signal by a possibly-fractional number of samples.
+ *
+ * A whole number is an index offset. The fraction is the part that matters and the part
+ * that is easy to drop: half a sample at 160 kS/s is three microseconds, which is forty
+ * degrees of phase at 38 kHz — so a merge that rounded its alignment to an integer would
+ * line two branches up and still lose a coherent decode (ADR-0038).
+ *
+ * The fractional part is a windowed sinc evaluated at the offset, which is the same
+ * filter `resample` builds, at one phase instead of a table of them. Sixteen taps either
+ * side is far more than the sub-sample corrections this exists for need, and the cost is
+ * a sixteenth of what the channel filter upstream already paid.
+ *
+ * Positive `by` moves the signal later: `out[i]` is `x[i - by]`.
+ */
+export function shiftBy(x, by, { stride = 1, halfWidth = 16 } = {}) {
+  const n = Math.floor(x.length / stride);
+  const out = new Float32Array(x.length);
+  const whole = Math.round(by);
+  const frac = by - whole;
+
+  if (Math.abs(frac) < 1e-9) {
+    for (let i = 0; i < n; i++) {
+      const j = i - whole;
+      if (j < 0 || j >= n) continue;
+      for (let c = 0; c < stride; c++) out[i * stride + c] = x[j * stride + c];
+    }
+    return out;
+  }
+
+  // sinc(k - frac) windowed by a Hann of the same support, normalized so a constant
+  // survives unchanged — an interpolator with gain ≠ 1 is a gain error that moves with
+  // the fraction, which is worse than the delay it is fixing
+  // `sinc(k + frac)`, not `sinc(k - frac)`. Reconstruction is x(t) = Σ x[m]·sinc(t - m),
+  // and with m = i - whole + k and t = i - whole - frac that is sinc(-frac - k). The other
+  // sign builds a perfectly good interpolator that shifts the wrong way — a whole sample
+  // out, which at 38 kHz is eighty-five degrees, and the only way to see it is to compare
+  // against an analytically shifted signal rather than to read the loop.
+  const taps = new Float32Array(halfWidth * 2 + 1);
+  let sum = 0;
+  for (let k = -halfWidth; k <= halfWidth; k++) {
+    const t = k + frac;
+    const sinc = Math.abs(t) < 1e-9 ? 1 : Math.sin(Math.PI * t) / (Math.PI * t);
+    const w = 0.5 * (1 + Math.cos((Math.PI * k) / (halfWidth + 1)));
+    const v = sinc * w;
+    taps[k + halfWidth] = v;
+    sum += v;
+  }
+  for (let k = 0; k < taps.length; k++) taps[k] /= sum;
+
+  for (let i = 0; i < n; i++) {
+    for (let c = 0; c < stride; c++) {
+      let acc = 0;
+      for (let k = -halfWidth; k <= halfWidth; k++) {
+        const j = i - whole + k;
+        if (j < 0 || j >= n) continue;
+        acc += x[j * stride + c] * taps[k + halfWidth];
+      }
+      out[i * stride + c] = acc;
+    }
+  }
+  return out;
+}
+
+/**
  * A band-pass and its quadrature: the two halves of an analytic filter.
  *
  * A low-pass shifted up to `centerHz` gives the in-phase half; the same low-pass shifted

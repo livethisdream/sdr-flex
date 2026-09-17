@@ -1,8 +1,9 @@
 # ADR-0038: A node may have two inputs, and one of them is the primary
 
-**Status:** Accepted. The alignment half is built — `web/src/delay.js` and
-`web/test/delay.test.mjs` — and the second input is not. See *Alignment is the real work*
-below for what landed and what it changed.
+**Status:** Accepted and built. `core.math` is the first node with two inputs; the
+mechanism is in `web/src/graph.js`, `web/src/delay.js` and the merge read in
+`web/src/engine.js`. What building it changed is recorded in the two *what was built*
+sections below.
 
 **Extends:** [ADR-0004](0004-flowgraph-splitting-at-taps.md),
 [ADR-0007](0007-stream-context-and-provenance.md)
@@ -74,6 +75,11 @@ the intermediate results visible.
 ### Option A — a real second edge
 
 `node.inputs` is an array; `node.parent` becomes `inputs[0]`.
+
+> **Built differently in one respect.** `parent` kept its name and kept meaning the
+> primary. It *is* the edge navigation follows, so "parent" is exactly what it is, and
+> renaming thirty-two call sites to `inputs[0]` would have said the same thing while
+> touching every read in the engine. `inputsOf(n)` is the whole list.
 
 What has to change, measured rather than estimated — 32 reads of `.parent` across six
 files, of which most are `const p = this.node(n.parent)` inside an operation that will
@@ -166,6 +172,30 @@ them. An AM detector adds *minus* half a sample on an even smoothing window, bec
 smoother can only undo a whole number. The last two are the ones worth having: half a
 sample at 160 kS/s is forty degrees at 38 kHz, so a merge that rounded the shift to an
 integer would line two branches up and still lose a coherent decode.
+
+### What the merge turned up
+
+Two things, and the second is the more serious:
+
+**`children` was answering two questions.** "What did I make from this" drives the
+breadcrumb, the tab bar and the flow view's indentation; "what reads this" drives removal
+and invalidation. They were the same function because in a tree they are the same
+question. They are now `children` and `consumers`, and a merge is a consumer of its second
+input without being a child of it — which is what makes deleting a branch take a node
+that is nowhere below it.
+
+**A read positioned by a floating-point time jitters by an input sample, and that is a
+phase error.** Reading the second input over a window ending at `tEnd + pad / rate` — the
+obvious way to get margin for the shift — floors to 120095 where the arithmetic says
+120096, because `0.2502 × 480000` is `120095.99999999999`. One input sample at a
+decimation of four is a quarter of an output sample. So the read positioning was
+injecting, unmeasured, the same kind of error the node exists to remove. Both inputs are
+now read to the *same* `tEnd` and the margin comes from asking for more samples, which
+floors identically by construction.
+
+That one is worth the space because it was invisible. Every test about alignment passed
+with it present — the cancellation test only got to −25 dB instead of −64, and −25 dB
+looks like a success.
 
 ## Consequences
 

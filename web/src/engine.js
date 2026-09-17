@@ -9,7 +9,8 @@ import * as dsp from './dsp.js';
 import * as scene from './scene.js';
 import * as plugins from './plugins.js';
 import { plan as identifyPlan } from './identify.js';
-import { Graph } from './graph.js';
+import { Graph, inputsOf } from './graph.js';
+import { alignment } from './delay.js';
 import * as frames from './frames.js';
 import * as spreading from './codes.js';
 
@@ -38,6 +39,9 @@ const instant = () => Promise.resolve();
 
 let nextId = 0;
 const nid = (p) => `${p}${++nextId}`;
+
+/** Rates, in the one place a merge has to compare two of them out loud. */
+const fmtKS = (hz) => `${(hz / 1e3).toFixed(1)} kS/s`;
 
 // ── operation catalog ────────────────────────────────────────────────────
 // `in`/`out` are semantic stream kinds (ADR-0006); the palette filters on them.
@@ -155,6 +159,18 @@ export const OPS = {
   // itself and leaves the bandwidth alone.
   'core.raster': {
     name: 'Raster', group: 'Analyze', in: ['iq', 'real'], out: 'grid',
+  },
+  // The first operation with two inputs (ADR-0038). It is what makes a decode something
+  // you can draw rather than something you invoke: the stereo decoder, spelled out, is a
+  // tuner on the pilot, a tuner on the subcarrier, and this between them.
+  //
+  // Its output kind is whatever its inputs are — both must be the same, because there is
+  // no meaning to adding a bitstream to a spectrum — and its second input is chosen from
+  // the graph rather than drawn on a spectrum, which is the one thing in this tool that
+  // asks you to point at a node.
+  'core.math': {
+    name: 'Math', group: 'Analyze', in: ['iq', 'real'], out: 'same',
+    twoInputs: true,
   },
   'core.burst_detector': {
     name: 'Burst detector', group: 'Analyze', in: 'iq', out: 'events',
@@ -1145,7 +1161,7 @@ export class MockEngine extends Graph {
    * selection: { f0, f1 } in Hz absolute, and optionally { t0, t1 } in seconds.
    * Everything derivable is derived and marked `auto` (ADR-0017).
    */
-  async addNode({ parent, op, selection, at = null }) {
+  async addNode({ parent, op, selection, at = null, withNode = null }) {
     await this._sleep(LATENCY.structuralMs);
     const p = this.node(parent);
     // Everything below that estimates from the signal estimates at this moment.
@@ -1250,6 +1266,23 @@ export class MockEngine extends Graph {
         node.out = { kind: 'events', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
         node.label = 'Hop map';
       }
+    } else if (op === 'core.math') {
+      // It arrives with one input and says so, the way the slicers arrive undecided:
+      // choosing the other one is a question about the graph, and the graph is on screen
+      // where a fresh node's parameters are not.
+      const other = withNode && this.canFeed(withNode, node.id) ? this.node(withNode) : null;
+      node.inputs = other ? [parent, other.id] : [parent];
+      node.params = {
+        withNode: param(other ? other.id : '', 'manual'),
+        op: param('a-b', 'manual'),
+      };
+      node.out = {
+        kind: p.out.kind,
+        sampleRate: p.out.sampleRate,
+        centerHz: p.out.centerHz,
+        ...(p.out.channels > 1 ? { channels: p.out.channels } : {}),
+      };
+      node.label = 'Math';
     } else if (op === 'core.stereo') {
       // The pilot is the evidence, and it is the good kind: a bare tone at a frequency
       // the standard fixes, present when and only when the station is in stereo. So the
@@ -1452,6 +1485,14 @@ export class MockEngine extends Graph {
     await this._sleep(cold ? LATENCY.structuralMs : LATENCY.paramMs);
     n.params[key] = { ...n.params[key], value, mode };
     if (key === 't0' || key === 't1' || key === 'timeMode') n._t = null;
+    // Choosing the second input is not a setting, it is an edge. It is set from the
+    // parameter strip because that is where a node's own controls live, but what it
+    // writes is the graph (ADR-0038) — a cycle is refused here rather than found later.
+    if (n.op === 'core.math' && key === 'withNode') {
+      const other = value && this.canFeed(value, n.id) ? this.node(value) : null;
+      n.inputs = other ? [n.parent, other.id] : [n.parent];
+      if (!other) n.params.withNode.value = '';
+    }
     if (n.op === 'core.tuner') {
       n.out.sampleRate = this.node(n.parent).out.sampleRate / n.params.decim.value;
       n.out.centerHz = n.params.centerHz.value;
@@ -1537,6 +1578,8 @@ export class MockEngine extends Graph {
       const startPhase = (-2 * Math.PI * offset * Math.max(0, tEnd)) % (2 * Math.PI);
       return dsp.xlateFilterDecimate(src, taps, offset, p.out.sampleRate, decim, count, startPhase).samples;
     }
+
+    if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
 
     if (node.op === 'core.dehop') {
       // Same length and same time base as its parent, because it corrects rather than
@@ -1773,6 +1816,70 @@ export class MockEngine extends Graph {
   }
 
   /**
+   * Two inputs, lined up, combined — `count` samples ending at `tEnd`.
+   *
+   * The alignment is the whole job. Both inputs are asked for the same window, and both
+   * hand back samples that are a little older than the moment asked for — by *different*
+   * amounts, because they came through different filters (ADR-0038). So the second one is
+   * read with margin either side and shifted onto the first before anything is combined.
+   *
+   * The shift is fractional and stays fractional. Half a sample at 160 kS/s is forty
+   * degrees at 38 kHz, and the operation this exists for is a conjugate product, where
+   * forty degrees is most of the answer.
+   */
+  _readMerged(node, tEnd, count) {
+    const ids = inputsOf(node);
+    const a = this.node(ids[0]);
+    const b = ids[1] ? this.node(ids[1]) : null;
+    const iq = node.out.kind === 'iq';
+    const stride = iq ? 2 : 1;
+    const read = (n, end, many) => (iq ? this._readIQ(n, end, many) : this._detectMono(n, end, many));
+
+    const A = read(a, tEnd, count);
+    // Nothing chosen, or nothing it can be lined up against: hand the first input through
+    // rather than inventing an answer. `note` is what the strip shows instead of a value.
+    if (!b) return { data: A, note: 'choose a second input' };
+    if (a.out.sampleRate !== b.out.sampleRate) {
+      return { data: A, note: `${fmtKS(a.out.sampleRate)} against ${fmtKS(b.out.sampleRate)} — ` +
+                             'a merge does not resample, so set both tuners to the same decimation' };
+    }
+    const align = alignment(a, b, (id) => this.node(id));
+    if (!align.ok) return { data: A, note: align.why };
+
+    // Room for the shift plus the interpolator's own support, so neither runs off an end.
+    const pad = Math.ceil(Math.abs(align.shiftSamples)) + 24;
+    // **Both inputs are read to the same `tEnd`**, and the margin comes from asking for
+    // more samples rather than from moving the end. That is not tidiness. A read is
+    // positioned by `Math.floor(tEnd * sampleRate)`, and asking for `tEnd + pad / rate`
+    // instead floors to 120095 where the arithmetic says 120096 — one input sample, which
+    // at a decimation of four is a quarter of an output sample of jitter. Which is to say
+    // the read positioning was introducing exactly the error this whole node exists to
+    // correct, at a size the correction cannot see.
+    //
+    // A window of `count + 2 * pad` samples ending at `tEnd` puts the sample for the same
+    // moment as `A[k]` at index `2 * pad + k`, and both windows floor the same number.
+    const raw = read(b, tEnd, count + 2 * pad);
+    const shifted = dsp.shiftBy(raw, align.shiftSamples, { stride });
+
+    const out = new Float32Array(count * stride);
+    const how = node.params.op.value;
+    for (let k = 0; k < count; k++) {
+      const i = k * stride, j = (2 * pad + k) * stride;
+      if (!iq) {
+        const x = A[i], y = shifted[j];
+        out[i] = how === 'a+b' ? x + y : how === 'a-b' ? x - y : x * y;
+        continue;
+      }
+      const ar = A[i], ai = A[i + 1], br = shifted[j], bi = shifted[j + 1];
+      if (how === 'a+b') { out[i] = ar + br; out[i + 1] = ai + bi; }
+      else if (how === 'a-b') { out[i] = ar - br; out[i + 1] = ai - bi; }
+      else if (how === 'a*b') { out[i] = ar * br - ai * bi; out[i + 1] = ar * bi + ai * br; }
+      else { out[i] = ar * br + ai * bi; out[i + 1] = ai * br - ar * bi; }   // a × conj(b)
+    }
+    return { data: out, shiftSamples: align.shiftSamples };
+  }
+
+  /**
    * The real-valued output of a detector node, `count` samples ending at `tEnd`.
    *
    * Interleaved when there is more than one channel, the way `iq` interleaves its two
@@ -1786,6 +1893,7 @@ export class MockEngine extends Graph {
   _detect(node, tEnd, count) {
     const p = this.node(node.parent);
     const fs = node.out.sampleRate;
+    if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
     if (p.out.kind === 'real') {
       return realOp(node.op, this._detectMono(p, tEnd, count), count, fs, node.params).data;
     }

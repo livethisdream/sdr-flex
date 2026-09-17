@@ -170,6 +170,27 @@ class App {
   titleOf(n) { return n.name ? `${n.name} — ${n.label}` : n.label; }
 
   /** Everything under a node, in any direction — used to stop what is about to vanish. */
+  /**
+   * The nodes this one could take as its second input.
+   *
+   * Same kind of stream, and not itself or anything that reads it — a cycle is refused
+   * where it is chosen rather than found as a stack overflow at the next frame. A
+   * different sample rate is *not* filtered out: the merge reports that in a sentence,
+   * and seeing the candidate and being told why it will not work is how somebody learns
+   * to set both tuners to the same decimation.
+   */
+  eligibleInputs(n) {
+    return [...this.engine.nodes.values()]
+      .filter((x) => x.out && x.out.kind === n.out.kind && x.id !== n.parent)
+      .filter((x) => this.engine.canFeed(x.id, n.id));
+  }
+
+  /** What to call a node in a list of them, or what an empty choice reads as. */
+  nodeLabel(id) {
+    const n = id && this.engine.node(id);
+    return n ? this.tag(n) : 'none';
+  }
+
   descendants(id) {
     const out = [];
     const walk = (nid) => { for (const c of this.engine.children(nid)) { out.push(c); walk(c.id); } };
@@ -488,7 +509,10 @@ class App {
     this.metrics.beginOp();
     this.clearSelection();
     this.strip.closePop();
-    for (const d of [n, ...this.descendants(id)]) this.mixer.remove(d.id);
+    // Everything that *reads* this node, not everything below it: a merge somewhere else
+    // in the tree is downstream of this branch without being under it (ADR-0038), and it
+    // goes too. `descendants` is the navigation question and this is the data one.
+    for (const d of [n, ...this.engine.allConsumers(id)]) this.mixer.remove(d.id);
     await this.engine.removeNode(id);
     let ch = this.engine.node(parent);
     while (ch && !this.isChannel(ch)) ch = this.engine.node(ch.parent);
@@ -802,6 +826,15 @@ class App {
       // belongs on the pane that shows it. Nothing consumes it yet — a merge will
       // (ADR-0038) — but it is the difference between two branches that decides whether a
       // coherent operation between them can work, and there was nowhere to see it.
+      // A second input is a real edge and the tree cannot show it by indentation, so it
+      // gets a row of its own that names where it comes from. Drawn under the node that
+      // reads it rather than beside the node it comes from, because "what does this read"
+      // is the question somebody looking at a merge is asking.
+      const other = (n.inputs || []).slice(1).map((i) => this.engine.node(i)).filter(Boolean);
+      const second = other.map((o) => `<div class="fjoin" style="margin-left:${(depth + 1) * 22}px">` +
+        `<span class="fn">and ${attr(this.tag(o))}</span>` +
+        `<span class="fk">${o.out.kind}</span>` +
+        `<span class="fr">${fmtRate(o.out.sampleRate)}</span></div>`).join('');
       const d = delayOf(n, (i) => this.engine.node(i));
       const late = d.known
         ? (d.seconds > 0 ? `+${(d.seconds * 1e6).toFixed(0)} µs` : '0 µs')
@@ -814,7 +847,7 @@ class App {
           <span class="fk">${n.out.kind}</span>
           <span class="fr">${fmtRate(n.out.sampleRate)}</span>
           <span class="fd${d.known ? '' : ' unk'}" title="${attr(why)}">${late}</span>
-        </div>` + kids.map((k) => walk(k.id, depth + 1)).join('');
+        </div>` + second + kids.map((k) => walk(k.id, depth + 1)).join('');
     };
     $('#pane-flow').innerHTML =
       `<div class="flowwrap"><div class="flowhead">Compiled graph — read-only. Export to <code>.grc</code> arrives with the real engine at M1.</div>${walk(this.engine.root.id, 0)}</div>`;
@@ -882,6 +915,18 @@ class App {
           sideband: { label: 'sideband', unit: '', type: 'enum', values: ['usb', 'lsb'], fmt: String },
           // `auto` reads the pilot every time it decodes; the other two overrule it.
           decode: { label: 'decode', unit: '', type: 'enum', values: ['auto', 'stereo', 'mono'], fmt: String },
+          // Which node the other input comes from. The only control in the tool that
+          // asks you to point at a node rather than at a signal, which is what a second
+          // input is (ADR-0038) — so the list is every node it could legally read:
+          // same kind of stream, and not something that already reads this one.
+          withNode: { label: 'and', unit: '', type: 'enum', fmt: (v) => this.nodeLabel(v),
+                      values: ['', ...this.eligibleInputs(n).map((x) => x.id)],
+                      hint: 'the second input — a merge lines it up with the first before ' +
+                            'combining them, and says so when it cannot' },
+          op: { label: 'operation', unit: '', type: 'enum', fmt: String,
+                values: n.out.kind === 'iq'
+                  ? ['a+b', 'a-b', 'a*b', 'a*conj(b)']
+                  : ['a+b', 'a-b', 'a*b'] },
           // Not derived, because nothing in the signal says which continent it came from:
           // 75 µs in the Americas, 50 µs most other places (ADR-0037).
           deemphasisUs: { label: 'de-emphasis', unit: 'µs', type: 'enum', values: ['75', '50', '0'],
@@ -1055,7 +1100,11 @@ class App {
     await this.engine.setParam(this.current, key, value, 'manual');
     this.renderStrip();
     this.renderAxis();
-    this.renderCrumbs();
+    // renderTopbar, not renderCrumbs — there has never been a method by that name, so
+    // every node parameter change has been throwing here after the strip and the axis
+    // had already redrawn. Visible effects all happened, the breadcrumb never refreshed,
+    // and the exception escaped as an unhandled rejection out of the strip's callback.
+    this.renderTopbar();
   }
 
   async onMode(group, key, mode) {

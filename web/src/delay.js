@@ -77,6 +77,13 @@ export function ownDelaySamples(node, parentOut) {
     case 'core.stereo':
       return 0;
 
+    // A merge lines its second input onto its first, so what comes out is on the first
+    // one's clock and carries the first one's delay. That is why `delayOf` walking the
+    // primary is right for it and not a simplification: after the shift, the second
+    // input's delay is gone.
+    case 'core.math':
+      return 0;
+
     default:
       // A node that does not carry a stream has no delay worth the word: a slicer emits
       // bits, a decoder emits records, and neither is something anything else lines up

@@ -42,4 +42,4 @@ why, what it costs, and what would make us change our minds.
 | [0035](0035-a-spreading-code-is-generated.md) | A spreading code is generated, not tabulated — and the search says what it skipped | Accepted |
 | [0036](0036-a-domain-is-a-view-parameter.md) | Which axis a stream is read on is a view parameter | Accepted |
 | [0037](0037-channels-are-a-parameter-of-real.md) | Channel count is a parameter of `real`, not a stream type of its own | Accepted |
-| [0038](0038-a-node-may-have-two-inputs.md) | A node may have two inputs, and one of them is the primary | Accepted, part built |
+| [0038](0038-a-node-may-have-two-inputs.md) | A node may have two inputs, and one of them is the primary | Accepted |

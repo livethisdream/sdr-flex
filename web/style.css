@@ -511,6 +511,12 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    only number on the row that matters. */
 .fd { font-family:var(--mono); font-size:.66rem; color:var(--faint); min-width:4.2rem; text-align:right; }
 .fd.unk { color:var(--warn); }
+/* A second input, which the tree's indentation cannot say. Dashed and dimmer than a node
+   because it is an edge rather than a thing — it names where the merge above it reads
+   from, and that node is drawn in its own place too. */
+.fjoin { display:flex; gap:.7rem; align-items:baseline; padding:.22rem .6rem; max-width:520px;
+         border-left:2px dashed var(--rule); color:var(--dim); }
+.fjoin .fn { color:var(--dim); font-size:.74rem; }
 
 /* The drop target is the whole window, because a capture is the one thing you bring
    from outside and there is no reason to make you aim. */
