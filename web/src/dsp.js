@@ -107,6 +107,39 @@ export function spectrum(iq, bins, windowName, out) {
   return res;
 }
 
+/**
+ * Power spectrum in dBFS of a real-valued stream: 0 to fs/2, DC on the left.
+ *
+ * A demodulator's output is real, and a real signal's spectrum is its own mirror
+ * image about DC — so half of the two-sided picture is the other half again, and
+ * showing both would spend half the screen on a reflection. This returns the
+ * positive half only, `bins` values from `bins * 2` samples, which keeps "bins" the
+ * number of columns on screen in either domain.
+ *
+ * What it is for: an FM discriminator hands back the whole composite — mono at the
+ * bottom, the 19 kHz pilot, L-R on a 38 kHz subcarrier, RDS at 57 kHz — and a
+ * waveform cannot show you which of those are present. This can.
+ */
+export function realSpectrum(x, bins, windowName, out) {
+  const n = bins * 2;
+  const w = windowFn(windowName, n);
+  const buf = new Float32Array(n * 2);
+  for (let i = 0; i < n; i++) buf[i * 2] = x[i] * w[i];   // imaginary part stays zero
+  fft(buf);
+
+  const res = out && out.length === bins ? out : new Float32Array(bins);
+  for (let i = 0; i < bins; i++) {
+    // The mirrored half carries half the energy, so folding it back in is what makes
+    // a full-scale sine read 0 dBFS here, the same as it does in the IQ view. DC has
+    // no mirror image to fold in, so it is the one bin that is not doubled.
+    const norm = i === 0 ? 1 / n : 2 / n;
+    const re = buf[i * 2] * norm;
+    const im = buf[i * 2 + 1] * norm;
+    res[i] = 10 * Math.log10(re * re + im * im + 1e-20);
+  }
+  return res;
+}
+
 // ── Filter design ──────────────────────────────────────────────────────────
 /** Windowed-sinc low-pass. cutoff and fs in Hz. */
 export function lowPassTaps(numTaps, cutoffHz, fs) {

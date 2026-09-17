@@ -40,3 +40,4 @@ why, what it costs, and what would make us change our minds.
 | [0033](0033-de-hop-corrects-rather-than-rearranges.md) | A de-hopper corrects the signal; it does not rearrange it | Accepted |
 | [0034](0034-a-grid-is-a-stream-type.md) | A fold into two dimensions is a stream type of its own | Accepted |
 | [0035](0035-a-spreading-code-is-generated.md) | A spreading code is generated, not tabulated — and the search says what it skipped | Accepted |
+| [0036](0036-a-domain-is-a-view-parameter.md) | Which axis a stream is read on is a view parameter | Accepted |

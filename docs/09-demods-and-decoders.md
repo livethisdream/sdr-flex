@@ -82,6 +82,21 @@ deviation readout visibly moves — and the estimators are asserted against them
 the negative case: pointed at empty spectrum, FM reports "looks unmodulated" and SSB
 reports "both sides look alike — this is a guess" rather than a confident wrong answer.
 
+**A detector's output is a signal, so it can be read on either axis**
+([ADR-0036](adr/0036-a-domain-is-a-view-parameter.md)). The `domain` pill in the view
+group swaps the waveform for a one-sided baseband spectrum, DC to `fs/2`, in the same
+pane the IQ spectrum uses. This is what makes wideband FM legible: the discriminator has
+no de-emphasis, no post-detection filter and no decimation, so its output is the entire
+composite, and the composite is where the questions are — mono at the bottom, the 19 kHz
+pilot, L-R on 38 kHz if the station is stereo, RDS at 57 kHz if it carries any. A scope
+cannot tell you which of those are present. It also decides how wide to draw the box in
+the first place: a channel narrow enough to *hear* has already filtered the subcarriers
+away, and 200 kHz is what keeps 57 kHz inside the span.
+
+What it does not do is decode any of them. Stereo is a node nobody has written; RDS is
+`redsea`, which is adapter #6 below and takes demodulated MPX in — it was unaimed until
+there was a way to see what you were aiming it at.
+
 ---
 
 ## Wave 2 — the transparent bit chain (M6, pulled early where cheap)

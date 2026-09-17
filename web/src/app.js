@@ -37,7 +37,10 @@ const SPEC_PERIOD = 1 / 25;
 
 const VIEWS = {
   iq: ['Spectrum', 'Flow'],
-  real: ['Time', 'Flow'],
+  // A real stream reads two ways — the waveform, and the baseband spectrum the
+  // waveform is made of. Which one is `domain` in the view parameters below, because
+  // it is one node and one set of samples drawn against two axes, not two blocks.
+  real: ['Time', 'Spectrum', 'Flow'],
   bits: ['Bits', 'Time', 'Flow'],
   events: ['Events', 'Flow'],
   grid: ['Grid', 'Flow'],
@@ -50,6 +53,7 @@ const defaultViewParams = () => ({
   bins: 1024, window: 'Hann', avg: 4,
   dbMin: -74, dbMax: -18, dbAuto: true, colormap: 'Viridis', speed: 60,
   trigger: 'auto', spanS: 0.12,
+  domain: 'time',
   zoomLo: 0, zoomHi: 1,
 });
 
@@ -196,7 +200,34 @@ class App {
     if (k === 'spectrum') return 'Spectrum';
     if (k === 'flow') return 'Flow';
     const n = this.engine.node(k);
-    return n ? VIEWS[n.out.kind][0] : 'Spectrum';
+    if (!n) return 'Spectrum';
+    // Read on the frequency axis, a detector's output gets the spectrum pane itself
+    // — trace over waterfall, one shared axis (ADR-0020). It is the same picture of a
+    // different signal, so it is the same view rather than a second one that would
+    // have to grow its own zoom, its own dB range and its own colormap.
+    if (n.out.kind === 'real' && this.vp(k).domain === 'frequency') return 'Spectrum';
+    return VIEWS[n.out.kind][0];
+  }
+
+  /**
+   * Is the current node a demodulated stream?
+   *
+   * Everything the spectrum pane does differently for one follows from this: where the
+   * axis starts, what unit it is in, and whether a box drawn on it means anything.
+   */
+  onBaseband() {
+    const n = this.node();
+    return !!n && n.out.kind === 'real';
+  }
+
+  /**
+   * What the spectrum pane asks the engine for. IQ has only the one answer; a real
+   * stream has to say which axis it wants, or it gets the waveform.
+   */
+  frameOpts(p) {
+    const o = { bins: p.bins, window: p.window };
+    if (this.onBaseband()) o.domain = 'frequency';
+    return o;
   }
 
   // ── chrome ───────────────────────────────────────────────────────────────
@@ -606,6 +637,11 @@ class App {
     $('#pane-bytes').hidden = v !== 'Bytes';
     $('#pane-grid').hidden = v !== 'Grid';
     if (v === 'Spectrum') {
+      // The waterfall holds rows for one node at a time, and this pane no longer belongs
+      // to one node: a demodulator's baseband spectrum draws here too. Changing tabs can
+      // now change what the rows mean without changing the pane, and old rows under a new
+      // axis are not history — they are a different signal, scrolling.
+      if (this._paneNode !== this.current) { this._paneNode = this.current; this.resetSpectrum(); }
       const p = this.vp(this.current);
       $('#cbar').style.background = cssGradient(p.colormap);
       this.applyStageColors(p.colormap);
@@ -693,24 +729,36 @@ class App {
     }).join('');
   }
 
-  /** The frequency window currently on screen, in Hz. */
+  /**
+   * The frequency window currently on screen, in Hz.
+   *
+   * IQ is two-sided about the tuned frequency, so it spans a whole sample rate and
+   * the numbers are RF. A demodulated stream is one-sided and starts at DC, so it
+   * spans half of one and the numbers are baseband offsets — 57 kHz means 57 kHz
+   * away from nothing, not 57 kHz away from the station.
+   */
   viewHz() {
     const n = this.node();
     const p = this.vp(this.current);
-    const lo = n.out.centerHz - n.out.sampleRate / 2;
-    return {
-      lo: lo + p.zoomLo * n.out.sampleRate,
-      hi: lo + p.zoomHi * n.out.sampleRate,
-    };
+    const base = this.onBaseband();
+    const lo0 = base ? 0 : n.out.centerHz - n.out.sampleRate / 2;
+    const span = base ? n.out.sampleRate / 2 : n.out.sampleRate;
+    return { lo: lo0 + p.zoomLo * span, hi: lo0 + p.zoomHi * span };
   }
 
   renderAxis() {
     const { lo, hi } = this.viewHz();
     const p = this.vp(this.current);
     const z = 1 / Math.max(1e-6, p.zoomHi - p.zoomLo);
+    // Baseband is tens of kilohertz, and four decimal places of megahertz makes the
+    // pilot and the RDS subcarrier both read as 0.0000. The unit follows the signal
+    // rather than the pane.
+    const base = this.onBaseband();
     $('#axis').innerHTML = [0, 0.25, 0.5, 0.75, 1].map((f) => {
       const hz = lo + (hi - lo) * f;
-      return `<span>${fmtHz(hz)}${f === 0.5 ? ' MHz' : ''}</span>`;
+      return base
+        ? `<span>${(hz / 1e3).toFixed(1)}${f === 0.5 ? ' kHz' : ''}</span>`
+        : `<span>${fmtHz(hz)}${f === 0.5 ? ' MHz' : ''}</span>`;
     }).join('') + (z > 1.02 ? `<span class="zoomtag">${z.toFixed(1)}×</span>` : '');
   }
 
@@ -862,21 +910,29 @@ class App {
     }
     groups.push({ key: 'node', title: n.op === 'core.source' ? 'src' : (n.letter || n.label), cells: nodeCells });
 
+    // Which axis a real stream is read on. It sits with the other things that change
+    // how a result is drawn rather than what it is, and it is the first cell in the
+    // group because it decides what the rest of the group is about.
+    const domainCells = n.out.kind === 'real'
+      ? [{ key: 'domain', label: 'domain', unit: '', type: 'enum', value: p.domain,
+           values: ['time', 'frequency'] }]
+      : [];
+
     if (this.view() === 'Time') {
       groups.push({
         key: 'view', title: 'view',
-        cells: [
+        cells: domainCells.concat([
           { key: 'trigger', label: 'trigger', unit: '', type: 'enum', value: p.trigger, values: ['auto', 'free'] },
           { key: 'spanS', label: 'span', unit: 'ms', type: 'num', value: p.spanS,
             fmt: (v) => (v * 1e3).toFixed(0), step: 0.0008, min: 0.002, max: 1.0 },
-        ],
+        ]),
       });
     }
 
     if (this.view() === 'Spectrum') {
       groups.push({
         key: 'view', title: 'view',
-        cells: [
+        cells: domainCells.concat([
           { key: 'bins', label: 'fft', unit: 'bins', type: 'enum', value: String(p.bins), values: ['256', '512', '1024', '2048', '4096'] },
           { key: 'colormap', label: 'colormap', unit: '', type: 'enum', value: p.colormap, values: COLORMAPS },
           { key: 'speed', label: 'speed', unit: 'rows/s', type: 'num', value: p.speed, fmt: (v) => String(Math.round(v)), step: 0.35, min: 2, max: 120, integer: true },
@@ -886,7 +942,7 @@ class App {
             canAuto: true, mode: p.dbAuto ? 'auto' : 'manual', autoNote: 'the strongest bin on screen' },
           { key: 'window', label: 'window', unit: '', type: 'enum', value: p.window, values: WINDOWS },
           { key: 'avg', label: 'avg', unit: 'frames', type: 'num', value: p.avg, fmt: (v) => String(v), step: 0.06, min: 1, max: 40, integer: true },
-        ],
+        ]),
       });
     }
 
@@ -905,6 +961,16 @@ class App {
     if (group === 'view') {
       const p = this.vp(this.current);
       if (key === 'bins') { p.bins = parseInt(value, 10); this.resetSpectrum(); }
+      // A different axis is a different picture, for the same reason changing the FFT
+      // size is: the rows on the waterfall are bins of something else now, and the dB
+      // range that suited one will not suit the other. The zoom goes with them — it is
+      // a fraction of a span that is about to be a different span.
+      else if (key === 'domain') {
+        p.domain = value;
+        p.zoomLo = 0; p.zoomHi = 1;
+        this.resetSpectrum();
+        this._tsCache = null;
+      }
       else if (key === 'window') p.window = value;
       else if (key === 'trigger') { p.trigger = value; this._tsCache = null; }
       else if (key === 'spanS') { p.spanS = value; this._tsCache = null; }
@@ -917,6 +983,8 @@ class App {
       this.trace.setRange(p.dbMin, p.dbMax);
       this.trace.avgN = p.avg;
       this.renderCbarLabels();
+      // Changing the domain changes which pane is on screen, not just how it is drawn.
+      if (key === 'domain') this.renderStage();
       this.renderStrip();
       return;
     }
@@ -1039,7 +1107,7 @@ class App {
       const pin = this.engine.isPinned(this.channel);
       const times = [];
       for (let row = 0; row < pf.rows; row++) times.push(this.prefillTime({ ...pf, row }, pin));
-      this.engine.prefetch(this.current, { bins: p.bins, window: p.window }, times);
+      this.engine.prefetch(this.current, this.frameOpts(p), times);
     }
   }
 
@@ -1949,6 +2017,11 @@ class App {
 
     stage.addEventListener('pointerdown', (e) => {
       if (this.view() !== 'Spectrum') return;
+      // A box is a request to tune, and there is nothing left to tune inside a stream
+      // that has already been demodulated: the menu it opens would offer slicers, which
+      // do not take a frequency. Zoom and pan still work — reading the axis is the
+      // whole point of being here.
+      if (this.onBaseband()) return;
       if (e.target.closest('#cbar-wrap') || e.target.closest('#markers')) return;
       const r = stage.getBoundingClientRect();
       const wf = $('#wf').getBoundingClientRect();
@@ -2326,7 +2399,7 @@ class App {
         for (let k = 0; pf.row < pf.rows; k++) {
           if (k > 0 && performance.now() > deadline) break;
           const at = this.prefillTime(pf, pin);
-          const f = this.engine.frame(this.current, { bins: p.bins, window: p.window, at });
+          const f = this.engine.frame(this.current, { ...this.frameOpts(p), at });
           // A row that has not arrived yet is not a row to skip. Advancing past it
           // would leave a gap in the waterfall that never fills, because nothing ever
           // comes back to that moment.
@@ -2361,7 +2434,7 @@ class App {
         const rowDue = this._rowAcc >= interval;
         if (rowDue || this._specAcc >= SPEC_PERIOD || this._specData?.length !== p.bins) {
           this._specAcc = 0;
-          const f = this.engine.frame(this.current, { bins: p.bins, window: p.window });
+          const f = this.engine.frame(this.current, this.frameOpts(p));
           if (f.kind === 'spectrum') this._specData = f.data;
         }
         if (this._specData) {

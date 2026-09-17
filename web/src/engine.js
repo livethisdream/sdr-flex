@@ -1744,6 +1744,26 @@ export class MockEngine extends Graph {
 
     if (n.out.kind === 'real') {
       const fs = n.out.sampleRate;
+
+      // The same samples, read on the other axis. A detector's output is a signal in
+      // its own right — an FM discriminator's is the whole composite, with the audio
+      // at the bottom, a pilot at 19 kHz, L-R on 38 kHz and RDS at 57 kHz — and none
+      // of that is visible in a waveform. Which axis is a view parameter rather than
+      // a second node: nothing about the graph changes, only what is plotted.
+      //
+      // One-sided, so the span is 0 to fs/2 and the frequencies are baseband offsets
+      // rather than RF. `centerHz` says where they came from and is carried through
+      // for provenance (ADR-0007), not as the middle of this picture.
+      if (opts.domain === 'frequency') {
+        const bins = opts.bins || 1024;
+        const x = this._detect(n, now, bins * 2);
+        return {
+          kind: 'spectrum', baseband: true,
+          data: dsp.realSpectrum(x, bins, opts.window || 'Hann'),
+          sampleRate: fs, centerHz: n.out.centerHz,
+        };
+      }
+
       const span = opts.spanS || 0.12;
       // The search window and the display window are different things. The trigger
       // has to look over a whole burst period to find an edge at all, but what it

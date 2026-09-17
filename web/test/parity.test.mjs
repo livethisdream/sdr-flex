@@ -146,6 +146,42 @@ test('and the same detector output', async (t) => {
   assert.equal(worst, 0);
 });
 
+test('and the same detector output read on the frequency axis', async (t) => {
+  const f = await fixture(t);
+  const m = await script(f.mock, f.inMemory());
+  const r = await script(f.remote, f.id);
+
+  const opts = { bins: 512, window: 'Hann', domain: 'frequency' };
+  const want = f.mock.frame(m.det.id, { ...opts, at: 0.3 });
+  f.remote.prefetch(r.det.id, opts, [0.3]);
+  const got = await settle(f.remote, r.det.id, { ...opts, at: 0.3 });
+
+  assert.equal(got.kind, 'spectrum');
+  assert.equal(got.baseband, true);
+  assert.equal(got.data.length, want.data.length);
+  assert.equal(got.sampleRate, want.sampleRate);
+  let worst = 0;
+  for (let i = 0; i < want.data.length; i++) worst = Math.max(worst, Math.abs(got.data[i] - want.data[i]));
+  assert.equal(worst, 0);
+});
+
+test('the two axes of one node are not served each other\'s frames', async (t) => {
+  // The client asks the same node for a waveform and for a spectrum, a few times a
+  // second, on alternate view switches. If the cache key does not carry the domain,
+  // whichever was asked for first is what both get back — and a spectrum drawn as a
+  // waveform does not look broken, it looks like a signal.
+  const f = await fixture(t);
+  const r = await script(f.remote, f.id);
+
+  const time = { spanS: 0.05, trigger: 'free' };
+  const freq = { bins: 512, window: 'Hann', domain: 'frequency' };
+  f.remote.prefetch(r.det.id, time, [0.3]);
+  f.remote.prefetch(r.det.id, freq, [0.3]);
+
+  assert.equal((await settle(f.remote, r.det.id, { ...time, at: 0.3 })).kind, 'timeseries');
+  assert.equal((await settle(f.remote, r.det.id, { ...freq, at: 0.3 })).kind, 'spectrum');
+});
+
 test('a parameter change lands on both and changes the same thing', async (t) => {
   const f = await fixture(t);
   const m = await script(f.mock, f.inMemory());

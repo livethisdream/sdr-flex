@@ -10,7 +10,9 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBFM in the scene; the tuner derives its tap count) · branch `claude/sdr-flex-toolkit-planning-c4ghl1`
+**Last updated:** 2026-09-17 (the baseband spectrum — a demodulated stream read on the frequency axis) · branch `claude/pensive-meitner-p0annp`
+
+Previous: 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBFM in the scene; the tuner derives its tap count)
 
 ---
 
@@ -18,7 +20,7 @@ Update it at the end of a session, not the start of the next one.
 
 MVP in the browser, the same tool with its engine in a container, and live radio into a
 ring recording. Static ES modules, no build step, no dependencies on either side.
-35 ADRs.
+36 ADRs.
 
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
@@ -77,8 +79,15 @@ Working end to end:
 - `Dockerfile.full`: one command for Node, the five packaged decoders, the vendor capture
   programs, GNU Radio, gr-lora_sdr, m17-cxx-demod and rx_sdr. 1.9 GB, and the banner then
   reads **7 of 7 external decoders installed**
+- The **baseband spectrum**: a `domain` pill on any demodulated stream swaps the waveform
+  for a one-sided spectrum, DC to `fs/2`, in the same pane the IQ spectrum uses
+  (ADR-0036). This is what makes wideband FM readable — the pilot at 19 kHz, whether
+  there is anything at 38 kHz, whether RDS is riding at 57 kHz. The discriminator was
+  never throwing any of it away; there was nowhere to look at it. Point it at the scene's
+  own WBFM and the pilot stands about 39 dB over the floor and 38 kHz is empty, which is
+  correct — that signal is mono
 
-Tests: 284 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 294 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -637,6 +646,17 @@ house rule.
   `web/test/detectors.test.mjs` asserts that 4 kHz comes back **6.25 dB hot**. Add
   de-emphasis and that assertion fails and says what to change it to. A gap with a
   failing test attached is a gap somebody eventually closes.
+- **Stereo and RDS are visible, not decoded.** The baseband spectrum (ADR-0036) shows you
+  the 19 kHz pilot, the 38 kHz subcarrier and RDS at 57 kHz; nothing reads them. Two
+  separate pieces of work, and the second is cheaper: a stereo decoder is a node nobody
+  has written (regenerate the 38 kHz from the pilot, demodulate L-R, matrix it back to
+  L and R), while RDS is `redsea` — an adapter that takes demodulated MPX in, which is
+  a copy of a pattern already proven six times and was only ever missing a way to aim it.
+- **The baseband view does not label the subcarriers.** 19, 38 and 57 kHz are facts about
+  broadcast FM, not about `real`, so they are not baked into a generic view — the same
+  argument that keeps a bundled WBFM demod out of the palette. If markers are wanted they
+  belong to something that knows what it is looking at, in the shape `scene.SIGNALS`
+  already uses on the IQ spectrum.
 - **An adapter cannot hand audio back to the graph.** M17 decodes voice and the node
   throws it away, saying how much there was. Every decoder that produces audio rather than
   records — M17, and anything vocoded — is half-connected until this exists. It wants an
