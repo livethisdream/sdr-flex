@@ -69,6 +69,13 @@ export const OPS = {
   'core.cw': {
     name: 'CW demod', group: 'Demodulate', in: 'iq', out: 'real',
   },
+  // The one operation that takes a real stream and returns a real stream, and the only
+  // one that returns two channels (ADR-0037). It is grouped with the demodulators
+  // because that is what it is: a coherent demodulation of the L-R subcarrier, plus the
+  // two-by-two matrix that turns a sum and a difference back into a left and a right.
+  'core.stereo': {
+    name: 'Stereo decode', group: 'Demodulate', in: 'real', out: 'real',
+  },
   'core.pwm_slicer': {
     name: 'PWM / OOK slicer', group: 'Decode', in: 'real', out: 'bits',
   },
@@ -178,6 +185,29 @@ export function demodulate(op, iq, count, fs, params = null) {
     params: {},
     label: 'AM demod',
   };
+}
+
+/**
+ * A real stream in, a real stream out — the same shape as `demodulate`, for the
+ * operations whose input has already been demodulated once.
+ *
+ * There is one of these so far and the indirection is still worth it: `_detect` should
+ * not learn the name of an operation, and the next real-to-real node should be a case
+ * here rather than a branch in the engine.
+ */
+export function realOp(op, x, count, fs, params = null) {
+  if (op === 'core.stereo') {
+    // Number(), because the strip offers this as a list and a list hands back strings.
+    const tau = params ? Number(params.deemphasisUs.value) : 75;
+    // `auto` re-measures the pilot on the samples in hand; `stereo` and `mono` are the
+    // two ways to overrule that, and both are a decision a person made.
+    const want = !params || params.decode.value === 'auto' ? 'auto' : params.decode.value === 'stereo';
+    return {
+      data: dsp.stereoDecode(x, count, fs, { deemphasisUs: tau, stereo: want }).data,
+      label: 'Stereo decode',
+    };
+  }
+  return { data: x, label: op };
 }
 
 /**
@@ -500,7 +530,7 @@ export class MockEngine extends Graph {
     for (let done = 0; done < total; done += chunk) {
       const want = Math.min(chunk, total - done);
       const at = t0 + (done + want) / fs;          // reads end at a moment
-      const got = iq ? this._readIQ(n, at, want) : this._detect(n, at, want);
+      const got = iq ? this._readIQ(n, at, want) : this._detectMono(n, at, want);
       out.set(got.subarray(0, iq ? want * 2 : want), iq ? done * 2 : done);
       if (onProgress) {
         onProgress(Math.min(1, (done + want) / total));
@@ -1220,6 +1250,34 @@ export class MockEngine extends Graph {
         node.out = { kind: 'events', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
         node.label = 'Hop map';
       }
+    } else if (op === 'core.stereo') {
+      // The pilot is the evidence, and it is the good kind: a bare tone at a frequency
+      // the standard fixes, present when and only when the station is in stereo. So the
+      // node arrives either saying it found one and how far above its guard band, or
+      // saying it did not — in which case it will hand back the mono sum on both
+      // channels rather than manufacture a difference out of noise (ADR-0031).
+      const fs = p.out.sampleRate;
+      const { count, at } = this._peekWindow(fs, now);
+      const pilot = dsp.estimatePilot(this._detectMono(p, at, count), count, fs);
+      node.params = {
+        // The derived value is the answer to "is this in stereo", and the pilot is the
+        // evidence for it (ADR-0017). Overriding it to `stereo` is for a pilot too weak
+        // to measure rather than for one that is not there; overriding to `mono` is how
+        // you listen past a decoder that is making a mess of a marginal signal.
+        decode: param(pilot.confident ? 'stereo' : 'mono', 'auto', {
+          from: pilot.confident
+            ? `a ${(pilot.value / 1e3).toFixed(1)} kHz pilot, ${pilot.snrDb.toFixed(0)} dB over the ` +
+              '15–23 kHz guard band where only a pilot belongs'
+            : 'no pilot in the 15–23 kHz guard band — this station is in mono',
+          confident: pilot.confident,
+        }),
+        // A preference, not a measurement: nothing in the signal says which continent it
+        // came from, so marking it auto would claim evidence that does not exist. The
+        // same honesty redsea's `region` knob applies to the same ambiguity.
+        deemphasisUs: param(75, 'manual'),
+      };
+      node.out = { kind: 'real', sampleRate: fs, centerHz: p.out.centerHz, channels: 2 };
+      node.label = 'Stereo decode';
     } else if (op === 'core.audio') {
       node.params = {
         volume: param(0.5),
@@ -1690,7 +1748,7 @@ export class MockEngine extends Graph {
   }
 
   async _readReal(node, tEnd, count) {
-    return this._detect(node, tEnd, count);
+    return this._detectMono(node, tEnd, count);
   }
 
   /**
@@ -1705,18 +1763,73 @@ export class MockEngine extends Graph {
     const n = this.node(nodeId);
     if (!n || n.out.kind !== 'real') return null;
     const fs = n.out.sampleRate;
-    return { data: this._detect(n, t0 + count / fs, count), sampleRate: fs };
+    // Interleaved, with the count, because the speaker is the one consumer that wants
+    // both channels rather than their sum (ADR-0037).
+    return {
+      data: this._detect(n, t0 + count / fs, count),
+      sampleRate: fs,
+      channels: n.out.channels || 1,
+    };
   }
 
   /**
    * The real-valued output of a detector node, `count` samples ending at `tEnd`.
-   * `node` is the detector; its parent supplies the IQ.
+   *
+   * Interleaved when there is more than one channel, the way `iq` interleaves its two
+   * components (ADR-0037) — so the array is `count * channels` long and every caller
+   * either knows that or asks for `_detectMono` instead.
+   *
+   * `node` is usually a detector and its parent supplies the IQ. A node whose parent is
+   * already a real stream — a stereo decoder is the first — reads that recursively
+   * instead, which is what makes a chain of real-to-real operations possible at all.
    */
   _detect(node, tEnd, count) {
     const p = this.node(node.parent);
     const fs = node.out.sampleRate;
+    if (p.out.kind === 'real') {
+      return realOp(node.op, this._detectMono(p, tEnd, count), count, fs, node.params).data;
+    }
     const iq = this._readIQ(p, tEnd, count);
     return demodulate(node.op, iq, count, fs, node.params).data;
+  }
+
+  /**
+   * One named channel of it, for a view.
+   *
+   * A pane cannot plot two channels against one y axis without saying which is which,
+   * and it must not pick one silently — so the choice is a view parameter and this is
+   * where it lands, alongside `domain` (ADR-0036). `sum` is the default because on a
+   * one-channel stream it is the only answer, and on two it is the mono signal.
+   */
+  _detectChannel(node, tEnd, count, which) {
+    const ch = node.out.channels || 1;
+    if (ch === 1 || !which || which === 'sum') return this._detectMono(node, tEnd, count);
+    const data = this._detect(node, tEnd, count);
+    const c = Math.min(which === 'right' ? 1 : 0, ch - 1);
+    const out = new Float32Array(count);
+    for (let i = 0; i < count; i++) out[i] = data[i * ch + c];
+    return out;
+  }
+
+  /**
+   * The same thing as one channel: the mono sum where there is more than one.
+   *
+   * This is what every consumer that is not the speaker or a view wants — a slicer, an
+   * external decoder, an export. It is also correct rather than merely convenient: in FM
+   * stereo the sum *is* the mono signal, because the encoding was built so a mono
+   * receiver could ignore the subcarrier and be right (ADR-0037).
+   */
+  _detectMono(node, tEnd, count) {
+    const data = this._detect(node, tEnd, count);
+    const ch = node.out.channels || 1;
+    if (ch === 1) return data;
+    const out = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      let s = 0;
+      for (let c = 0; c < ch; c++) s += data[i * ch + c];
+      out[i] = s / ch;
+    }
+    return out;
   }
 
   /**
@@ -1756,7 +1869,7 @@ export class MockEngine extends Graph {
       // for provenance (ADR-0007), not as the middle of this picture.
       if (opts.domain === 'frequency') {
         const bins = opts.bins || 1024;
-        const x = this._detect(n, now, bins * 2);
+        const x = this._detectChannel(n, now, bins * 2, opts.channel);
         return {
           kind: 'spectrum', baseband: true,
           data: dsp.realSpectrum(x, bins, opts.window || 'Hann'),
@@ -1771,7 +1884,7 @@ export class MockEngine extends Graph {
       // meant the span control moved nothing whenever the trigger was armed.
       const searchS = Math.min(maxSpan, opts.trigger === 'free' ? span : Math.max(1.05, span));
       const count = Math.min(131072, Math.max(256, Math.floor(fs * searchS)));
-      const env = this._detect(n, now, count);
+      const env = this._detectChannel(n, now, count, opts.channel);
       const windowEnd = now;                        // absolute time of the last sample
 
       if (opts.trigger === 'free') {
@@ -1806,7 +1919,7 @@ export class MockEngine extends Graph {
       const fs = p.out.sampleRate;
       const span = Math.min(maxSpan, opts.spanS || 2.0);
       const count = Math.min(262144, Math.floor(fs * span));
-      const env = this._detect(p, now, count);   // whatever detector feeds this slicer
+      const env = this._detectMono(p, now, count);   // whatever detector feeds this slicer
       const groups = dsp.pwmSlice(env, n.params.threshold.value, fs, n.params.symbolUs.value);
       const windowStart = now - count / fs;
       return {

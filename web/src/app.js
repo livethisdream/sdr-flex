@@ -53,7 +53,7 @@ const defaultViewParams = () => ({
   bins: 1024, window: 'Hann', avg: 4,
   dbMin: -74, dbMax: -18, dbAuto: true, colormap: 'Viridis', speed: 60,
   trigger: 'auto', spanS: 0.12,
-  domain: 'time',
+  domain: 'time', channel: 'sum',
   zoomLo: 0, zoomHi: 1,
 });
 
@@ -227,7 +227,14 @@ class App {
   frameOpts(p) {
     const o = { bins: p.bins, window: p.window };
     if (this.onBaseband()) o.domain = 'frequency';
+    if (this.channels() > 1) o.channel = p.channel;
     return o;
+  }
+
+  /** How many channels the current node carries. One, unless a stereo decoder said so. */
+  channels() {
+    const n = this.node();
+    return (n && n.out.channels) || 1;
   }
 
   // ── chrome ───────────────────────────────────────────────────────────────
@@ -859,6 +866,12 @@ class App {
           symbolUs: { label: 'symbol', unit: 'µs', fmt: (v) => String(Math.round(v)), step: 0.7, min: 20, integer: true, type: 'num' },
           deviationHz: { label: 'deviation', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 12, min: 100, integer: true, type: 'num' },
           sideband: { label: 'sideband', unit: '', type: 'enum', values: ['usb', 'lsb'], fmt: String },
+          // `auto` reads the pilot every time it decodes; the other two overrule it.
+          decode: { label: 'decode', unit: '', type: 'enum', values: ['auto', 'stereo', 'mono'], fmt: String },
+          // Not derived, because nothing in the signal says which continent it came from:
+          // 75 µs in the Americas, 50 µs most other places (ADR-0037).
+          deemphasisUs: { label: 'de-emphasis', unit: 'µs', type: 'enum', values: ['75', '50', '0'],
+                          fmt: (v) => (Number(v) > 0 ? String(v) : 'off') },
           bfoHz: { label: 'bfo', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 1.5, min: -3000, max: 3000, integer: true, type: 'num' },
           offsetHz: { label: 'offset', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2.5, integer: true, type: 'num' },
           pitchHz: { label: 'pitch', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2, min: 200, max: 2000, integer: true, type: 'num' },
@@ -917,11 +930,19 @@ class App {
       ? [{ key: 'domain', label: 'domain', unit: '', type: 'enum', value: p.domain,
            values: ['time', 'frequency'] }]
       : [];
+    // And which channel, where there is a choice. It only appears on a node that
+    // produces more than one, because a `channel` pill reading "sum" above a stream that
+    // has one channel is a control for a decision nobody is making.
+    const channelCells = this.channels() > 1
+      ? [{ key: 'channel', label: 'channel', unit: '', type: 'enum', value: p.channel,
+           values: ['sum', 'left', 'right'] }]
+      : [];
+    const viewCells = domainCells.concat(channelCells);
 
     if (this.view() === 'Time') {
       groups.push({
         key: 'view', title: 'view',
-        cells: domainCells.concat([
+        cells: viewCells.concat([
           { key: 'trigger', label: 'trigger', unit: '', type: 'enum', value: p.trigger, values: ['auto', 'free'] },
           { key: 'spanS', label: 'span', unit: 'ms', type: 'num', value: p.spanS,
             fmt: (v) => (v * 1e3).toFixed(0), step: 0.0008, min: 0.002, max: 1.0 },
@@ -932,7 +953,7 @@ class App {
     if (this.view() === 'Spectrum') {
       groups.push({
         key: 'view', title: 'view',
-        cells: domainCells.concat([
+        cells: viewCells.concat([
           { key: 'bins', label: 'fft', unit: 'bins', type: 'enum', value: String(p.bins), values: ['256', '512', '1024', '2048', '4096'] },
           { key: 'colormap', label: 'colormap', unit: '', type: 'enum', value: p.colormap, values: COLORMAPS },
           { key: 'speed', label: 'speed', unit: 'rows/s', type: 'num', value: p.speed, fmt: (v) => String(Math.round(v)), step: 0.35, min: 2, max: 120, integer: true },
@@ -971,6 +992,9 @@ class App {
         this.resetSpectrum();
         this._tsCache = null;
       }
+      // Same node, same axis, different signal — so the trace and the rows on the
+      // waterfall are of something else now, exactly as they are on a domain change.
+      else if (key === 'channel') { p.channel = value; this.resetSpectrum(); this._tsCache = null; }
       else if (key === 'window') p.window = value;
       else if (key === 'trigger') { p.trigger = value; this._tsCache = null; }
       else if (key === 'spanS') { p.spanS = value; this._tsCache = null; }
@@ -2463,7 +2487,10 @@ class App {
       const live = p.trigger === 'free';
       if (live || this._tsAcc > 220 || !this._tsCache) {
         this._tsAcc = 0;
-        const f = this.engine.frame(this.current, { spanS: p.spanS, trigger: p.trigger });
+        const f = this.engine.frame(this.current, {
+          spanS: p.spanS, trigger: p.trigger,
+          ...(this.channels() > 1 ? { channel: p.channel } : {}),
+        });
         if (f.kind === 'timeseries') {
           const n = this.node();
           this.timeSeries.threshold = null;

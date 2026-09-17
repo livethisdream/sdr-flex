@@ -801,3 +801,57 @@ export function rdsMpx(bits, { rate = 171_000, rds = 0.35, pilot = 0.08, audio =
 
 /** What a group of this stream occupies on the air, in seconds. */
 export const RDS_GROUP_S = 104 / RDS_BPS;
+
+/**
+ * An FM broadcast composite in stereo, optionally carrying RDS as well.
+ *
+ * The encoding, and the one relationship that matters: the pilot is a tone at 19 kHz and
+ * the L-R subcarrier is at **exactly twice its phase**, not merely at twice its
+ * frequency. `theta` is where t = 0 falls and a receiver never learns it, so it is a
+ * parameter here on purpose — a decoder that only works at theta = 0 has locked onto an
+ * accident of how the test was written.
+ *
+ * Levels are the American ones: 45% of the deviation to each of the sum and the
+ * difference, 10% to the pilot. `left` and `right` are functions of time in seconds, so a
+ * test can put a different tone in each channel and then measure what leaked.
+ */
+export function fmStereoMpx({ rate = 160_000, seconds = 0.4, theta = 0.7,
+                              left = (t) => Math.sin(2 * Math.PI * 400 * t),
+                              right = (t) => Math.sin(2 * Math.PI * 3000 * t),
+                              pilot = 0.10, audio = 0.45, preemphasisUs = 0,
+                              rdsBits = null, rds = 0.05,
+                              seed = 0x3e11, noise = 0.002 } = {}) {
+  const n = Math.round(rate * seconds);
+  const x = new Float32Array(n);
+  const rand = rng(seed);
+  const w = 2 * Math.PI * 19_000;
+  // Pre-emphasis, when asked for, as the one-pole the receiver's de-emphasis undoes.
+  // Applied per channel before the matrix, which is where a transmitter applies it.
+  const tau = preemphasisUs * 1e-6;
+  const lift = tau > 0 ? (v, prev, dt) => v + tau * ((v - prev) / dt) : null;
+  let pl = 0, pr = 0;
+  const dt = 1 / rate;
+  const differential = rdsBits ? new Uint8Array(rdsBits.length) : null;
+  if (rdsBits) { let prev = 0; for (let i = 0; i < rdsBits.length; i++) { prev ^= rdsBits[i]; differential[i] = prev; } }
+
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    let L = left(t), R = right(t);
+    if (lift) { const a = lift(L, pl, dt), b = lift(R, pr, dt); pl = L; pr = R; L = a; R = b; }
+    const phase = w * t + theta;
+    x[i] = audio * ((L + R) / 2)
+         + audio * ((L - R) / 2) * Math.cos(2 * phase)      // twice the pilot's phase
+         + pilot * Math.cos(phase)
+         + (rand() - 0.5) * noise;
+    if (differential) {
+      const k = Math.floor(t * RDS_BPS);
+      if (k < differential.length) {
+        const first = differential[k] ? 1 : -1;
+        const d = t * RDS_BPS - k < 0.5 ? first : -first;
+        // 57 kHz is the pilot tripled, for the same reason 38 kHz is it doubled.
+        x[i] += rds * d * Math.cos(3 * phase);
+      }
+    }
+  }
+  return x;
+}

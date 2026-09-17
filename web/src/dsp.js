@@ -141,6 +141,52 @@ export function realSpectrum(x, bins, windowName, out) {
 }
 
 // ── Filter design ──────────────────────────────────────────────────────────
+/**
+ * A real FIR, centered: the output lines up with the input rather than lagging it by
+ * half the filter.
+ *
+ * Every filter in this file until now was complex — a channelizer mixing, filtering and
+ * decimating in one pass. A stereo decoder needs the plain real version several times
+ * over, and it needs the alignment, because two of the filtered signals get multiplied
+ * together and half a filter of skew between them is a phase error in the product.
+ */
+export function fir(x, taps, out) {
+  const n = x.length, m = taps.length, half = (m - 1) >> 1;
+  const y = out && out.length === n ? out : new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0;
+    // clamped rather than wrapped or zero-padded per tap: the ends of the span are the
+    // only samples this gets wrong, and something upstream always read a little extra
+    const k0 = i + half - n + 1 > 0 ? i + half - n + 1 : 0;
+    const k1 = i + half < m - 1 ? i + half : m - 1;
+    for (let k = k0; k <= k1; k++) s += x[i + half - k] * taps[k];
+    y[i] = s;
+  }
+  return y;
+}
+
+/**
+ * A band-pass and its quadrature: the two halves of an analytic filter.
+ *
+ * A low-pass shifted up to `centerHz` gives the in-phase half; the same low-pass shifted
+ * with a sine gives the half a quarter-cycle behind it. Filtering a real signal with both
+ * gives `p + jq` — the analytic signal of whatever is in that band — with no Hilbert
+ * transformer and, more usefully, with both halves delayed by exactly the same amount.
+ * That alignment is the whole point: the phase of `p + jq` is the thing being measured.
+ */
+export function bandPassTaps(numTaps, centerHz, widthHz, fs) {
+  const lp = lowPassTaps(numTaps, widthHz / 2, fs);
+  const m = lp.length, half = (m - 1) >> 1;
+  const i = new Float32Array(m), q = new Float32Array(m);
+  for (let k = 0; k < m; k++) {
+    const a = (2 * Math.PI * centerHz * (k - half)) / fs;
+    i[k] = 2 * lp[k] * Math.cos(a);
+    q[k] = 2 * lp[k] * Math.sin(a);
+  }
+  return { i, q };
+}
+
+
 /** Windowed-sinc low-pass. cutoff and fs in Hz. */
 export function lowPassTaps(numTaps, cutoffHz, fs) {
   if (numTaps % 2 === 0) numTaps += 1;
@@ -408,6 +454,177 @@ export function cwBeat(iq, count, sampleRate, offsetHz, pitchHz) {
 }
 
 // ── Estimators for the detectors ───────────────────────────────────────────
+
+// ── FM stereo ──────────────────────────────────────────────────────────────
+//
+// The composite an FM broadcast discriminator hands back is three things stacked in
+// frequency: L+R at the bottom, a 19 kHz pilot, and L-R on a suppressed subcarrier at
+// 38 kHz. Recovering L and R is one coherent demodulation and one two-by-two matrix —
+// and the only part with a trap in it is where the 38 kHz reference comes from.
+
+export const PILOT_HZ = 19_000;
+export const STEREO_SUBCARRIER_HZ = 2 * PILOT_HZ;
+/** The top of the audio band, and so the cutoff on both the sum and the difference. */
+export const STEREO_AUDIO_HZ = 15_000;
+/**
+ * How long the filters are, which is a trade rather than a constant.
+ *
+ * Measured against a synthetic composite with a different tone in each channel: 63 taps
+ * separates the channels by 63 dB, 127 by 77, and 255 by no more than 127 does. Four of
+ * these run over every sample of audio, so the cost is real — 127 taps is about 27 ms
+ * per 200 ms of audio at 160 kS/s — and 77 dB is about forty more than a good receiver
+ * achieves off the air. Past this, longer filters buy nothing and cost linearly.
+ */
+const STEREO_TAPS = 127;
+
+/**
+ * Is there a pilot, and how far above the floor?
+ *
+ * The pilot is unusually good evidence and that is the reason to look for it rather than
+ * for the subcarrier itself: it is a bare tone at a frequency fixed by the standard, at
+ * about 10% injection, and it is present when and only when the station is transmitting
+ * in stereo. The subcarrier is suppressed, so on quiet passages there is nothing at
+ * 38 kHz to find even on a station that is.
+ */
+export function estimatePilot(x, count, fs, { bins = 2048 } = {}) {
+  const need = bins * 2;
+  if (count < need || fs / 2 <= PILOT_HZ) {
+    return { value: PILOT_HZ, snrDb: 0, confident: false };
+  }
+  // Off the middle of the span rather than the start: a window that lands on the run-up
+  // of a filter measures the filter.
+  const from = Math.max(0, Math.min(count - need, ((count - need) >> 1)));
+  const sp = realSpectrum(x.subarray(from, from + need), bins, 'Hann');
+  const binHz = fs / (2 * bins);
+  const at = Math.round(PILOT_HZ / binHz);
+  const guard = Math.max(2, Math.round(600 / binHz));
+  if (at + guard >= bins) return { value: PILOT_HZ, snrDb: 0, confident: false };
+
+  let peak = -Infinity, peakAt = at;
+  for (let i = at - guard; i <= at + guard; i++) {
+    if (i >= 0 && sp[i] > peak) { peak = sp[i]; peakAt = i; }
+  }
+  // The floor is measured in the guard band the pilot sits in, not across the whole
+  // spectrum. Broadcast FM leaves 15 to 23 kHz empty by design — audio stops below it
+  // and L-R starts above it — so the pilot is the only thing that belongs there, and
+  // "stands above its own neighbourhood" is a much sharper question than "stands above
+  // the average of everything".
+  //
+  // Measured against the whole spectrum instead, a mono station carrying one clean tone
+  // reported a confident pilot at 13 dB: with nothing else transmitting, the median of
+  // the spectrum is the FFT's own leakage skirt, and any bin at all clears it. The guard
+  // band contains that same leakage, so comparing like with like takes it back out.
+  const rest = [];
+  for (let i = 1; i < bins; i++) {
+    const hz = i * binHz;
+    if (hz < 15_800 || hz > 22_200) continue;
+    if (Math.abs(hz - PILOT_HZ) < 900) continue;
+    rest.push(sp[i]);
+  }
+  rest.sort((a, b) => a - b);
+  const floor = rest.length ? rest[rest.length >> 1] : -120;
+  const snrDb = peak - floor;
+  return {
+    value: peakAt * binHz,
+    snrDb,
+    // Fifteen decibels over its own guard band, and landing where the standard says it
+    // will. A wide gate rather than a fine one, because what it has to separate is "a
+    // tone" from "no tone" — a station in mono has nothing here at all.
+    confident: snrDb > 15 && Math.abs(peakAt * binHz - PILOT_HZ) < 400,
+  };
+}
+
+/** One-pole de-emphasis with unity gain at DC. `tauS` is 75 µs or 50 µs. */
+export function deemphasis(x, fs, tauS, out) {
+  const y = out && out.length === x.length ? out : new Float32Array(x.length);
+  if (!(tauS > 0)) { y.set(x); return y; }
+  const a = 1 - Math.exp(-1 / (fs * tauS));
+  let acc = x[0] || 0;
+  for (let i = 0; i < x.length; i++) { acc += a * (x[i] - acc); y[i] = acc; }
+  return y;
+}
+
+/**
+ * The composite to L and R, interleaved.
+ *
+ * **Where the 38 kHz comes from is the whole problem.** The standard's claim is not that
+ * the subcarrier sits at 38 kHz — it is that the subcarrier's phase is exactly *twice*
+ * the pilot's. Where t = 0 happens to be is arbitrary and a receiver never learns it, so
+ * an oscillator running free at a nominally correct 38 kHz is at an unknown and drifting
+ * phase against L-R, and a coherent demodulator at the wrong phase recovers nothing at
+ * all. Doubling the pilot is not an optimization; it is the only way to know the phase.
+ *
+ * So: band-pass the pilot with an analytic pair to get `p + jq` at phase ψ, and the
+ * reference is cos(2ψ) = (p² - q²)/(p² + q²) — the doubled angle, normalized so the
+ * pilot's own amplitude drops out. This is right for any phase origin, which is the
+ * property being relied on, and the test asserts it across several.
+ *
+ * The tempting shortcut — square the pilot and band-pass the result at 38 kHz — gives
+ * cos(2ψ) too, and appears to work. It is the same thing with the normalization thrown
+ * away, so its amplitude rides on the pilot's, and on a weak signal the recovered L-R
+ * fades with it while L+R does not. The channels then wander toward mono.
+ */
+export function stereoDecode(x, count, fs, { deemphasisUs = 75, stereo = 'auto',
+                                            taps = STEREO_TAPS } = {}) {
+  const n = Math.min(count, x.length);
+  const out = new Float32Array(n * 2);
+  const both = (note) => {
+    for (let i = 0; i < n; i++) { out[i * 2] = x[i]; out[i * 2 + 1] = x[i]; }
+    return { data: out, quadRejectionDb: 0, note };
+  };
+  if (fs / 2 <= STEREO_SUBCARRIER_HZ + 1000) {
+    // Not an error and not a silent half-decode: a composite this narrow does not
+    // contain 38 kHz, so there is no difference signal in it to recover.
+    return both('no 38 kHz in a stream this narrow — this is the mono sum, twice');
+  }
+  // Without a pilot there is no phase reference, and a difference demodulated against a
+  // band-pass full of noise is not a quiet decode — it is two channels of nonsense that
+  // sound like a broken stereo rather than like a mono station. So the absence is
+  // reported and the sum goes out on both channels (ADR-0031). `stereo: true` forces it
+  // anyway, which is for a pilot too weak to measure rather than for one that is absent.
+  if (stereo !== true) {
+    const pilot = stereo === false ? { confident: false, snrDb: 0 } : estimatePilot(x, n, fs);
+    if (!pilot.confident) {
+      return both(stereo === false ? 'decoding as mono, because you asked'
+                                   : 'no 19 kHz pilot — this station is in mono');
+    }
+  }
+  const span = x.subarray(0, n);
+  const bp = bandPassTaps(taps, PILOT_HZ, 1600, fs);
+  const p = fir(span, bp.i), q = fir(span, bp.q);
+
+  const mixI = new Float32Array(n), mixQ = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const m2 = p[i] * p[i] + q[i] * q[i] || 1e-20;
+    const ref = (p[i] * p[i] - q[i] * q[i]) / m2;       // cos 2ψ
+    const quad = (2 * p[i] * q[i]) / m2;                // sin 2ψ, which should be empty
+    mixI[i] = span[i] * 2 * ref;
+    mixQ[i] = span[i] * 2 * quad;
+  }
+
+  const lp = lowPassTaps(taps, STEREO_AUDIO_HZ, fs);
+  const sum = fir(span, lp);
+  const diff = fir(mixI, lp);
+  // Not used to decode anything — it is the evidence that the reference is locked.
+  // A demodulator at the right phase puts everything in one quadrature and nothing in
+  // the other, so how much less is in the other one is a measurement of the lock
+  // (ADR-0017), and it is the number that goes bad first when a pilot is weak.
+  const quadrature = fir(mixQ, lp);
+  let ps = 0, pq = 0;
+  const edge = Math.min(taps * 2, n >> 2);
+  for (let i = edge; i < n - edge; i++) { ps += diff[i] * diff[i]; pq += quadrature[i] * quadrature[i]; }
+  const quadRejectionDb = 10 * Math.log10((ps + 1e-20) / (pq + 1e-20));
+
+  const tau = deemphasisUs > 0 ? deemphasisUs * 1e-6 : 0;
+  const left = new Float32Array(n), right = new Float32Array(n);
+  for (let i = 0; i < n; i++) { left[i] = sum[i] + diff[i]; right[i] = sum[i] - diff[i]; }
+  // After the matrix, never before. The time constant applies to each recovered channel,
+  // and de-emphasizing the composite would take 27 dB off the 57 kHz subcarrier that
+  // something downstream may still want to read (ADR-0037).
+  const dl = deemphasis(left, fs, tau), dr = deemphasis(right, fs, tau);
+  for (let i = 0; i < n; i++) { out[i * 2] = dl[i]; out[i * 2 + 1] = dr[i]; }
+  return { data: out, quadRejectionDb };
+}
 
 /**
  * Peak deviation, straight off the discriminator rather than out of Carson's rule.

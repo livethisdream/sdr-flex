@@ -100,17 +100,30 @@ export class AudioMixer {
       // conversion we would otherwise write — and it is allowed to do it in the
       // audio thread.
       const rate = Math.max(3000, Math.min(768000, got.sampleRate));
-      const buf = this.ctx.createBuffer(1, got.data.length, rate);
-      const ch = buf.getChannelData(0);
+      // Two channels when the node upstream produces two (ADR-0037). This was
+      // `createBuffer(1, …)` for as long as there was nothing that could produce a
+      // pair — which is why two Listen blocks made a mixer and never a stereo image.
+      const nch = Math.max(1, Math.min(2, got.channels || 1));
+      const frames = Math.floor(got.data.length / nch);
+      const buf = this.ctx.createBuffer(nch, frames, rate);
+      const chans = [];
+      for (let c = 0; c < nch; c++) chans.push(buf.getChannelData(c));
 
+      // The DC offset and the level are measured across the pair, not per channel. Both
+      // feed things that have to stay common: a pedestal removed unevenly is a shift in
+      // the stereo image, and one AGC per channel is an AGC that would quietly pull a
+      // loud left and a quiet right toward the middle — which is the one thing a stereo
+      // decoder exists not to do.
       let dc = 0;
       for (let i = 0; i < got.data.length; i++) dc += got.data[i];
       dc /= got.data.length || 1;
       let sum = 0;
-      for (let i = 0; i < got.data.length; i++) {
-        const x = got.data[i] - dc;         // AM sits on a pedestal; a speaker cannot use it
-        ch[i] = x;
-        sum += x * x;
+      for (let i = 0; i < frames; i++) {
+        for (let c = 0; c < nch; c++) {
+          const x = got.data[i * nch + c] - dc;   // AM sits on a pedestal; a speaker cannot use it
+          chans[c][i] = x;
+          sum += x * x;
+        }
       }
       v.level = Math.sqrt(sum / (got.data.length || 1));
       const squelch = (n.params.squelch && n.params.squelch.value) || 0;
@@ -123,14 +136,14 @@ export class AudioMixer {
       // surprise at every channel change.
       const TARGET = 0.25, MAX_GAIN = 400;
       const g = v.muted ? 0 : Math.min(MAX_GAIN, TARGET / Math.max(v.level, 1e-6));
-      for (let i = 0; i < ch.length; i++) ch[i] = Math.tanh(ch[i] * g);
+      for (const c of chans) for (let i = 0; i < c.length; i++) c[i] = Math.tanh(c[i] * g);
 
       const node = this.ctx.createBufferSource();
       node.buffer = buf;
       node.connect(v.gain);
       node.start(v.next);
       v.next += buf.duration;
-      v.srcT += got.data.length / got.sampleRate;
+      v.srcT += frames / got.sampleRate;
     } finally {
       v.busy = false;
     }

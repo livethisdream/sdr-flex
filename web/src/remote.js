@@ -486,10 +486,11 @@ export class RemoteEngine extends Graph {
 
 /** Options that change what is computed. `at` is not one — it keys the cache instead. */
 function frameKey(nodeId, o) {
-  // `domain` is in here because a real stream answers two different frames to the
-  // same node and the same bin count; leaving it out served the waveform to the
-  // spectrum view, from the cache, forever.
-  return `${nodeId}|${o.bins || ''}|${o.window || ''}|${o.spanS || ''}|${o.trigger || ''}|${o.avg || ''}|${o.domain || ''}`;
+  // `domain` and `channel` are in here because a real stream answers several different
+  // frames to the same node and the same bin count — two axes and, since ADR-0037, up to
+  // three channels. Leaving `domain` out served the waveform to the spectrum view, from
+  // the cache, forever; leaving `channel` out would serve the left to the right.
+  return `${nodeId}|${o.bins || ''}|${o.window || ''}|${o.spanS || ''}|${o.trigger || ''}|${o.avg || ''}|${o.domain || ''}|${o.channel || ''}`;
 }
 
 function defaultUrl() {

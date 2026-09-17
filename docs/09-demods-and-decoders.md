@@ -93,9 +93,18 @@ cannot tell you which of those are present. It also decides how wide to draw the
 the first place: a channel narrow enough to *hear* has already filtered the subcarriers
 away, and 200 kHz is what keeps 57 kHz inside the span.
 
-What it does not do is decode any of them. Stereo is a node nobody has written; RDS is
-`redsea`, which is adapter #6 below and takes demodulated MPX in — it was unaimed until
-there was a way to see what you were aiming it at.
+Both of those are now decoded. RDS is `redsea`, adapter #6 below, which takes demodulated
+MPX in and was unaimed until there was a way to see what you were aiming it at. Stereo is
+`core.stereo`, the one native operation that takes a real stream and returns one: a
+coherent demodulation of the L-R subcarrier against a 38 kHz reference regenerated from
+the pilot, and the matrix that turns a sum and a difference back into a left and a right.
+Its output is two channels of `real`, which is a parameter of the type rather than a type
+of its own ([ADR-0037](adr/0037-channels-are-a-parameter-of-real.md)) — so everything
+downstream of it still works and still reads the mono sum.
+
+It is also where de-emphasis finally lives. Not on the discriminator, which feeds NBFM,
+APRS, M17 and `redsea` and wants none of it — and which would take 27 dB off the 57 kHz
+subcarrier on the way past.
 
 ---
 
