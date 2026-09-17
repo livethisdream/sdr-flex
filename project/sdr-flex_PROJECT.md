@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys) · merged to `main`
+**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 on two-input nodes) · merged to `main`
 
 **`main` is the default branch**, as of this session. It was
 `claude/sdr-flex-toolkit-planning-c4ghl1` — the branch this project happened to be
@@ -27,7 +27,7 @@ Previous: 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBF
 
 MVP in the browser, the same tool with its engine in a container, and live radio into a
 ring recording. Static ES modules, no build step, no dependencies on either side.
-37 ADRs.
+38 ADRs.
 
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
@@ -674,6 +674,23 @@ house rule.
   **AGC is still one gain across the pair**, which is right, but it is also still one
   *sink*, so there is no balance control and no way to solo a channel except by changing
   the view's `channel` pill, which changes the picture and not the sound.
+- **A node still has one input, so the transparent half of a stereo decode cannot be
+  drawn.** [ADR-0038](../docs/adr/0038-a-node-may-have-two-inputs.md) decides how it
+  would: a real second edge, a primary input that navigation follows, and `t0` on every
+  stream so a merge can align what it is handed. `core.stereo` is the opaque node, and
+  the tool is supposed to have both — `core.math` between two hand-drawn tuners is the
+  other one, and it buys far more than stereo (difference two antennas, ratio for
+  direction finding, subtract a reference, remove a carrier).
+
+  **Costed, and it changed the answer.** A sidechain named by parameter looked like a
+  tenth of the work and is not: it saves the traversal edits and none of the alignment,
+  pinning, cycle or tap-join work, and it costs the graph's honesty. Written up in the
+  ADR so nobody re-derives it.
+
+  The first commit is not the math node. It is `t0` on `out` — ADR-0007 promised it in
+  2023 and a tree never needed it, because in a tree every read walks one path and the
+  filter delays cancel. Two branches through different-length channel filters do not
+  cancel, and for a conjugate product a few samples of skew is a phase error.
 - **Nothing carries audio back into the graph**, which bites RDS too: `redsea --feed-through`
   echoes the composite while it decodes, and there is nowhere for that to go. Same gap
   as M17's decoded voice, listed below.
