@@ -11,6 +11,7 @@ import { IdentifyPanel } from './identview.js';
 import { plan as identifyPlan } from './identify.js';
 import { Strip } from './strip.js';
 import { HOTKEYS, KEY_FOR, opForKey, firstOpNamed } from './keys.js';
+import { delayOf } from './delay.js';
 import { Metrics } from './metrics.js';
 import { fromFiles, FORMATS } from './capture.js';
 import * as out from './export.js';
@@ -797,10 +798,22 @@ class App {
       const n = this.engine.node(id);
       const spec = OPS[n.op];
       const kids = this.engine.children(id);
+      // How late this node's samples are, which is a fact about the compiled graph and so
+      // belongs on the pane that shows it. Nothing consumes it yet — a merge will
+      // (ADR-0038) — but it is the difference between two branches that decides whether a
+      // coherent operation between them can work, and there was nowhere to see it.
+      const d = delayOf(n, (i) => this.engine.node(i));
+      const late = d.known
+        ? (d.seconds > 0 ? `+${(d.seconds * 1e6).toFixed(0)} µs` : '0 µs')
+        : `${d.op.replace('core.', '')}?`;
+      const why = d.known
+        ? `these samples are ${(d.seconds * 1e6).toFixed(1)} µs older than the moment they are asked for`
+        : `${d.op} restitches time, so nothing downstream can say when its samples are from`;
       return `<div class="fnode${id === this.current ? ' cur' : ''}${spec && spec.external ? ' ext' : ''}" style="margin-left:${depth * 22}px" data-id="${id}">
           <span class="fn">${this.tag(n)}</span>
           <span class="fk">${n.out.kind}</span>
           <span class="fr">${fmtRate(n.out.sampleRate)}</span>
+          <span class="fd${d.known ? '' : ' unk'}" title="${attr(why)}">${late}</span>
         </div>` + kids.map((k) => walk(k.id, depth + 1)).join('');
     };
     $('#pane-flow').innerHTML =

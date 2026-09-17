@@ -1,7 +1,8 @@
 # ADR-0038: A node may have two inputs, and one of them is the primary
 
-**Status:** Accepted — not yet built. This records the decision and what it costs; nothing
-in the tree implements it.
+**Status:** Accepted. The alignment half is built — `web/src/delay.js` and
+`web/test/delay.test.mjs` — and the second input is not. See *Alignment is the real work*
+below for what landed and what it changed.
 
 **Extends:** [ADR-0004](0004-flowgraph-splitting-at-taps.md),
 [ADR-0007](0007-stream-context-and-provenance.md)
@@ -138,6 +139,33 @@ The rule: a merge resamples the lower-rate input to the higher, aligns on `t0`, 
 the correction it applied the way every other derived value reports itself. Where it cannot
 align — a non-invertible time mapping, which ADR-0007 already anticipated — it says so
 rather than producing a plausible wrong answer.
+
+### What was built, and what measuring it changed
+
+`web/src/delay.js` answers "how late are this node's samples" and "can these two be lined
+up". Two things came out of building it that the plan above did not anticipate:
+
+**It is computed on the way up, not stored on the way down.** ADR-0007 says streams
+*carry* `t0`, and a field on `out` was the obvious reading. It would go stale: `setParam`
+propagates a rate change exactly one level, so changing a tap count would leave every
+node below the next one lying about its delay. Walking to the source is a handful of map
+lookups and cannot be wrong.
+
+**The tuner's delay does not depend on its decimation, and the arithmetic says it should.**
+`xlateFilterDecimate` reads `count * decim + taps` input samples for `count` outputs, so
+the extra window and the filter's own centre cancel, leaving `(taps + 1) / 2` input
+samples whatever the decimation. Deriving it from the code rather than measuring it
+produced a spurious `decim` term — harmless at 1, wrong by eight times at 16. So the test
+puts a pulse through and finds where it lands, and restating the formula in the test would
+have agreed with the bug.
+
+The numbers, measured: a tuner is late by half its filter, which is 69 µs at 65 taps and
+267 µs at 255. An SSB demodulator adds 32 samples for its Hilbert transformer. A
+discriminator adds half a sample, because the phase between two samples belongs between
+them. An AM detector adds *minus* half a sample on an even smoothing window, because the
+smoother can only undo a whole number. The last two are the ones worth having: half a
+sample at 160 kS/s is forty degrees at 38 kHz, so a merge that rounded the shift to an
+integer would line two branches up and still lose a coherent decode.
 
 ## Consequences
 

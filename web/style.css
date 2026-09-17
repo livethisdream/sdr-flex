@@ -506,6 +506,11 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .fn { color:var(--bright); font-size:.82rem; }
 .fk, .fr { font-family:var(--mono); font-size:.66rem; color:var(--dim); }
 .fr { margin-left:auto; }
+/* How late this node's samples are (ADR-0038). Dim, because it is a fact about the graph
+   rather than something to act on — until two branches disagree, which is when it is the
+   only number on the row that matters. */
+.fd { font-family:var(--mono); font-size:.66rem; color:var(--faint); min-width:4.2rem; text-align:right; }
+.fd.unk { color:var(--warn); }
 
 /* The drop target is the whole window, because a capture is the one thing you bring
    from outside and there is no reason to make you aim. */

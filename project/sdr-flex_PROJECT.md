@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 on two-input nodes) · merged to `main`
+**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 and its alignment half) · merged to `main`
 
 **`main` is the default branch**, as of this session. It was
 `claude/sdr-flex-toolkit-planning-c4ghl1` — the branch this project happened to be
@@ -110,7 +110,7 @@ Working end to end:
   Measured separation is 54–62 dB in the browser on a synthetic station; a good receiver
   off the air manages thirty to forty. De-emphasis lives here too, and nowhere upstream
 
-Tests: 332 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 345 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -687,10 +687,17 @@ house rule.
   pinning, cycle or tap-join work, and it costs the graph's honesty. Written up in the
   ADR so nobody re-derives it.
 
-  The first commit is not the math node. It is `t0` on `out` — ADR-0007 promised it in
-  2023 and a tree never needed it, because in a tree every read walks one path and the
-  filter delays cancel. Two branches through different-length channel filters do not
-  cancel, and for a conjugate product a few samples of skew is a phase error.
+  **The alignment half is built** (`web/src/delay.js`): every node says how late its
+  samples are, `alignment()` says whether two branches can be lined up and by how much,
+  and the Flow pane shows the number per node. The second input is not built.
+
+  Two things measuring it turned up. It is computed by walking to the source rather than
+  stored on `out`, because a stored one goes stale — `setParam` propagates a rate change
+  exactly one level. And **the tuner's delay does not depend on its decimation**, though
+  the arithmetic looks like it should: deriving it from the code gave a spurious `decim`
+  term, harmless at 1 and eight times wrong at 16. The test puts a pulse through and
+  measures where it lands, because a test that restated the formula would have agreed
+  with the bug.
 - **Nothing carries audio back into the graph**, which bites RDS too: `redsea --feed-through`
   echoes the composite while it decodes, and there is nowhere for that to go. Same gap
   as M17's decoded voice, listed below.
