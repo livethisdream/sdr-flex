@@ -10,7 +10,14 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-17 (the baseband spectrum, and the redsea adapter that needed it) · branch `claude/pensive-meitner-p0annp`
+**Last updated:** 2026-09-17 (the baseband spectrum, and the redsea adapter that needed it) · merged to `main`
+
+**`main` is the default branch**, as of this session. It was
+`claude/sdr-flex-toolkit-planning-c4ghl1` — the branch this project happened to be
+started on, which had been trunk by accident ever since. `main` carries that whole
+history and nothing was rebased or dropped, so the old branch is an ancestor of this one
+rather than a fork of it; it is left in place and is not written to any more. Work from
+a branch off `main`.
 
 Previous: 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBFM in the scene; the tuner derives its tap count)
 
