@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo) · merged to `main`
+**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys) · merged to `main`
 
 **`main` is the default branch**, as of this session. It was
 `claude/sdr-flex-toolkit-planning-c4ghl1` — the branch this project happened to be
@@ -43,7 +43,10 @@ Working end to end:
 - Export: WAV at a decoder's rate, or cf32 with a SigMF sidecar
 - Plugin framework: drop a `.js` file, it registers against a stream type (ADR-0028)
 - Dark / light / auto theme
-- Command palette with `/` search
+- Command palette with `/` search, and a key for the operations you reach for
+  constantly — `t f l` tunes a station and plays it. A key is a way into the same menu
+  rather than a second way to build a graph, and it means whatever is valid where you
+  are: `s` is SSB on IQ and Stereo decode on a composite (`web/src/keys.js`)
 - Transport loops at the end of a capture by default, which a pinned clip always did
 - Wave 2 decoding: a Manchester slicer that derives its own symbol rate, differential
   (NRZ-M/S), and a framer that finds frames at any bit offset and identifies the CRC by
@@ -107,7 +110,7 @@ Working end to end:
   Measured separation is 54–62 dB in the browser on a synthetic station; a good receiver
   off the air manages thirty to forty. De-emphasis lives here too, and nowhere upstream
 
-Tests: 323 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 332 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.

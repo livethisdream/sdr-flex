@@ -371,6 +371,14 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    because when one misbehaves, which of the two it is decides where to look. */
 .ctx-i .ext.mine { color:var(--accent); }
 .ctx-i .soon { margin-left:auto; font-family:var(--mono); font-size:.54rem; color:var(--faint); }
+/* The key this row also answers to. `margin-left:auto` like the other trailing badges,
+   but it loses to them when a row has both — an `ext` badge says something about what
+   the operation *is*, and the key only says how else to reach it. */
+.ctx-i .ctx-k { margin-left:auto; font-family:var(--mono); font-size:.58rem; line-height:1;
+                padding:.14rem .3rem; border:1px solid var(--rule-lo); border-radius:3px;
+                color:var(--faint); background:transparent; }
+.ctx-i .ext + .ctx-k, .ctx-i .soon + .ctx-k { margin-left:.3rem; }
+.ctx-i:hover .ctx-k { color:var(--on-accent); border-color:currentColor; }
 .ctx-none { padding:.5rem .6rem; color:var(--dim); font-size:.72rem; }
 
 /* ── the grid: a fold of the signal into two dimensions ── */

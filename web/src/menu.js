@@ -101,11 +101,15 @@ export class ContextMenu {
     const searchable = headed || this.searching || !!this.filter;
     // a hairline still separates the runs — the grouping was worth keeping, the
     // words above it were not
+    // The key an operation also answers to, shown where the operation is. A shortcut
+    // documented in a help screen is a shortcut nobody learns; shown on the row you were
+    // about to click, it is learned by the third time you click it.
     const item = (o, i, gi) =>
       `<button class="ctx-i${o.stub ? ' stub' : ''}${!headed && gi > 0 && i === 0 ? ' gsep' : ''}" data-op="${o.id}">${o.name}` +
       `${o.local ? `<span class="ext mine" title="from your ${o.local} pack">yours</span>`
         : o.external ? '<span class="ext">ext</span>' : ''}` +
-      `${o.stub ? '<span class="soon">M4</span>' : ''}</button>`;
+      `${o.stub ? '<span class="soon">M4</span>' : ''}` +
+      `${o.key && !o.stub ? `<kbd class="ctx-k" title="press ${o.key} to add this">${o.key}</kbd>` : ''}</button>`;
 
     this.el.innerHTML =
       (searchable

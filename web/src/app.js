@@ -10,6 +10,7 @@ import { ContextMenu } from './menu.js';
 import { IdentifyPanel } from './identview.js';
 import { plan as identifyPlan } from './identify.js';
 import { Strip } from './strip.js';
+import { HOTKEYS, KEY_FOR, opForKey, firstOpNamed } from './keys.js';
 import { Metrics } from './metrics.js';
 import { fromFiles, FORMATS } from './capture.js';
 import * as out from './export.js';
@@ -1061,32 +1062,79 @@ class App {
   openMenu(x, y, selection) {
     this.engine.palette(this.current).then((ops) => {
       const usable = selection ? ops : ops.filter((o) => !o.fromSelection);
-      this.menu.open(x, y, usable.length ? usable : ops, async (opId) => {
-        const sel = selection || this.defaultSelection();
-        const node = await this.engine.addNode({ parent: this.current, op: opId, selection: sel });
-        // Adding a Listen block *is* the gesture a browser needs before it will open
-        // an audio context — which is the nicest possible answer to that constraint:
-        // the thing that starts the audio is the thing that says audio should exist.
-        if (node.out.kind === 'audio') {
-          const ok = await this.mixer.add(node.id, this.engine.effectiveTime(node.parent), node.params.volume.value);
-          if (!ok) this.setStageBadge('this browser has no audio output');
-        }
-        this.clearSelection();
-        this.vp(node.id);
-        if (this.isChannel(node)) {
-          this.channel = node.id;              // a new channel is a new workspace
-          this.tabs.set(node.id, 'spectrum');
-          this.current = node.id;
-          this.resetSpectrum();
-        } else {
-          this.setTab(node.id);                // a block is a tab on the one you are in
-        }
-        this._tsCache = null;
-        this._bitsSeen = false;
-        this.metrics.endOp();
-        this.refresh();
-      });
+      const shown = (usable.length ? usable : ops).map((o) => ({ ...o, key: KEY_FOR[o.id] || null }));
+      this.menu.open(x, y, shown, (opId) => this.applyOp(opId, selection));
     });
+  }
+
+  /**
+   * Add an operation to the current node and land on its result.
+   *
+   * The menu and the hotkeys both come through here, which is the point: a key that
+   * built a node its own way would be a second implementation of the only thing this
+   * application does, and the two would disagree within a month.
+   */
+  async applyOp(opId, selection) {
+    const sel = selection || this.defaultSelection();
+    const node = await this.engine.addNode({ parent: this.current, op: opId, selection: sel });
+    // Adding a Listen block *is* the gesture a browser needs before it will open
+    // an audio context — which is the nicest possible answer to that constraint:
+    // the thing that starts the audio is the thing that says audio should exist.
+    if (node.out.kind === 'audio') {
+      const ok = await this.mixer.add(node.id, this.engine.effectiveTime(node.parent), node.params.volume.value);
+      if (!ok) this.setStageBadge('this browser has no audio output');
+    }
+    this.clearSelection();
+    this.vp(node.id);
+    if (this.isChannel(node)) {
+      this.channel = node.id;              // a new channel is a new workspace
+      this.tabs.set(node.id, 'spectrum');
+      this.current = node.id;
+      this.resetSpectrum();
+    } else {
+      this.setTab(node.id);                // a block is a tab on the one you are in
+    }
+    this._tsCache = null;
+    this._bitsSeen = false;
+    this.metrics.endOp();
+    this.refresh();
+    return node;
+  }
+
+  /**
+   * A key, if it means an operation and the operation is valid here.
+   *
+   * Valid is asked of the engine rather than assumed, because that is the same question
+   * the menu asks and the answer is the type filter of ADR-0006. Pressing `a` on a
+   * bitstream must not build an AM detector on it, and must not silently do nothing
+   * either — "that key did nothing" and "that key is not for this" are different, and
+   * the second one is worth a sentence (ADR-0031's habit, one level down).
+   */
+  async hotkey(key) {
+    if (!Object.prototype.hasOwnProperty.call(HOTKEYS, key)) return false;
+    // One at a time. Adding a node is a round trip to the engine, and two keys pressed
+    // inside it would both have read the old `current` — so the second would land beside
+    // the first instead of after it, which is not what anybody typing t-f-l meant.
+    if (this._applying) return false;
+    this._applying = true;
+    try {
+      const ops = await this.engine.palette(this.current);
+      const op = opForKey(key, ops);
+      if (!op) {
+        const n = this.node();
+        const id = firstOpNamed(key);
+        const name = (OPS[id] && OPS[id].name) || id;
+        const article = /^[aeiou]/.test(n.out.kind) ? 'an' : 'a';
+        this.notify(`${name} does not take ${article} ${n.out.kind} stream`, 2600);
+        return false;
+      }
+      if (op.stub) { this.notify(`${op.name} is not built yet`, 2600); return false; }
+      this.metrics.beginOp();
+      await this.applyOp(op.id, this.selection);
+      return true;
+    } finally {
+      this._applying = false;
+    }
   }
 
   /**
@@ -2356,6 +2404,15 @@ class App {
       if (e.key === '=' || e.key === '+') { e.preventDefault(); this.zoomKey(1 / 1.4); }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); this.zoomKey(1.4); }
       if (e.key === '0') { e.preventDefault(); this.resetZoom && this.resetZoom(); }
+      // Not while the menu is open: every printable key belongs to its search box then,
+      // and `f` meaning both "FM demod" and "type an f" is the kind of ambiguity that
+      // makes people stop trusting a keyboard.
+      if (this.menu.el.hidden && !e.metaKey && !e.ctrlKey && !e.altKey &&
+          Object.prototype.hasOwnProperty.call(HOTKEYS, e.key)) {
+        e.preventDefault();
+        this.hotkey(e.key);
+        return;
+      }
       // `/` in an open menu asks for its search box; the menu handles that itself
       if (e.key === '/' && this.menu.el.hidden) { e.preventDefault(); this.metrics.beginOp(); const r = $('#stage').getBoundingClientRect(); this.openMenu(r.left + r.width / 2, r.top + 60, this.selection); }
     });

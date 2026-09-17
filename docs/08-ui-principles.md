@@ -43,9 +43,25 @@ contract we can be held to, with numbers.
    changes, and annotations. Free from the command log
    ([ADR-0009](adr/0009-command-log.md)).
 
-9. **Keyboard for everything repeated.** `/` searches the palette, `↑↓` walks the
-   tree, `←→` steps bursts, `Space` play/pause, `Z` zoom to selection, `Esc` clears.
-   A power user should be able to run UC-2 without the mouse leaving the waterfall.
+9. **Keyboard for everything repeated.** `/` searches the palette, `←→` steps time,
+   `Space` play/pause, `=`/`-`/`0` zoom, `Esc` clears. A power user should be able to
+   run UC-2 without the mouse leaving the waterfall.
+
+   **A key for the operations you reach for constantly** — `t` tune, `a`/`f`/`s`/`c`
+   the detectors, `l` listen, `e` export — so tuning a station and hearing it is
+   `t f l` and nothing else. Three rules make that a shortcut rather than a second
+   interface:
+
+   - **It is the menu.** A key runs the identical code path with the identical
+     selection, so there is nothing a key can build that a click cannot.
+   - **A key means whatever is valid here.** `s` is SSB on a channel of IQ and Stereo
+     decode on a demodulated one, because the type filter that decides the menu
+     ([ADR-0006](adr/0006-semantic-stream-types.md)) decides this too. A key that
+     names nothing valid says so in a sentence rather than doing nothing, because
+     "that key did nothing" and "that key is not for this" are different problems.
+   - **The menu shows the key on the row.** A shortcut documented in a help screen is
+     a shortcut nobody learns; on the row you were about to click anyway, it is
+     learned by the third time you click it.
 
 10. **Never ask what can be derived — and let the user override all of it.** Every
     derived value is a real parameter with an explicit **auto** (`⟲`, re-derives when
