@@ -10,7 +10,10 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built; the stereo decode drawn as a graph; ADR-0039 on the menu) · merged to `main`
+**Last updated:** 2026-09-18 (multimon's demodulators as a multiselect; the menu scrolls; M17 packet mode and the symbol sync it needs, ADR-0040; a reload no longer loses everything; the chrome measured and the layout parked) · merged to `main`
+
+Previous: 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built; the stereo decode drawn as a graph; ADR-0039 on the menu)
+Previous: 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBFM in the scene; the tuner derives its tap count)
 
 **`main` is the default branch**, as of this session. It was
 `claude/sdr-flex-toolkit-planning-c4ghl1` — the branch this project happened to be
@@ -19,15 +22,13 @@ history and nothing was rebased or dropped, so the old branch is an ancestor of 
 rather than a fork of it; it is left in place and is not written to any more. Work from
 a branch off `main`.
 
-Previous: 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBFM in the scene; the tuner derives its tap count)
-
 ---
 
 ## Where it is
 
 MVP in the browser, the same tool with its engine in a container, and live radio into a
 ring recording. Static ES modules, no build step, no dependencies on either side.
-39 ADRs.
+40 ADRs.
 
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
@@ -109,8 +110,19 @@ Working end to end:
   mono sum, which in FM stereo is the mono signal. The speaker grew a second channel.
   Measured separation is 54–62 dB in the browser on a synthetic station; a good receiver
   off the air manages thirty to forty. De-emphasis lives here too, and nowhere upstream
+- **M17 packet mode**, which is a different program from a different upstream than the
+  stream-mode decoder that was already here — and the first decoder that reads *symbols*
+  rather than samples. `core.symbols` is the node in front of it: one sampling instant for
+  the whole span, found by trying all of them, with the instant, the zero level and the
+  scale carrying their evidence (ADR-0040)
+- **multimon-ng's demodulators are a list you pick from**, probed out of the binary
+  itself, rather than a text field where a comma made the program exit 2 and print a
+  usage message about sample rates
+- **A reload no longer loses everything.** The window asks on the way out when there is a
+  chain to lose, and what is on screen is written down as a recipe every three seconds
+  and offered back on the next load (`web/src/resume.js`)
 
-Tests: 366 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 404 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
