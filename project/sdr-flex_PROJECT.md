@@ -696,17 +696,22 @@ house rule.
   (`web/test/drawn-stereo.test.mjs`). The tuner takes a demodulated stream directly, so
   three hand-drawn boxes on the composite give the sum, the pilot and the subcarrier;
   `core.math` squares the pilot to make the 38 kHz reference and takes the conjugate
-  product against it; `core.real` comes back out. **85 / 75 dB of separation, against
-  59 dB for `core.stereo`.**
+  division by that reference; `core.real` comes back out, and a `core.gain` on each
+  branch brings both to the same level so the matrix is a plain sum and difference.
+  **48.8 dB of separation, against 40.7 dB for `core.stereo`.**
 
   A `core.analytic` node existed for about an hour and was removed by asking "which GNU
   Radio block is this": `freq_xlating_fir_filter_fcf` takes a float input, because a mixer
-  does not need its input to be complex first. One node fewer, and separation went from
-  72 dB to 85 — the Hilbert's image rejection had been the limit.
+  does not need its input to be complex first. One node fewer, no transformer, and no
+  image-rejection floor at the bottom of the band.
 
-  Still missing: a gain node. The difference branch rides a conjugate product, so its
-  scale is the pilot's power and the matrix needs the branches balanced. The test supplies
-  the one number a `core.gain` would.
+  **A measurement lesson, recorded because it cost two wrong numbers in two commit
+  messages.** A branch decimated by eight reads eight times its own length from the
+  source, so a 32768-sample window at 40 kS/s wanted 0.82 s of a 0.6 s capture and got the
+  difference in zeros. Nothing failed — the assertions were ratios, and the zeros diluted
+  both sides. It reported 85 dB where the honest answer is 49. Forty-nine is also the
+  believable one: a good broadcast receiver manages thirty to fifty, and eighty-five
+  should have been the tell.
 - **Nothing carries audio back into the graph**, which bites RDS too: `redsea --feed-through`
   echoes the composite while it decodes, and there is nowhere for that to go. Same gap
   as M17's decoded voice, listed below.

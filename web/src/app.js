@@ -940,8 +940,10 @@ class App {
                             'combining them, and says so when it cannot' },
           op: { label: 'operation', unit: '', type: 'enum', fmt: String,
                 values: n.out.kind === 'iq'
-                  ? ['a+b', 'a-b', 'a*b', 'a*conj(b)']
-                  : ['a+b', 'a-b', 'a*b'] },
+                  ? ['a+b', 'a-b', 'a*b', 'a*conj(b)', 'a/b']
+                  : ['a+b', 'a-b', 'a*b', 'a/b'] },
+          gainDb: { label: 'gain', unit: 'dB', type: 'num', fmt: (v) => (v > 0 ? '+' : '') + Number(v).toFixed(1),
+                    step: 0.25, min: -60, max: 80 },
           // Not derived, because nothing in the signal says which continent it came from:
           // 75 µs in the Americas, 50 µs most other places (ADR-0037).
           deemphasisUs: { label: 'de-emphasis', unit: 'µs', type: 'enum', values: ['75', '50', '0'],

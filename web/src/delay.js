@@ -84,8 +84,9 @@ export function ownDelaySamples(node, parentOut) {
     case 'core.math':
       return 0;
 
-    // Taking the real part is pointwise; nothing moves in time.
+    // Taking the real part and scaling are both pointwise; nothing moves in time.
     case 'core.real':
+    case 'core.gain':
       return 0;
 
     default:

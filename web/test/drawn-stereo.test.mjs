@@ -26,7 +26,7 @@ const FS = 320_000, CENTER = 98_500_000, L_HZ = 400, R_HZ = 3_000;
 
 /** A wideband FM station in stereo, as IQ, at a rate wide enough to hold the composite. */
 async function station() {
-  const mpx = mod.fmStereoMpx({ rate: FS, seconds: 0.6, theta: 0.7,
+  const mpx = mod.fmStereoMpx({ rate: FS, seconds: 1.2, theta: 0.7,
                                 left: (t) => Math.sin(2 * Math.PI * L_HZ * t),
                                 right: (t) => Math.sin(2 * Math.PI * R_HZ * t) });
   const count = mpx.length;
@@ -46,13 +46,13 @@ async function station() {
     format: 'cu8', sampleRate: FS, centerHz: CENTER, label: 'stereo',
   }));
   const tu = await e.addNode({ parent: e.root.id, op: 'core.tuner',
-    selection: { f0: CENTER - FS / 2, f1: CENTER + FS / 2 }, at: 0.3 });
-  const fm = await e.addNode({ parent: tu.id, op: 'core.fm_discriminator', at: 0.3 });
+    selection: { f0: CENTER - FS / 2, f1: CENTER + FS / 2 }, at: 0.6 });
+  const fm = await e.addNode({ parent: tu.id, op: 'core.fm_discriminator', at: 0.6 });
   return { e, fm };
 }
 
 /** Amplitude of one frequency in a real stream, by correlation. */
-function amplitudeAt(x, fs, hz, pad = 4000) {
+function amplitudeAt(x, fs, hz, pad = 500) {
   let re = 0, im = 0, n = 0;
   for (let i = pad; i < x.length - pad; i++) {
     const a = (2 * Math.PI * hz * i) / fs;
@@ -75,7 +75,7 @@ test('a demodulated stream can be tuned into directly', async () => {
   assert.ok(ops.includes('core.tuner'), 'and the palette offers it');
 
   const t = await e.addNode({ parent: fm.id, op: 'core.tuner',
-    selection: { f0: 36_000, f1: 40_000 }, at: 0.3 });
+    selection: { f0: 36_000, f1: 40_000 }, at: 0.6 });
   assert.equal(t.out.kind, 'iq');
   assert.equal(t.params.centerHz.value, 38_000, 'the selection was in baseband and stayed there');
 });
@@ -87,9 +87,9 @@ test('its numbers are baseband, and so are its children\'s', async () => {
   assert.equal(e.isBaseband(e.root.id), false, 'the source is RF');
   assert.equal(e.isBaseband(fm.id), true);
   const t = await e.addNode({ parent: fm.id, op: 'core.tuner',
-    selection: { f0: 36_000, f1: 40_000 }, at: 0.3 });
+    selection: { f0: 36_000, f1: 40_000 }, at: 0.6 });
   assert.equal(e.isBaseband(t.id), true, 'and a tuner drawn on it is too');
-  const r = await e.addNode({ parent: t.id, op: 'core.real', at: 0.3 });
+  const r = await e.addNode({ parent: t.id, op: 'core.real', at: 0.6 });
   assert.equal(e.isBaseband(r.id), true);
 });
 
@@ -99,8 +99,8 @@ test('a box at 38 kHz gets the subcarrier and not the pilot', async () => {
   const { e, fm } = await station();
   const tune = async (centerHz) => {
     const t = await e.addNode({ parent: fm.id, op: 'core.tuner',
-      selection: { f0: centerHz - 2_000, f1: centerHz + 2_000 }, at: 0.3 });
-    const iq = e._readIQ(e.node(t.id), 0.4, 4096);
+      selection: { f0: centerHz - 2_000, f1: centerHz + 2_000 }, at: 0.6 });
+    const iq = e._readIQ(e.node(t.id), 0.9, 4096);
     let p = 0;
     for (let i = 1000; i < 3000; i++) p += iq[i * 2] ** 2 + iq[i * 2 + 1] ** 2;
     return 10 * Math.log10(p / 2000 + 1e-20);
@@ -116,8 +116,8 @@ test('the way back out is a node, and adds no delay', async () => {
   const { delayOf } = await import('../src/delay.js');
   const { e, fm } = await station();
   const t = await e.addNode({ parent: fm.id, op: 'core.tuner',
-    selection: { f0: -15_000, f1: 15_000 }, at: 0.3 });
-  const r = await e.addNode({ parent: t.id, op: 'core.real', at: 0.3 });
+    selection: { f0: -15_000, f1: 15_000 }, at: 0.6 });
+  const r = await e.addNode({ parent: t.id, op: 'core.real', at: 0.6 });
   assert.equal(r.out.kind, 'real');
   assert.equal(r.out.sampleRate, t.out.sampleRate);
   const at = (n) => delayOf(e.node(n.id), (id) => e.node(id)).seconds;
@@ -130,10 +130,16 @@ test('the way back out is a node, and adds no delay', async () => {
  * Build the decoder out of nodes and return left and right.
  *
  * ```
- *   FM demod ──┬─▶ Tune  0 kHz ─────────────────────▶ To real ─▶ sum
+ *   FM demod ──┬─▶ Tune  0 kHz ──────────────────▶ To real ─▶ Gain ─▶ sum
  *              ├─▶ Tune 19 kHz ─▶ Math a×b ──┐  (the pilot, squared)
- *              └─▶ Tune 38 kHz ─▶ Math a×conj(b) ─▶ To real ─▶ diff
+ *              └─▶ Tune 38 kHz ─▶ Math a÷b ──┘─▶ To real ─▶ Gain ─▶ diff
  * ```
+ *
+ * The division rather than a conjugate product is what makes the two branches
+ * commensurable: `a × conj(b)` comes out scaled by the pilot's power, and `a ÷ b` does
+ * not. Each branch then gets a Gain, which arrives already derived — it measures what is
+ * there and brings it to the level the audio sink targets — so both are at the same size
+ * and the matrix is a plain sum and difference with no number anybody had to find.
  */
 async function drawn(e, fm) {
   const rate = fm.out.sampleRate;
@@ -142,7 +148,7 @@ async function drawn(e, fm) {
   const DECIM = 8;
   const tune = async (centerHz, widthHz) => {
     const t = await e.addNode({ parent: fm.id, op: 'core.tuner',
-      selection: { f0: centerHz - widthHz / 2, f1: centerHz + widthHz / 2 }, at: 0.3 });
+      selection: { f0: centerHz - widthHz / 2, f1: centerHz + widthHz / 2 }, at: 0.6 });
     await e.setParam(t.id, 'decim', DECIM);
     await e.setParam(t.id, 'taps', 129);
     return e.node(t.id);
@@ -156,41 +162,68 @@ async function drawn(e, fm) {
   const ref = await e.addNode({ parent: pilot.id, op: 'core.math', at: 0.3, withNode: pilot.id });
   await e.setParam(ref.id, 'op', 'a*b');
 
-  // And the coherent demodulation: the difference band against that reference.
+  // And the coherent demodulation: the difference band divided by that reference.
   const coh = await e.addNode({ parent: lr.id, op: 'core.math', at: 0.3, withNode: ref.id });
-  await e.setParam(coh.id, 'op', 'a*conj(b)');
+  await e.setParam(coh.id, 'op', 'a/b');
 
-  const sumR = await e.addNode({ parent: sum.id, op: 'core.real', at: 0.3 });
-  const diffR = await e.addNode({ parent: coh.id, op: 'core.real', at: 0.3 });
-  return { sumR: e.node(sumR.id), diffR: e.node(diffR.id), rate: rate / DECIM, nodes: { sum, pilot, lr, ref, coh } };
+  const level = async (parent) => {
+    const r = await e.addNode({ parent: parent.id, op: 'core.real', at: 0.6 });
+    const g = await e.addNode({ parent: r.id, op: 'core.gain', at: 0.6 });
+    return e.node(g.id);
+  };
+  const sumR = await level(sum);
+  const diffR = await level(e.node(coh.id));
+  return { sumR, diffR, rate: rate / DECIM, nodes: { sum, pilot, lr, ref, coh } };
 }
 
 test('the drawn chain recovers left and right, and keeps them apart', async () => {
   const { e, fm } = await station();
   const { sumR, diffR, rate } = await drawn(e, fm);
 
-  const count = 1 << 15, at = 0.4;
+  const count = 1 << 13, at = 0.9;
   const S = e._detect(sumR, at, count);
   const D = e._detect(diffR, at, count);
 
-  // The two branches carry wildly different scales — the difference rode a conjugate
-  // product, so it is multiplied by the pilot's power. Matrixing needs them balanced, and
-  // the tone that is in both channels is what balances them: L+R has it at full strength
-  // and L-R has none of it, so the 400 Hz and 3 kHz amplitudes are what to match on.
-  const sTone = amplitudeAt(S, rate, L_HZ) + amplitudeAt(S, rate, R_HZ);
-  const dTone = amplitudeAt(D, rate, L_HZ) + amplitudeAt(D, rate, R_HZ);
-  const g = sTone / dTone;
-
+  // No number supplied here. Both branches came through a Gain that derived itself, so
+  // the matrix is what a matrix should be — a sum and a difference and nothing else.
   const left = new Float32Array(count), right = new Float32Array(count);
-  for (let i = 0; i < count; i++) {
-    left[i] = S[i] + D[i] * g;
-    right[i] = S[i] - D[i] * g;
-  }
+  for (let i = 0; i < count; i++) { left[i] = S[i] + D[i]; right[i] = S[i] - D[i]; }
+
   const sepL = db(amplitudeAt(left, rate, L_HZ), amplitudeAt(left, rate, R_HZ));
   const sepR = db(amplitudeAt(right, rate, R_HZ), amplitudeAt(right, rate, L_HZ));
   assert.ok(sepL > 20, `left keeps the right channel ${sepL.toFixed(1)} dB down`);
   assert.ok(sepR > 20, `right keeps the left channel ${sepR.toFixed(1)} dB down`);
   if (process.env.SDRFLEX_SHOW) console.log(`    drawn: ${sepL.toFixed(1)} / ${sepR.toFixed(1)} dB`);
+});
+
+test('the gain derives itself, and says what off it', async () => {
+  const { e, fm } = await station();
+  const { diffR } = await drawn(e, fm);
+  assert.equal(diffR.op, 'core.gain');
+  assert.equal(diffR.params.gainDb.mode, 'auto');
+  assert.equal(diffR.params.gainDb.auto.confident, true);
+  assert.match(diffR.params.gainDb.auto.from, /its level is .* brings it to 0\.25/,
+               diffR.params.gainDb.auto.from);
+  const out = e._detect(diffR, 0.9, 1 << 13);
+  let s2 = 0;
+  for (let i = 500; i < out.length - 500; i++) s2 += out[i] * out[i];
+  const rms = Math.sqrt(s2 / (out.length - 1000));
+  assert.ok(Math.abs(rms - 0.25) < 0.1, `and lands near it: ${rms.toFixed(3)}`);
+});
+
+test('dividing by the reference is what makes the branches commensurable', async () => {
+  // `a × conj(b)` is the same phase comparison with the reference's power left in, so its
+  // output scales with the pilot's strength and the other branch's does not. On a signal
+  // whose pilot is at 10% injection that is two orders of magnitude of mismatch, and it
+  // is the number the test used to have to supply by hand.
+  const { e, fm } = await station();
+  const { nodes } = await drawn(e, fm);
+  const quot = e._readIQ(e.node(nodes.coh.id), 0.9, 1 << 12);
+  await e.setParam(nodes.coh.id, 'op', 'a*conj(b)');
+  const prod = e._readIQ(e.node(nodes.coh.id), 0.9, 1 << 12);
+  const power = (d) => { let s2 = 0; for (let i = 300; i < d.length / 2 - 300; i++) s2 += d[i * 2] ** 2 + d[i * 2 + 1] ** 2; return s2; };
+  const apart = 10 * Math.log10(power(quot) / power(prod));
+  assert.ok(apart > 20, `the quotient and the product are ${apart.toFixed(0)} dB apart in scale`);
 });
 
 test('every step of it is a node with something to look at', async () => {
@@ -199,7 +232,7 @@ test('every step of it is a node with something to look at', async () => {
   const { e, fm } = await station();
   const { nodes } = await drawn(e, fm);
   for (const [name, n] of Object.entries(nodes)) {
-    const f = e.frame(n.id, { bins: 1024, window: 'Hann', at: 0.4 });
+    const f = e.frame(n.id, { bins: 1024, window: 'Hann', at: 0.6 });
     assert.equal(f.kind, 'spectrum', `${name} draws a spectrum`);
     const spread = Math.max(...f.data) - Math.min(...f.data);
     assert.ok(spread > 3, `${name} has something in it, not a flat line`);
@@ -213,11 +246,11 @@ test('the reference really is the pilot doubled, not the pilot', async () => {
   // product against it will undo.
   const { e, fm } = await station();
   const { nodes } = await drawn(e, fm);
-  const count = 1 << 14, at = 0.4;
+  const count = 1 << 13, at = 0.9;
   const p = e._readIQ(nodes.pilot, at, count);
   const r = e._readIQ(nodes.ref, at, count);
   let worst = 0;
-  for (let i = 2000; i < count - 2000; i++) {
+  for (let i = 500; i < count - 500; i++) {
     const wr = p[i * 2] * p[i * 2] - p[i * 2 + 1] * p[i * 2 + 1];
     const wi = 2 * p[i * 2] * p[i * 2 + 1];
     worst = Math.max(worst, Math.hypot(r[i * 2] - wr, r[i * 2 + 1] - wi));
@@ -230,9 +263,9 @@ test('and the node it spells out gets a similar answer', async () => {
   // the drawn chain does not, so their gains differ — but the separation should be in the
   // same range, because it is the same decode.
   const { e, fm } = await station();
-  const st = await e.addNode({ parent: fm.id, op: 'core.stereo', at: 0.3 });
+  const st = await e.addNode({ parent: fm.id, op: 'core.stereo', at: 0.6 });
   await e.setParam(st.id, 'deemphasisUs', 0);
-  const count = 1 << 15, at = 0.4;
+  const count = 1 << 13, at = 0.9;
   const lr = e._detect(e.node(st.id), at, count);
   const rate = st.out.sampleRate;
   const pick = (c) => { const o = new Float32Array(count); for (let i = 0; i < count; i++) o[i] = lr[i * 2 + c]; return o; };

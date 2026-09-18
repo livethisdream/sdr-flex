@@ -47,8 +47,8 @@ It has already paid once. There was briefly a `core.analytic` — a Hilbert tran
 make a composite complex so a tuner could be drawn on it — and asking "which block is
 this" is what removed it: `freq_xlating_fir_filter_fcf` takes a float input, because a
 mixer does not need the signal to be complex first. One node fewer, no transformer, and
-the separation the drawn stereo decode achieves went from 72 dB to 85, because the
-Hilbert's image rejection had been the limit.
+no image-rejection floor at the bottom of the band, where a Hilbert has nothing to say
+because the phase shift it is asked for at DC is undefined.
 
 What is being built here is not the arithmetic. The M0 engine is a mock
 ([ADR-0021](adr/0021-mock-engine-first.md)) and `web/src/dsp.js` says so in its first

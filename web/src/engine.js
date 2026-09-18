@@ -40,6 +40,30 @@ const instant = () => Promise.resolve();
 let nextId = 0;
 const nid = (p) => `${p}${++nextId}`;
 
+/**
+ * What a derived gain aims at.
+ *
+ * The same number the audio sink's own AGC targets, so a stream brought here by hand and
+ * one brought there automatically arrive at the same loudness — and two branches
+ * normalized separately can be matrixed against each other without a second correction.
+ */
+const GAIN_TARGET = 0.25;
+
+/** Everything in a stream multiplied by one number, given in decibels. */
+function scaled(x, gainDb) {
+  const g = Math.pow(10, Number(gainDb) / 20);
+  const out = new Float32Array(x.length);
+  for (let i = 0; i < x.length; i++) out[i] = x[i] * g;
+  return out;
+}
+
+/** RMS of an interleaved or plain stream. */
+function levelOf(data, count, stride) {
+  let s = 0;
+  for (let i = 0; i < count * stride; i++) s += data[i] * data[i];
+  return Math.sqrt(s / Math.max(1, count * stride));
+}
+
 /** A real stream as IQ with nothing in the imaginary part, for a mixer to take. */
 function interleave(x, count) {
   const out = new Float32Array(count * 2);
@@ -185,6 +209,15 @@ export const OPS = {
   // and worse near DC.
   'core.real': {
     name: 'To real', group: 'Convert', in: 'iq', out: 'real',
+  },
+
+  // `multiply_const`, and the node that lets a chain of arithmetic end at a level
+  // anything downstream can use. A conjugate product comes out scaled by the power of
+  // whatever it was compared against, and a matrix between two branches needs them at the
+  // same size — so somewhere between the arithmetic and the speaker there has to be one
+  // number, and this is it.
+  'core.gain': {
+    name: 'Gain', group: 'Convert', in: ['iq', 'real'], out: 'same',
   },
 
   // The first operation with two inputs (ADR-0038). It is what makes a decode something
@@ -1298,6 +1331,28 @@ export class MockEngine extends Graph {
         node.out = { kind: 'events', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
         node.label = 'Hop map';
       }
+    } else if (op === 'core.gain') {
+      // Derived, like everything else (ADR-0017): measure what is there and say what it
+      // would take to bring it to a level a speaker or a matrix can use. So a gain of
+      // +38 dB arrives explaining itself rather than sitting there as a number somebody
+      // has to discover by turning it.
+      const fs = p.out.sampleRate;
+      const { count, at } = this._peekWindow(fs, now);
+      const stride = p.out.kind === 'iq' ? 2 : 1;
+      const rms = levelOf(stride === 2 ? this._readIQ(p, at, count) : this._detectMono(p, at, count),
+                          count, stride);
+      const want = rms > 1e-9 ? 20 * Math.log10(GAIN_TARGET / rms) : 0;
+      node.params = {
+        gainDb: param(Math.round(want * 10) / 10, 'auto', {
+          from: `its level is ${rms.toExponential(1)} and this brings it to ${GAIN_TARGET}`,
+          confident: rms > 1e-9,
+        }),
+      };
+      node.out = {
+        kind: p.out.kind, sampleRate: p.out.sampleRate, centerHz: p.out.centerHz,
+        ...(p.out.channels > 1 ? { channels: p.out.channels } : {}),
+      };
+      node.label = 'Gain';
     } else if (op === 'core.real') {
       node.params = {};
       node.out = { kind: 'real', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
@@ -1635,6 +1690,7 @@ export class MockEngine extends Graph {
     }
 
     if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
+    if (node.op === 'core.gain') return scaled(this._readIQ(p, tEnd, count), node.params.gainDb.value);
 
     if (node.op === 'core.dehop') {
       // Same length and same time base as its parent, because it corrects rather than
@@ -1922,14 +1978,25 @@ export class MockEngine extends Graph {
       const i = k * stride, j = (2 * pad + k) * stride;
       if (!iq) {
         const x = A[i], y = shifted[j];
-        out[i] = how === 'a+b' ? x + y : how === 'a-b' ? x - y : x * y;
+        out[i] = how === 'a+b' ? x + y : how === 'a-b' ? x - y
+               : how === 'a/b' ? (Math.abs(y) > 1e-10 ? x / y : 0) : x * y;
         continue;
       }
       const ar = A[i], ai = A[i + 1], br = shifted[j], bi = shifted[j + 1];
       if (how === 'a+b') { out[i] = ar + br; out[i + 1] = ai + bi; }
       else if (how === 'a-b') { out[i] = ar - br; out[i + 1] = ai - bi; }
       else if (how === 'a*b') { out[i] = ar * br - ai * bi; out[i + 1] = ar * bi + ai * br; }
-      else { out[i] = ar * br + ai * bi; out[i + 1] = ai * br - ar * bi; }   // a × conj(b)
+      else if (how === 'a*conj(b)') { out[i] = ar * br + ai * bi; out[i + 1] = ai * br - ar * bi; }
+      else {
+        // a ÷ b, which is the conjugate product with the reference's own power divided
+        // back out — `divide_cc`. That difference is the whole of what separates a phase
+        // comparison that survives a fading signal from one that fades with it: the
+        // product's amplitude rides on `b` and the quotient's does not.
+        const m = br * br + bi * bi;
+        const k = m > 1e-20 ? 1 / m : 0;
+        out[i] = (ar * br + ai * bi) * k;
+        out[i + 1] = (ai * br - ar * bi) * k;
+      }
     }
     return { data: out, shiftSamples: align.shiftSamples };
   }
@@ -1950,6 +2017,7 @@ export class MockEngine extends Graph {
     const fs = node.out.sampleRate;
     if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
     if (node.op === 'core.real') return dsp.realPart(this._readIQ(p, tEnd, count), count);
+    if (node.op === 'core.gain') return scaled(this._detect(p, tEnd, count), node.params.gainDb.value);
     if (p.out.kind === 'real') {
       return realOp(node.op, this._detectMono(p, tEnd, count), count, fs, node.params).data;
     }
