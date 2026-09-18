@@ -160,6 +160,23 @@ export const OPS = {
   'core.raster': {
     name: 'Raster', group: 'Analyze', in: ['iq', 'real'], out: 'grid',
   },
+  // ── between the two representations ──────────────────────────────────────
+  //
+  // Everything that moves a signal in frequency takes IQ, because a mixer needs a complex
+  // input or it folds the negative half of the spectrum onto the positive one. A
+  // composite is real. So until there was a way across, a demodulated stream could be
+  // looked at (ADR-0036) and not tuned into — and the whole argument for drawing a decode
+  // rather than invoking it (ADR-0038) stopped at the first box.
+  //
+  // Two operations rather than one, because the way back matters as much: a chain of
+  // tuners and arithmetic ends in IQ, and a speaker takes a real stream.
+  'core.analytic': {
+    name: 'To IQ', group: 'Convert', in: 'real', out: 'iq',
+  },
+  'core.real': {
+    name: 'To real', group: 'Convert', in: 'iq', out: 'real',
+  },
+
   // The first operation with two inputs (ADR-0038). It is what makes a decode something
   // you can draw rather than something you invoke: the stereo decoder, spelled out, is a
   // tuner on the pilot, a tuner on the subcarrier, and this between them.
@@ -1266,6 +1283,29 @@ export class MockEngine extends Graph {
         node.out = { kind: 'events', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
         node.label = 'Hop map';
       }
+    } else if (op === 'core.analytic') {
+      node.params = {
+        // More taps reach closer to DC. A Hilbert transformer cannot do anything at all
+        // at zero frequency — the phase shift it is asked for is undefined there — so its
+        // image rejection falls away at the bottom of the band: measured on this
+        // implementation at 160 kS/s, 129 taps gives 47 dB at 2 kHz, 16 dB at 1 kHz and
+        // 8 dB at 500 Hz, against 58 dB and better everywhere above 5 kHz.
+        //
+        // For a composite that is the right trade by a distance: the pilot, the stereo
+        // subcarrier and RDS all live where it is good, and what leaks at the bottom of
+        // the audio band is a conjugate copy of a real signal, which comes back as a small
+        // gain error rather than as something that was not there.
+        taps: param(129, 'manual'),
+      };
+      // Zero, and deliberately. The frequencies in this stream are baseband offsets — the
+      // pilot is 19 kHz from DC, not 19 kHz from wherever the radio was tuned — so a
+      // tuner built on it reads in the units the composite is actually in.
+      node.out = { kind: 'iq', sampleRate: p.out.sampleRate, centerHz: 0 };
+      node.label = 'To IQ';
+    } else if (op === 'core.real') {
+      node.params = {};
+      node.out = { kind: 'real', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = 'To real';
     } else if (op === 'core.math') {
       // It arrives with one input and says so, the way the slicers arrive undecided:
       // choosing the other one is a question about the graph, and the graph is on screen
@@ -1575,11 +1615,26 @@ export class MockEngine extends Graph {
       const need = count * decim + taps.length;
       const src = this._readIQ(p, tEnd, need);
       const offset = node.params.centerHz.value - p.out.centerHz;
-      const startPhase = (-2 * Math.PI * offset * Math.max(0, tEnd)) % (2 * Math.PI);
+      // The mixer's phase is referenced to the **first sample of the window**, not to its
+      // end — which is a different number for every window length, because `need` depends
+      // on how many samples were asked for.
+      //
+      // Referenced to `tEnd` it was: the same tuner, asked for the same moment, handed
+      // back a different phase depending on the count. Forty-eight extra samples on a
+      // 19 kHz offset moved it seventy-two degrees. Nothing noticed for as long as
+      // everything downstream looked at magnitudes — a spectrum, a waterfall, an
+      // envelope — and it makes a tuner unusable for anything coherent, which is to say
+      // for everything ADR-0038 exists for.
+      const startAt = Math.floor(tEnd * p.out.sampleRate) - need;
+      const startPhase = (-2 * Math.PI * offset * (startAt / p.out.sampleRate)) % (2 * Math.PI);
       return dsp.xlateFilterDecimate(src, taps, offset, p.out.sampleRate, decim, count, startPhase).samples;
     }
 
     if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
+
+    if (node.op === 'core.analytic') {
+      return dsp.analytic(this._detectMono(p, tEnd, count), count, node.params.taps.value);
+    }
 
     if (node.op === 'core.dehop') {
       // Same length and same time base as its parent, because it corrects rather than
@@ -1894,6 +1949,7 @@ export class MockEngine extends Graph {
     const p = this.node(node.parent);
     const fs = node.out.sampleRate;
     if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
+    if (node.op === 'core.real') return dsp.realPart(this._readIQ(p, tEnd, count), count);
     if (p.out.kind === 'real') {
       return realOp(node.op, this._detectMono(p, tEnd, count), count, fs, node.params).data;
     }

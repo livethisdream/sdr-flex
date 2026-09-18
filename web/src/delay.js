@@ -84,6 +84,15 @@ export function ownDelaySamples(node, parentOut) {
     case 'core.math':
       return 0;
 
+    // Crossing between the two representations moves nothing in time. The Hilbert
+    // transformer inside `core.analytic` has a group delay like any filter, and it is
+    // taken off the imaginary part rather than added to the real one, so both halves come
+    // out where they went in. That is not incidental — a chain of these has to stay
+    // aligned without every node in it having to compensate.
+    case 'core.analytic':
+    case 'core.real':
+      return 0;
+
     default:
       // A node that does not carry a stream has no delay worth the word: a slicer emits
       // bits, a decoder emits records, and neither is something anything else lines up

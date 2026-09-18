@@ -35,6 +35,29 @@ The rule that falls out: **we own everything up to a named protocol, and borrow 
 named protocol.** `rtl_433` is not competing with our slicer — it is what you reach for
 when you do not want to build one.
 
+### "These are GNU Radio blocks"
+
+They are, and that is the plan rather than an accident. `core.math` is `add_cc`,
+`multiply_cc` and `multiply_conjugate_cc`; `core.real` is `complex_to_real`;
+`core.analytic` is `hilbert_fc`; the tuner is `freq_xlating_fir_filter_ccf`. GNU Radio
+settled this vocabulary decades ago and inventing a different one would be a way of being
+wrong on purpose.
+
+What is being built here is not the arithmetic. The M0 engine is a mock
+([ADR-0021](adr/0021-mock-engine-first.md)) and `web/src/dsp.js` says so in its first
+paragraph: small, unoptimized, there to test how the workflow feels. The parts that are
+actually hard, and that no existing tool hands over, are the ones around it — a type
+system that decides what can connect to what (ADR-0006), a graph that knows when each
+node's samples are from so two branches can be combined at all (ADR-0038), and an
+interface where you draw the thing rather than write it. At M1 each of these nodes
+compiles to the GR block it already is
+([ADR-0003](adr/0003-gnuradio-in-worker-processes.md),
+[ADR-0032](adr/0032-a-flowgraph-is-a-program.md)), which is the whole reason the flow view
+has said "Export to `.grc` arrives with the real engine" since it was written.
+
+So the test for a new primitive here is not "is it novel" — it is **"does it map cleanly
+onto the block that already exists"**. Where it does not, the design is probably wrong.
+
 ---
 
 ## Wave 1 — the native detectors (M3)

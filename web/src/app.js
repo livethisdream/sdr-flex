@@ -181,7 +181,9 @@ class App {
    */
   eligibleInputs(n) {
     return [...this.engine.nodes.values()]
-      .filter((x) => x.out && x.out.kind === n.out.kind && x.id !== n.parent)
+      // The primary is in the list on purpose: a node against itself is how you square
+      // one, and squaring the pilot is exactly how a 38 kHz reference gets made.
+      .filter((x) => x.out && x.out.kind === n.out.kind)
       .filter((x) => this.engine.canFeed(x.id, n.id));
   }
 

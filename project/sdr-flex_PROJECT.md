@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built — two-input nodes and `core.math`) · merged to `main`
+**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built; the stereo decode drawn as a graph) · merged to `main`
 
 **`main` is the default branch**, as of this session. It was
 `claude/sdr-flex-toolkit-planning-c4ghl1` — the branch this project happened to be
@@ -110,7 +110,7 @@ Working end to end:
   Measured separation is 54–62 dB in the browser on a synthetic station; a good receiver
   off the air manages thirty to forty. De-emphasis lives here too, and nowhere upstream
 
-Tests: 358 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 365 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -692,17 +692,23 @@ house rule.
   Not built: rate conversion inside a merge. Both inputs must be at the same rate and it
   says so, naming both — which makes setting two tuners to the same decimation a thing
   you do on purpose.
-- **The transparent stereo chain is now buildable but not built.** `core.math` plus
-  hand-drawn tuners on the baseband spectrum spells the whole decoder — a tuner on the
-  sum, one on the pilot, one on the subcarrier, a squarer to double the pilot, and a
-  conjugate product against it. What is missing for it is small and specific: a
-  `real → iq` node (analytic signal; `dsp.hilbertTaps` is already there for SSB), because
-  tuners take `iq` and a composite is `real`. Worth doing, because `core.stereo` is the
-  opaque node and the tool is supposed to have both.
+- ~~**The transparent stereo chain.**~~ Built and asserted
+  (`web/test/drawn-stereo.test.mjs`): `core.analytic` makes the composite complex, three
+  hand-drawn tuners take the sum, the pilot and the subcarrier, `core.math` squares the
+  pilot to make the 38 kHz reference and takes the conjugate product against it, and
+  `core.real` comes back out. **72 dB of separation, against 59 dB for `core.stereo`** —
+  the drawn version is better, because its tuners are narrower than the opaque node's
+  fixed filters.
 
-  And the trap, written down so nobody rediscovers it: a tuner on 38 kHz plus a detector
-  gives |L−R|, not L−R. The sign is gone, you get a fuzzy mono, and it looks like it
-  worked.
+  What it still lacks is a gain node: the difference branch rides a conjugate product, so
+  its scale is the pilot's power, and the matrix needs the two branches balanced. The test
+  supplies the one number a `core.gain` would.
+
+  **Worth reconsidering:** `core.analytic` may not need to exist. GNU Radio's
+  `freq_xlating_fir_filter_fcf` takes a *float* input, so a tuner could accept `real`
+  directly — one node fewer, no Hilbert, and no poor image rejection near DC. The cost is
+  widening the most load-bearing node in the tool, and the baseband-versus-RF axis
+  question follows it down the chain. Its own pass.
 - **Nothing carries audio back into the graph**, which bites RDS too: `redsea --feed-through`
   echoes the composite while it decodes, and there is nowhere for that to go. Same gap
   as M17's decoded voice, listed below.

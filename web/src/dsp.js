@@ -519,6 +519,48 @@ export function cwBeat(iq, count, sampleRate, offsetHz, pitchHz) {
 
 // ── Estimators for the detectors ───────────────────────────────────────────
 
+/**
+ * A real stream as an analytic one: the same signal, with a quadrature half.
+ *
+ * The point is that everything in this engine that *moves* a signal in frequency takes
+ * IQ. A tuner is a mixer and a mixer needs a complex input or it folds the negative
+ * frequencies on top of the positive ones — so a composite, which is real, cannot be
+ * tuned into until it has one. Hence this: the one operation that turns `real` into `iq`
+ * without pretending the signal came off an antenna (ADR-0038).
+ *
+ * The quadrature half is a Hilbert transform, which is the same filter `ssbDemod` uses
+ * for the same reason. Both halves come out **centred** — the transformer's own delay is
+ * taken off the imaginary part rather than added to the real one — so this node adds no
+ * delay at all and a chain built out of it stays aligned without anything having to know.
+ *
+ * What comes out is one-sided: the negative half of its spectrum is empty, and the
+ * positive half holds what the real signal held. Frequencies in it are baseband offsets,
+ * so 19 kHz means 19 kHz from DC and not from wherever the radio was tuned.
+ */
+export function analytic(x, count, numTaps = 65) {
+  const h = hilbertTaps(numTaps);
+  const q = fir(x.subarray(0, count), h);
+  const out = new Float32Array(count * 2);
+  for (let i = 0; i < count; i++) {
+    out[i * 2] = x[i];
+    out[i * 2 + 1] = q[i];
+  }
+  return out;
+}
+
+/**
+ * The real part of an IQ stream, and the exact inverse of `analytic` on one it produced.
+ *
+ * Not a detector — a detector answers a question about a signal, and this answers none.
+ * It is the other half of moving between the two representations, and it is what turns
+ * the end of a chain of tuners and arithmetic back into something a speaker can take.
+ */
+export function realPart(iq, count) {
+  const out = new Float32Array(count);
+  for (let i = 0; i < count; i++) out[i] = iq[i * 2];
+  return out;
+}
+
 // ── FM stereo ──────────────────────────────────────────────────────────────
 //
 // The composite an FM broadcast discriminator hands back is three things stacked in
