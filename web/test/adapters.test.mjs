@@ -35,7 +35,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ADAPTERS, available, resolve, list, run, convert, wants as adapterWants } from '../../server/adapters.js';
+import { ADAPTERS, available, resolve, list, run, convert, multimonDemods, wants as adapterWants } from '../../server/adapters.js';
 import * as mod from './support/modulate.mjs';
 import { demodulate } from '../src/engine.js';
 
@@ -377,6 +377,48 @@ test('multimon-ng reads Morse', async (t) => {
   // break a parser that glued every unprefixed line onto the record above it.
   assert.match(texts(out), /CQ DE N0CALL/);
   assert.ok(!out.records.some((r) => r.envelope), 'and nothing gets folded into anything');
+});
+
+// The `modes` control was a text field, and a text field is the wrong shape for a set
+// whose members are fixed, finite and published by the program itself. These three say
+// what the list has to keep true, because all three failure modes were live: a name the
+// binary does not have makes multimon-ng exit 2 and decode nothing at all; the list the
+// UI offers has to come from the binary rather than from a constant here; and the
+// speculative pass has to stay narrower than the control, which is the opposite of what
+// "cast the widest net" sounds like.
+
+test('the demodulator list comes from the installed binary', (t) => {
+  if (skip(t, 'ext.multimon')) return;
+  const modes = list().find((a) => a.id === 'ext.multimon').params.find((p) => p.id === 'modes');
+  assert.equal(modes.type, 'multi', 'a set is picked from, not typed');
+  assert.ok(Array.isArray(modes.values) && modes.values.length >= 10,
+            `expected a probed list, got ${JSON.stringify(modes.values)}`);
+  assert.ok(modes.values.includes('POCSAG1200'));
+  // Debugging sinks are not demodulators and produce no record, so they are not offered.
+  assert.ok(!modes.values.includes('SCOPE') && !modes.values.includes('DUMPCSV'));
+  for (const m of String(modes.default).split(' ')) {
+    assert.ok(modes.values.includes(m), `the default names ${m}, which is not on offer`);
+  }
+});
+
+test('a demodulator this build has not got is dropped, not passed through', (t) => {
+  if (skip(t, 'ext.multimon')) return;
+  const args = ADAPTERS['ext.multimon'].args({ params: { modes: 'AFSK1200 NOTAREALDEMOD' } });
+  assert.deepEqual(args.filter((a, i) => args[i - 1] === '-a'), ['AFSK1200'],
+                   'one unknown name must not cost the decodes of the others');
+});
+
+test('the speculative pass is narrower than the list on offer', (t) => {
+  if (skip(t, 'ext.multimon')) return;
+  const have = multimonDemods();
+  const sweep = ADAPTERS['ext.multimon'].sweep().modes.split(' ');
+  assert.ok(sweep.length < have.length, 'sweeping everything is not the same as sweeping well');
+  for (const m of sweep) assert.ok(have.includes(m), `sweep names ${m}, which is not installed`);
+  // The tone decoders print on noise. identify.test.mjs is where that is measured; this
+  // just holds the line, because the fix is one edit away from being undone.
+  for (const m of ['ZVEI1', 'ZVEI2', 'EEA', 'EIA', 'CCIR']) {
+    assert.ok(!sweep.includes(m), `${m} emits a record per tone it thinks it heard`);
+  }
 });
 
 test('direwolf reads AX.25 over Bell 202', async (t) => {

@@ -104,24 +104,56 @@ export const ADAPTERS = {
     blurb: 'POCSAG, FLEX, AFSK, DTMF, ZVEI and more',
     // multimon-ng is fixed at 22.05 kHz signed 16-bit mono, and says so if you disagree
     wants: { format: 's16', rate: 22_050 },
+    // A set chosen from a list, not a string somebody types.
+    //
+    // It was a text field, and the two ways anybody would naturally fill one in both
+    // fail: `DTMF,FLEX` — commas, the obvious separator — and any misremembered name
+    // make multimon-ng exit 2, and what it prints on the way out is the tail of its
+    // usage message, which talks about sample rates. So a typo reads as a rate problem
+    // and the field looks like it does not work. It did work; it was unusable.
+    //
+    // The valid members are fixed, finite, case-insensitive and published by the program
+    // itself, which is the definition of a list to pick from.
     params: [
-      { id: 'modes', type: 'text', default: 'POCSAG512 POCSAG1200 POCSAG2400',
-        label: 'demodulators', placeholder: 'POCSAG1200 FLEX AFSK1200 DTMF MORSE_CW',
-        hint: 'space-separated: POCSAG512/1200/2400, FLEX, AFSK1200/2400, FSK9600, ' +
-              'DTMF, MORSE_CW, ZVEI1/2/3, EAS, X10. Each one costs CPU, so it is a ' +
-              'list rather than everything' },
+      { id: 'modes', type: 'multi', default: 'POCSAG512 POCSAG1200 POCSAG2400',
+        label: 'demodulators', values: () => multimonDemods(),
+        hint: 'each one costs CPU, so this is a list rather than everything' },
     ],
     // What "try everything" means here. `Identify` asks each adapter for the settings
     // that make it cast the widest net it usefully can, because only the adapter knows:
     // for multimon-ng that is a long -a list, each entry costing CPU, which is exactly
     // the trade a speculative pass should make and a default should not.
-    sweep: { modes: 'POCSAG512 POCSAG1200 POCSAG2400 FLEX AFSK1200 AFSK2400 FSK9600 ' +
-                    'DTMF MORSE_CW ZVEI1 EAS X10' },
-    args: ({ params }) => [
-      '-t', 'raw',
-      ...String(params.modes || 'POCSAG1200').trim().split(/\s+/).filter(Boolean).flatMap((m) => ['-a', m]),
-      '-',
-    ],
+    //
+    // Not everything the binary has, though the control above now offers everything.
+    // A speculative pass is judged on its false positives, and the tone demodulators
+    // multimon-ng ships (the ZVEI/EEA/EIA/CCIR selcall family) emit a record per tone
+    // they think they heard, so they print on noise. Measured: with the full list, the
+    // `manchester-crc` fixture — a single symbol out of noise, nothing multimon-ng
+    // decodes — came back with four non-thin records. Curated, it comes back empty,
+    // which is the true answer. The list below is the demodulators that need a framed,
+    // checksummed packet before they will say anything, plus DTMF and MORSE_CW, which
+    // are the two tone decoders worth the risk because a person actually sweeps for
+    // them. Intersected with what this build has, so it never names one the binary
+    // lacks.
+    sweep: () => {
+      const have = new Set(multimonDemods());
+      return { modes: SWEEP_DEMODS.filter((m) => have.has(m)).join(' ') };
+    },
+    args: ({ params }) => {
+      const have = new Set(multimonDemods());
+      // Filtered against what the binary actually has. It cannot come from the control
+      // any more, but a graph saved on a box with a newer multimon-ng can still name
+      // FLEX_NEXT at one that has not got it — and losing that one demodulator is a
+      // better outcome than the alternative, which is multimon-ng exiting 2 and decoding
+      // none of the others either.
+      const want = String(params.modes || 'POCSAG1200').trim().split(/\s+/)
+        .filter((m) => have.has(m.toUpperCase()));
+      return [
+        '-t', 'raw',
+        ...(want.length ? want : ['POCSAG1200']).flatMap((m) => ['-a', m]),
+        '-',
+      ];
+    },
     // multimon-ng prints an AX.25 packet as two lines — "AFSK1200: fm N0CALL-0 to
     // APRS-0 UI  pid=F0" and then the payload on its own. Read as plain lines that is
     // two records, one of which is a header with no message and one a message with no
@@ -666,6 +698,46 @@ function commandNames(a) {
   return (Array.isArray(a.command) ? a.command : [a.command]).join(' / ');
 }
 
+/**
+ * What this build of multimon-ng can actually demodulate.
+ *
+ * Asked, not assumed. It prints `Available demodulators: …` in its banner on any
+ * invocation, and the list has grown over the years — FLEX_NEXT, AFSK2400_2 and
+ * AFSK2400_3 are not in older builds, and a menu offering something the installed binary
+ * rejects is the same failure this control was rewritten to remove.
+ *
+ * Probed once and cached beside the other probes. `DUMPCSV` and `SCOPE` come out: they
+ * are debugging sinks rather than demodulators, and neither produces a record.
+ */
+const NOT_DEMODS = new Set(['DUMPCSV', 'SCOPE']);
+let MULTIMON_DEMODS = null;
+
+/**
+ * What a speculative pass asks multimon-ng for. See the note on `ext.multimon`'s
+ * `sweep`: this is deliberately shorter than what the binary has.
+ */
+const SWEEP_DEMODS = ['POCSAG512', 'POCSAG1200', 'POCSAG2400', 'FLEX', 'AFSK1200',
+                      'AFSK2400', 'FSK9600', 'DTMF', 'MORSE_CW', 'EAS', 'X10'];
+
+export function multimonDemods() {
+  if (MULTIMON_DEMODS) return MULTIMON_DEMODS;
+  const fallback = ['POCSAG512', 'POCSAG1200', 'POCSAG2400', 'FLEX', 'EAS', 'UFSK1200',
+                    'CLIPFSK', 'AFSK1200', 'AFSK2400', 'HAPN4800', 'FSK9600', 'DTMF',
+                    'ZVEI1', 'ZVEI2', 'ZVEI3', 'DZVEI', 'PZVEI', 'EEA', 'EIA', 'CCIR',
+                    'MORSE_CW', 'X10'];
+  const command = resolve('ext.multimon');
+  if (!command) return fallback;
+  try {
+    const r = spawnSync(command, ['-h'], { timeout: 10_000, encoding: 'utf8' });
+    const line = /Available demodulators:([^\n]*)/.exec(`${r.stdout || ''}${r.stderr || ''}`);
+    const found = line ? line[1].trim().split(/\s+/).filter((d) => d && !NOT_DEMODS.has(d)) : [];
+    MULTIMON_DEMODS = found.length ? found : fallback;
+  } catch {
+    MULTIMON_DEMODS = fallback;
+  }
+  return MULTIMON_DEMODS;
+}
+
 /** Every adapter, with whether it could actually run here. */
 export function list() {
   return Object.entries(all()).map(([id, a]) => {
@@ -675,8 +747,13 @@ export function list() {
       // The name it will actually run under, when there is one — a box with
       // dump1090-mutability should say so rather than claim a binary it does not have.
       command: a.module ? commandNames(a) : (found || commandNames(a)),
-      blurb: a.blurb, params: a.params,
-      sweep: a.sweep || null, wants: wants(a, defaults(a)),
+      // A parameter whose choices depend on what is installed asks for them here, the
+      // same way `wants` is asked rather than read — the client has no way to run a
+      // program and must never need one (ADR-0029).
+      blurb: a.blurb, params: (a.params || []).map(
+        (pm) => (typeof pm.values === 'function' ? { ...pm, values: pm.values() } : pm)),
+      sweep: (typeof a.sweep === 'function' ? a.sweep() : a.sweep) || null,
+      wants: wants(a, defaults(a)),
       // The narrowest stream this decoder could possibly read, when it has an opinion.
       ...(a.minRate ? { minRate: a.minRate } : {}),
       available: available(id),

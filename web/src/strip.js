@@ -206,6 +206,16 @@ export class Strip {
       const label = (v) => (spec.fmt ? spec.fmt(v) : v);
       body = `<div class="popopts">${spec.values.map((v) =>
         `<button class="opt${String(v) === String(spec.value) ? ' on' : ''}" data-v="${v}">${label(v)}</button>`).join('')}</div>`;
+    } else if (spec.type === 'multi') {
+      // A set, not a choice. The valid members are a fixed list the program itself
+      // publishes, so typing them was asking somebody to remember two dozen
+      // case-sensitive names and a separator — and getting either wrong produced no
+      // decode and a usage message about sample rates.
+      const on = new Set(String(spec.value || '').trim().split(/\s+/).filter(Boolean));
+      body = `<div class="popopts multi">${spec.values.map((v) =>
+        `<button class="opt${on.has(v) ? ' on' : ''}" data-m="${v}">` +
+        `<i class="tick">${on.has(v) ? '✓' : ''}</i>${spec.fmt ? spec.fmt(v) : v}</button>`).join('')}</div>` +
+        (spec.hint ? `<div class="popnote">${spec.hint}</div>` : '');
     } else if (spec.type === 'text') {
       // A sync word is something you know and type, not something you slide to. It
       // had been falling through to the numeric control, which put a range slider
@@ -238,8 +248,24 @@ export class Strip {
       if (out) out.textContent = (s.fmt ? s.fmt(v) : v) + (s.unit ? ' ' + s.unit : '');
     };
 
-    for (const b of this.pop.querySelectorAll('.opt')) {
+    for (const b of this.pop.querySelectorAll('.opt[data-v]')) {
       b.addEventListener('click', () => { commit(b.dataset.v); this.closePop(); });
+    }
+    // A multi-select stays open: picking three of something is three clicks, and a
+    // popover that closed after each one would be three trips back to the pill.
+    for (const b of this.pop.querySelectorAll('.opt[data-m]')) {
+      b.addEventListener('click', () => {
+        const chosen = [...this.pop.querySelectorAll('.opt[data-m].on')].map((x) => x.dataset.m);
+        const next = b.classList.contains('on')
+          ? chosen.filter((v) => v !== b.dataset.m)
+          : chosen.concat(b.dataset.m);
+        // Kept in the order the list offers them rather than the order they were
+        // clicked, so the same set always reads the same way.
+        const ordered = spec.values.filter((v) => next.includes(v));
+        b.classList.toggle('on');
+        b.querySelector('.tick').textContent = b.classList.contains('on') ? '✓' : '';
+        commit(ordered.join(' '));
+      });
     }
     const text = this.pop.querySelector('.poptext input');
     if (text) {

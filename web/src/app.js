@@ -65,6 +65,19 @@ function shorten(v, max = 22) {
   return s.length <= max ? s : s.slice(0, max - 1) + '\u2026';
 }
 
+/**
+ * A set of choices, on a pill an inch wide.
+ *
+ * Read as text, `POCSAG512 POCSAG1200 POCSAG2400` truncates to the first name and a
+ * half, which says neither which ones nor how many — and how many is the thing about a
+ * set that fits. The membership is read in the popover, where it is also changed.
+ */
+function fmtSet(v) {
+  const on = String(v == null ? '' : v).trim().split(/\s+/).filter(Boolean);
+  if (!on.length) return 'none';
+  return on.length === 1 ? shorten(on[0], 16) : `${shorten(on[0], 12)} +${on.length - 1}`;
+}
+
 class App {
   constructor() {
     this.engine = new MockEngine();
@@ -985,7 +998,8 @@ class App {
           // A decoder's own knob, drawn from what the node carries. Long text is
           // summarized here and read in full in the popover — an rtl_433 flex spec is
           // sixty characters and would be the entire bar.
-          ? { unit: '', fmt: (v) => shorten(v), ...n.paramMeta[key] }
+          ? { unit: '', fmt: n.paramMeta[key].type === 'multi' ? fmtSet : (v) => shorten(v),
+              ...n.paramMeta[key] }
           : { label: key, unit: '', fmt: String, type: 'num', step: 1 });
         nodeCells.push({
           key, ...meta, value: pr.value, mode: pr.mode, canAuto: !!pr.auto,

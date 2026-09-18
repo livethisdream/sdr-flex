@@ -354,9 +354,23 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .metrics i { font-style:normal; color:var(--faint); }
 
 /* ── contextual menu ── */
-.ctx { position:fixed; z-index:40; width:196px; background:var(--panel); border:1px solid var(--rule); border-radius:4px; overflow:hidden; box-shadow:0 18px 44px -14px var(--shadow-hard); font-size:.78rem; }
+/* The menu is `position:fixed` and was `overflow:hidden` with no height limit, so a list
+   taller than the window ran off the bottom of it with no way to reach what was down
+   there. `open()` cannot save it: it places the box by its own rect, and the rect was
+   honest — there was simply nowhere to put a box that tall.
+
+   Measured, on the largest palette this can draw (17 rows and 6 headings, which is an
+   `iq` node on a box with every decoder installed), the menu opened 40px from the bottom
+   edge: it wants 534px, and at a 500px-tall window 44px of it was off screen, at 390px
+   — a phone held sideways — 154px. The clamp is the space `open()` has to place it in
+   (its 8px pad, twice), so it scrolls only when the list genuinely does not fit: at
+   600px and above nothing changes. Horizontal stays hidden; that is what rounds the
+   corners. */
+.ctx { position:fixed; z-index:40; width:196px; background:var(--panel); border:1px solid var(--rule); border-radius:4px; max-height:calc(100vh - 1rem); overflow-y:auto; overflow-x:hidden; box-shadow:0 18px 44px -14px var(--shadow-hard); font-size:.78rem; }
 .ctx[hidden] { display:none; }
-.ctx-search { padding:.3rem .45rem; border-bottom:1px solid var(--rule); background:var(--raised); }
+/* Sticky, because the box you type into is no use scrolled off the top of the list it
+   filters. */
+.ctx-search { position:sticky; top:0; z-index:1; padding:.3rem .45rem; border-bottom:1px solid var(--rule); background:var(--raised); }
 .ctx-search input { width:100%; background:transparent; border:0; color:var(--bright); font-family:var(--mono); font-size:.72rem; outline:none; }
 .ctx-grp { font-family:var(--mono); font-size:.54rem; letter-spacing:.15em; text-transform:uppercase; color:var(--dim); padding:.4rem .6rem .16rem; }
 .ctx-i { display:flex; width:100%; text-align:left; gap:.4rem; align-items:baseline; padding:.28rem .6rem; color:var(--body); }
@@ -511,6 +525,12 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    only number on the row that matters. */
 .fd { font-family:var(--mono); font-size:.66rem; color:var(--faint); min-width:4.2rem; text-align:right; }
 .fd.unk { color:var(--warn); }
+/* A set rather than a choice: two dozen demodulators is a scroll, and the tick is what
+   says this list does not close when you pick from it. */
+.popopts.multi { max-height:15rem; overflow-y:auto; }
+.popopts.multi .opt { display:flex; align-items:baseline; gap:.4rem; }
+.popopts.multi .tick { width:.7rem; font-style:normal; color:var(--accent); font-size:.66rem; }
+.popopts.multi .opt.on { color:var(--bright); }
 /* A second input, which the tree's indentation cannot say. Dashed and dimmer than a node
    because it is an edge rather than a thing — it names where the merge above it reads
    from, and that node is drawn in its own place too. */

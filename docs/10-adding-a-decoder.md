@@ -89,6 +89,7 @@ Everything required, with `rtl_433` as the example:
 | `wants.rate` | what the program needs on stdin |
 | `wants.container` | `wav`, for a program that reads through libsndfile and will not take headerless samples on a pipe |
 | `params` | the knobs. The parameter strip draws one it has never heard of |
+| `params[].type` | `text` (the default), `enum` with `values`, or `multi` with `values` — a set, several of which can be on at once, kept as a space-separated string |
 | `args` | the command line. `{rate}`, `{centerHz}`, `{dir}`, `{param:id}` are substituted |
 | `parse` | `jsonl` — one JSON object per line — or `lines` |
 | `title` | which field is the headline of a record, in order of preference |
