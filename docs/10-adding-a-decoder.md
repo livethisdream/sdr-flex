@@ -85,8 +85,8 @@ Everything required, with `rtl_433` as the example:
 | `id` | starts with `ext.`; defaults to `ext.<directory name>` |
 | `in` / `out` | `iq`, `real`, `bits`, `bytes`, `events` — decides where it appears in the menu |
 | `command` | candidate binaries, in preference order. Several because one program has several names: `dump1090`, `dump1090-mutability`, `dump1090-fa` |
-| `wants.format` | `cu8`, `cs8`, `cs16`, `cf32`, `s16` |
-| `wants.rate` | what the program needs on stdin |
+| `wants.format` | `cu8`, `cs8`, `cs16`, `cf32` for IQ; `s16`, `f32` for a real stream |
+| `wants.rate` | what the program needs on stdin. For a decoder that reads symbols this is the **symbol** rate — see below |
 | `wants.container` | `wav`, for a program that reads through libsndfile and will not take headerless samples on a pipe |
 | `params` | the knobs. The parameter strip draws one it has never heard of |
 | `params[].type` | `text` (the default), `enum` with `values`, or `multi` with `values` — a set, several of which can be on at once, kept as a space-separated string |
@@ -141,6 +141,31 @@ parse: (stdout, stderr, spec, meta) => {
 "there were two seconds of voice here and this node does not carry it" is useful and
 silence is not. Carrying decoded audio back into the graph is a real gap; an adapter
 produces records today.
+
+## When the program reads symbols rather than samples
+
+Most decoders take samples and find their own clock. A few take one value per symbol,
+already on the symbol grid — `m17-packet-decode` is the one here — because they correlate
+for a syncword rather than tracking a clock.
+
+Say so with the symbol rate and a float format:
+
+```js
+wants: { format: 'f32', rate: 4800 },   // one float per symbol, not per sample
+```
+
+and then **put a `core.symbols` node in front of it**. That node is where the sampling
+instant, the zero level and the scale are decided, and it shows all three with the
+evidence behind them (ADR-0040). Doing it inside your adapter would work and would hide
+the only numbers that explain a failure.
+
+Getting this wrong is quiet, which is why it is worth a section. Hang the decoder
+straight off an FM discriminator and nothing errors: the conversion in front of it
+resamples 48 kS/s down to 4800 and says so in the node's note. But a resampler
+low-passes and decimates — it picks no sampling instant — so the decoder reads a signal
+that has no symbol grid in it and reports nothing at all. Write the "nothing decoded"
+note to name that case; `ext.m17_packet` checks `meta.inputNote` for the word `resampled`
+and says which node is missing.
 
 ## When a manifest is not enough
 

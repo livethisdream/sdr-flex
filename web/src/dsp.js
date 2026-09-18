@@ -2244,3 +2244,181 @@ export function despread(chips, code, offset, { invert = false } = {}) {
     radiansPerSymbol: step,
   };
 }
+
+/**
+ * Root-raised-cosine taps, `span` symbols long at `sps` samples per symbol.
+ *
+ * The matched half of the pair. A shaped transmitter sends root-raised-cosine and the
+ * receiver applies the same filter, because RRC × RRC is raised cosine, and raised
+ * cosine is the pulse that is zero at every symbol instant but its own. Either half
+ * alone is not — which is why sampling a transmitter's output straight off the wire
+ * decodes anyway on a clean signal and falls apart on a dirty one.
+ *
+ * The three cases are the singularities of the closed form: `k = 0`, and `|4αk| = 1`
+ * where the denominator vanishes. Normalized by `sqrt(sps)` so a symbol comes through
+ * at unit scale, which is what M17's own tap table does — `libm17/math/rrc.c` agrees
+ * with this to six decimal places at α = 0.5, span 8, sps 10, and that agreement is the
+ * evidence that the formula is the same one.
+ */
+export function rrcTaps(alpha, span, sps) {
+  // An even `n` means an odd number of taps, which means the pulse peaks exactly on a
+  // tap and `fir`'s centring is exact. Rounded to the nearest even rather than truncated
+  // because `sps` need not be a whole number: a tuner picks its own decimation from the
+  // channel width (ADR-0017), so 4800 symbols a second arrives at 32 kS/s about as often
+  // as at 48, and 6.667 samples per symbol is an ordinary thing to be handed.
+  const n = 2 * Math.round((span * sps) / 2), t = new Float32Array(n + 1);
+  for (let i = 0; i <= n; i++) {
+    const k = (i - n / 2) / sps;
+    let v;
+    if (Math.abs(k) < 1e-8) {
+      v = 1 - alpha + (4 * alpha) / Math.PI;
+    } else if (alpha > 0 && Math.abs(Math.abs(4 * alpha * k) - 1) < 1e-8) {
+      v = (alpha / Math.SQRT2) * ((1 + 2 / Math.PI) * Math.sin(Math.PI / (4 * alpha)) +
+                                  (1 - 2 / Math.PI) * Math.cos(Math.PI / (4 * alpha)));
+    } else {
+      v = (Math.sin(Math.PI * k * (1 - alpha)) + 4 * alpha * k * Math.cos(Math.PI * k * (1 + alpha))) /
+          (Math.PI * k * (1 - (4 * alpha * k) ** 2));
+    }
+    t[i] = v / Math.sqrt(sps);
+  }
+  return t;
+}
+
+/** Linear interpolation into a real array, for a symbol instant between two samples. */
+function lerp(x, at) {
+  const i = Math.floor(at), f = at - i;
+  if (i < 0) return x[0] || 0;
+  if (i + 1 >= x.length) return x[x.length - 1] || 0;
+  return x[i] * (1 - f) + x[i + 1] * f;
+}
+
+/**
+ * How well a run of samples sits on a set of levels, once centered and scaled to fit.
+ *
+ * Both the center and the scale come from the data, and both have to, for reasons that
+ * are not symmetric. The scale because a discriminator's output is in whatever units the
+ * capture happened to be in. The center because an FM discriminator carries the tuning
+ * error as a DC term, and a DC term turns a four-level decision into a three-and-a-bit
+ * one.
+ *
+ * Percentiles rather than the mean and the maximum, and that is the whole trick here.
+ * Measured on `m17-packet-encode`'s own baseband: the mean of the span is 0.43 where the
+ * signal's actual center is 0, because the symbol alphabet is not used evenly and a
+ * burst is surrounded by whatever the span caught. Subtracting that mean cost 12% of the
+ * eye and turned a symmetric ±9.49 preamble into 2.25 against −3.00. The 5th and 95th
+ * percentiles are the outer levels, whatever the distribution between them does.
+ */
+function levelFit(sym, levels) {
+  const outer = levels[levels.length - 1];
+  const pick = (sorted, q) =>
+    sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * q)))];
+
+  // Which of these symbols are signal. A span is chosen by dragging on a spectrum, so it
+  // is nearly always wider than the burst in it, and the silence either side is both the
+  // majority of the samples and at none of the levels. Left in, it sets the percentiles
+  // — a burst padded with half a second of quiet fitted its outer level to the noise and
+  // decoded nothing, which is the failure this gate exists for.
+  const all = Float64Array.from(sym).sort();
+  const rest = pick(all, 0.5);
+  const dev = Float64Array.from(sym, (v) => Math.abs(v - rest)).sort();
+  const loud = pick(dev, 0.99);
+  const gate = 0.3 * loud;
+  const active = [];
+  for (const v of sym) if (Math.abs(v - rest) > gate) active.push(v);
+  // Under a tenth of the span carrying signal is not a gate any more, it is a guess.
+  const use = active.length >= Math.max(16, sym.length * 0.02) ? active : [...sym];
+
+  const sorted = Float64Array.from(use).sort();
+  const hi = pick(sorted, 0.95), lo = pick(sorted, 0.05);
+  const center = (hi + lo) / 2;
+  const gain = outer / Math.max(1e-12, (hi - lo) / 2);
+  let err = 0;
+  for (let i = 0; i < use.length; i++) {
+    const v = (use[i] - center) * gain;
+    let best = Infinity;
+    for (const L of levels) { const d = Math.abs(v - L); if (d < best) best = d; }
+    err += best;
+  }
+  // 0 is every symbol dead on a level; 1 is every symbol as far from one as it can get,
+  // which for evenly spaced levels is half the spacing.
+  const halfStep = levels.length > 1 ? Math.abs(levels[1] - levels[0]) / 2 : 1;
+  return { center, gain, active: use.length, err: err / (use.length || 1) / halfStep };
+}
+
+/**
+ * A real stream at `sampleRate`, read as one soft symbol per symbol period.
+ *
+ * This is the step between a discriminator and a decoder that wants symbols rather than
+ * samples — `symbol_sync_ff` in GNU Radio, the `symbol_recovery` flowgraph M17 ships
+ * with its decoder. What it does not do is track a drifting clock: it finds one sampling
+ * instant for the whole span and holds it, which is right for a capture (the span is a
+ * burst, and a burst is short) and wrong for hours of live radio.
+ *
+ * The instant is found by trying them. There is no closed form for "where is the eye
+ * widest", and a Gardner or Mueller-Müller loop is an answer to a question this is not
+ * asking — they converge over time, and a packet that is over in a fifth of a second
+ * does not give them time. A search over the symbol period is exhaustive at this
+ * resolution and costs one pass per candidate.
+ *
+ * Three things come out beside the symbols: the instant that won, the gain that put the
+ * outer level where it belongs, and how tightly the symbols landed on the levels once
+ * both were applied. That last one is the number that says whether this worked, and it
+ * is what the node shows as the evidence for the other two (ADR-0017).
+ */
+export function softSymbols(x, count, sampleRate, symbolRate, opts = {}) {
+  const { alpha = 0.5, span = 8, levels = [-3, -1, 1, 3], steps = 32, matched = true } = opts;
+  const sps = sampleRate / symbolRate;
+  const none = { symbols: new Float32Array(0), n: 0, offset: 0, center: 0, gain: 1, eye: 0, sps };
+  if (!(sps >= 2) || !(count > 0)) return none;
+
+  // No DC removal before the filter: the filter is linear, so whatever DC is there comes
+  // through scaled and `levelFit` takes it out where it can see all four levels at once.
+  // Removing a mean here instead was measurably worse — see the note on `levelFit`.
+  const y = matched ? fir(x.subarray ? x.subarray(0, count) : x, rrcTaps(alpha, span, sps)) : x;
+
+  // Only whole symbols, and only ones the filter did not truncate: `fir` clamps its taps
+  // at the ends rather than zero-padding, so the first and last half-span of samples are
+  // filtered with part of the filter and are not symbols yet.
+  const guard = matched ? Math.ceil(span / 2) : 0;
+  const n = Math.max(0, Math.floor(count / sps) - 2 * guard);
+  if (!n) return none;
+
+  const probe = new Float32Array(n);
+  let best = { err: Infinity, off: guard * sps, center: 0, gain: 1 };
+  for (let s = 0; s < steps; s++) {
+    const off = guard * sps + (s / steps) * sps;
+    for (let k = 0; k < n; k++) probe[k] = lerp(y, off + k * sps);
+    const fit = levelFit(probe, levels);
+    if (fit.err < best.err) best = { err: fit.err, off, center: fit.center, gain: fit.gain };
+  }
+
+  const symbols = new Float32Array(n);
+  for (let k = 0; k < n; k++) symbols[k] = (lerp(y, best.off + k * sps) - best.center) * best.gain;
+  return { symbols, n, offset: best.off, center: best.center, gain: best.gain, eye: 1 - best.err, sps };
+}
+
+/**
+ * The same read, with the instant, the center and the gain already decided.
+ *
+ * `softSymbols` measures those three from a window; this applies them. The split is what
+ * keeps a live view from jittering: measuring per frame would move the sampling instant
+ * every time the window slid, so the measurement happens once, lands on the node as
+ * evidence anybody can read (ADR-0017), and every frame after that is arithmetic.
+ *
+ * `first` is the absolute index, in parent samples, of the symbol this window starts on —
+ * so consecutive windows land on the same symbol grid rather than each on their own.
+ */
+export function softSymbolsAt(x, count, sampleRate, symbolRate, at) {
+  const { phase = 0, center = 0, gain = 1, alpha = 0.5, span = 8, matched = true,
+          first = 0, symbols: want = 0, invert = false } = at;
+  const sps = sampleRate / symbolRate;
+  const n = Math.max(0, want || Math.floor(count / sps));
+  const out = new Float32Array(n);
+  if (!(sps >= 2) || !(count > 0) || !n) return out;
+  const y = matched ? fir(x.subarray ? x.subarray(0, count) : x, rrcTaps(alpha, span, sps)) : x;
+  const sign = invert ? -1 : 1;
+  for (let k = 0; k < n; k++) {
+    out[k] = sign * (lerp(y, (first + k) * sps + phase) - center) * gain;
+  }
+  return out;
+}

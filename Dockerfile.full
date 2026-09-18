@@ -51,6 +51,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # one-line change and a re-run of web/test/adapters.test.mjs.
 ARG LORA_SDR_REF=862746dd1cf635c9c8a4bfbaa2c3a0ec3a5306c9
 ARG M17_REF=9b8cec24d3f8d5e9f7f6e9c23661439e32343d6b
+# M17's two modes are two upstreams. `m17-cxx-demod` above reads stream mode (voice);
+# packet mode (SMS and data) is `m17-packet-decode`, which lives in M17_Implementations
+# and links against libm17. Neither build contains the other's program.
+ARG LIBM17_REF=07926d08ade8509f1ce55d0289f229ab44cbcf51
+ARG M17_IMPL_REF=f80793f169751b1fd2de6aaf8de52f862360142c
 ARG REDSEA_REF=v1.3.1
 
 # Staged under its own prefix, so what gets copied into the runtime image is exactly the
@@ -86,6 +91,28 @@ RUN git clone https://github.com/mobilinkd/m17-cxx-demod /tmp/m17 \
  && cmake --build /tmp/m17/build -j"$(nproc)" \
  && cmake --install /tmp/m17/build \
  && rm -rf /tmp/m17
+
+# M17 packet mode, which is a different program from a different upstream — see the note
+# on the pins above. libm17 first, because the tools link against it.
+RUN git clone https://github.com/M17-Project/libm17 /tmp/libm17 \
+ && git -C /tmp/libm17 checkout --quiet "$LIBM17_REF" \
+ && cmake -S /tmp/libm17 -B /tmp/libm17/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX="$OOT" \
+ && cmake --build /tmp/libm17/build -j"$(nproc)" \
+ && cmake --install /tmp/libm17/build \
+ && rm -rf /tmp/libm17
+
+# And the tools, which are a plain Makefile with no install target worth using — it
+# shells out to sudo. Both are built: the decoder is what the adapter runs, and the
+# encoder is what `fixtures/make.mjs` regenerates the packet fixture with.
+RUN git clone --recursive https://github.com/M17-Project/M17_Implementations /tmp/m17impl \
+ && git -C /tmp/m17impl checkout --quiet "$M17_IMPL_REF" \
+ && make -C /tmp/m17impl/SP5WWP/m17-packet \
+      CPATH="$OOT/include" LIBRARY_PATH="$OOT/lib" \
+ && install -m 0755 /tmp/m17impl/SP5WWP/m17-packet/m17-packet-decode "$OOT/bin/" \
+ && install -m 0755 /tmp/m17impl/SP5WWP/m17-packet/m17-packet-encode "$OOT/bin/" \
+ && rm -rf /tmp/m17impl
 
 # RDS. Meson rather than cmake, and no distribution packages it — which is the only
 # reason it is here rather than in Dockerfile.decoders with the other five.
@@ -174,6 +201,7 @@ RUN ldconfig
 RUN node --version \
  && python3 -c "from gnuradio import lora_sdr" && echo 'lora_sdr ok' \
  && m17-demod --help > /dev/null && m17-mod --help > /dev/null && echo 'm17 ok' \
+ && m17-packet-decode -h > /dev/null && echo 'm17 packet ok' \
  && redsea --version > /dev/null && echo 'redsea ok' \
  && command -v rx_sdr > /dev/null && echo 'rx_sdr ok'
 

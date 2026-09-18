@@ -421,6 +421,79 @@ test('the speculative pass is narrower than the list on offer', (t) => {
   }
 });
 
+// M17 packet mode: the one decoder here that does not read samples.
+//
+// It reads one float per symbol, so there is a `core.symbols` node in front of it and the
+// end-to-end proof is `fixtures/m17-packet` rather than a modulator call here — the
+// encoder writes a symbol stream, which is what the decoder eats, so a round trip through
+// this adapter alone would skip the part that was hard. What these check is the parse,
+// because what the program prints is a drawing: a colored tree with box characters, and
+// every field name arrives wrapped in four escape sequences.
+
+test('the M17 packet parse reads a drawn report', () => {
+  const E = String.fromCharCode(27);
+  const c = (n, t) => `${E}[${n}m${t}${E}[39m`;
+  const drawn = [
+    `${E}[96m[04:01:07] ${c(92, 'Packet received')}`,
+    ` \u251c ${c(93, 'Destination:')} N0CALL`,
+    ` \u251c ${c(93, 'Source:')} AB1CDE`,
+    ` \u251c ${c(93, 'Type:')} 0380`,
+    ` \u2514 ${c(93, 'LSF CRC:')} ${c(92, 'match')}`,
+    ` ${c(93, 'Content')}`,
+    ` \u251c ${c(93, 'Type:')} SMS`,
+    ` \u251c ${c(93, 'Text:')} sdr-flex packet mode fixture`,
+    ` \u2514 ${c(93, 'Payload CRC:')} ${c(92, 'match')}`,
+  ].join('\n');
+  const out = ADAPTERS['ext.m17_packet'].parse('', drawn, {}, {});
+  assert.equal(out.length, 1, JSON.stringify(out));
+  assert.equal(out[0].text, 'sdr-flex packet mode fixture');
+  assert.equal(out[0].src, 'AB1CDE');
+  assert.equal(out[0].dest, 'N0CALL');
+  assert.equal(out[0].payloadCrc, 'match');
+  assert.equal(out[0].suspect, undefined);
+});
+
+test('a packet whose CRC did not match says so rather than being dropped', () => {
+  // ADR-0031: "decoded" and "decoded and the CRC agreed" are different claims, and the
+  // second one is the only one worth making silently.
+  const E = String.fromCharCode(27);
+  const drawn = [
+    `${E}[92mPacket received${E}[39m`,
+    ' \u251c Source: AB1CDE',
+    ' \u251c Text: probably',
+    ' \u2514 Payload CRC: mismatch',
+  ].join('\n');
+  const out = ADAPTERS['ext.m17_packet'].parse('', drawn, {}, {});
+  assert.equal(out.length, 1);
+  assert.equal(out[0].text, 'probably');
+  assert.match(out[0].suspect, /CRC/);
+});
+
+test('nothing decoded names the mistake it is most likely to be', () => {
+  const a = ADAPTERS['ext.m17_packet'];
+  // Handed samples rather than symbols is the failure this adapter invites, because the
+  // conversion in front of it will quietly resample 48 kS/s down to 4800 and there was
+  // never a symbol grid to find.
+  const resampled = a.parse('', '', {}, { inputNote: 'resampled 48.0 \u2192 4.8 kS/s, f32 at 4.8 kS/s' });
+  assert.equal(resampled.records.length, 0);
+  assert.match(resampled.note, /Symbol sync/);
+  assert.match(resampled.note, /resampled/);
+  const plain = a.parse('', '', {}, { inputNote: 'f32 at 4.8 kS/s' });
+  assert.match(plain.note, /invert|eye/);
+});
+
+test('M17 stream mode no longer measures voice that was never there', () => {
+  // It used to quote `0.0 s of voice decoded` whether or not any came out, which on a
+  // packet-mode burst is a true statement about the wrong mode — and a confident one.
+  const out = ADAPTERS['ext.m17'].parse('', '', {}, { outBytes: 0 });
+  assert.equal(out.records.length, 0);
+  assert.ok(!/0\.0 s of voice/.test(out.note), out.note);
+  assert.match(out.note, /packet/);
+  // With voice on stdout and no LSF in the span, the old message is still the right one.
+  const voiced = ADAPTERS['ext.m17'].parse('', '', {}, { outBytes: 8000 });   // 4000 samples, half a second
+  assert.match(voiced.note, /0\.5 s of voice/);
+});
+
 test('direwolf reads AX.25 over Bell 202', async (t) => {
   if (skip(t, 'ext.direwolf')) return;
   const out = await decode('ext.direwolf', mod.afsk1200(APRS, { rate: AUDIO_RATE }), 'real');

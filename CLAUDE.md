@@ -7,7 +7,7 @@ not the start of the next one.
 
 Then, as needed:
 
-- `docs/adr/` — why each decision was made. 30 of them; they are the design.
+- `docs/adr/` — why each decision was made. 40 of them; they are the design.
 - `docs/06-roadmap.md` — the plan as designed, with its sequencing rationale.
 - `docs/08-ui-principles.md` — before changing anything visual.
 

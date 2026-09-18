@@ -49,6 +49,15 @@ const nid = (p) => `${p}${++nextId}`;
  */
 const GAIN_TARGET = 0.25;
 
+// The matched filter's length, in symbols. M17's own tap table is span 8 at α = 0.5, and
+// a receiver's filter has to be the transmitter's or it is not matched to anything.
+const SYMBOL_SPAN = 8;
+
+// How much of a span a symbol sync fits itself over. The whole thing, up to this — at 48
+// kS/s that is two million samples through a matched filter and a thirty-two-way search,
+// which is a second of work and happens once per node.
+const SYMBOL_FIT_SECONDS = 10;
+
 /** Everything in a stream multiplied by one number, given in decibels. */
 function scaled(x, gainDb) {
   const g = Math.pow(10, Number(gainDb) / 20);
@@ -231,6 +240,21 @@ export const OPS = {
   'core.math': {
     name: 'Math', group: 'Analyze', in: ['iq', 'real'], out: 'same',
     twoInputs: true,
+  },
+  // `symbol_sync_ff`, and the step a decoder that reads symbols needs in front of it.
+  //
+  // Most external decoders take samples and find their own clock. Some take symbols —
+  // M17's packet decoder is the one here — and then somebody has to decide where in each
+  // symbol period to look. Doing that inside the adapter would hide it, which is the
+  // thing this tool is against: the sampling instant and the level fit are the two
+  // numbers that decide whether a decode happens, so they belong on a node with their
+  // evidence beside them.
+  //
+  // Out is `real` at the symbol rate. A soft symbol is a real number, and a stream of
+  // them is a real stream — there is no third thing to be, and making one would mean a
+  // new kind that only one decoder reads (ADR-0006).
+  'core.symbols': {
+    name: 'Symbol sync', group: 'Convert', in: 'real', out: 'real',
   },
   'core.burst_detector': {
     name: 'Burst detector', group: 'Analyze', in: 'iq', out: 'events',
@@ -1372,6 +1396,54 @@ export class MockEngine extends Graph {
       node.params = {};
       node.out = { kind: 'real', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'To real';
+    } else if (op === 'core.symbols') {
+      // Measured once, here, and then held. A sampling instant re-derived on every frame
+      // would walk as the window slid, and a decoder downstream would see a different
+      // symbol grid each time it was asked — so this reads a window now, keeps what it
+      // found, and every frame afterwards is `softSymbolsAt` doing arithmetic.
+      const fs = p.out.sampleRate;
+      const rate = 4800;                       // M17's, and the only one anything here reads
+      // Over the whole span, not a peek window. Every other auto parameter here is a
+      // property of a carrier, which any quarter second of it will tell you; a symbol
+      // grid is a property of a *burst*, and a packet is over in a fifth of a second
+      // somewhere in a span that is mostly quiet. Derived from a peek this landed in the
+      // silence after the burst and reported an eye of 0.475 with complete confidence,
+      // which is the wrong answer arrived at honestly — the fix is to look at all of it,
+      // the way the slicers already do.
+      const whole = Math.min(isFinite(this.duration()) ? this.duration() : now, SYMBOL_FIT_SECONDS);
+      const at = isFinite(this.duration()) ? this.duration() : now;
+      const count = Math.max(256, Math.round(whole * fs));
+      const fit = dsp.softSymbols(this._detectMono(p, at, count), count, fs, rate);
+      const sps = fs / rate;
+      // Absolute, not window-relative. `fit.offset` is an index into the window that was
+      // measured, and that window does not start on a symbol boundary — so the phase a
+      // later frame can use is the one taken against the capture's own sample zero.
+      const windowStart = Math.floor(at * fs) - count;
+      const phase = fit.n ? (((windowStart + fit.offset) % sps) + sps) % sps : 0;
+      const evidence = { confident: fit.eye > 0.7 };
+      node.params = {
+        symbolRate: param(rate, 'manual'),
+        // The eye is the evidence for all three, so it is what all three say. It is the
+        // number that decides whether any of this worked — 1 is every symbol dead on a
+        // level, 0.5 is a coin toss dressed as a decode — and a phase, a center and a
+        // gain are one measurement reported as three, so quoting it three times is
+        // honest rather than repetitive.
+        phase: param(+phase.toFixed(3), 'auto', { ...evidence, from: fit.n
+          ? `of ${sps} instants in a symbol, this is where ${fit.n} of them fit the levels best (eye ${fit.eye.toFixed(3)})`
+          : 'nothing to measure yet' }),
+        // Where zero is and how far out ±3 is. A discriminator carries the tuning error
+        // as the first and the capture's own units as the second, and neither of those
+        // is knowable before looking.
+        center: param(+fit.center.toPrecision(4), 'auto', { ...evidence, from: fit.n
+          ? `the midpoint between the outer levels, which sit ${fit.eye.toFixed(3)} of the way apart`
+          : 'nothing to measure yet' }),
+        gain: param(+fit.gain.toPrecision(4), 'auto', { ...evidence, from: fit.n
+          ? `it puts the outer level at ±3, where the decoder expects it (eye ${fit.eye.toFixed(3)})`
+          : 'nothing to measure yet' }),
+        invert: param('no', 'manual'),
+      };
+      node.out = { kind: 'real', sampleRate: rate, centerHz: p.out.centerHz };
+      node.label = 'Symbol sync';
     } else if (op === 'core.math') {
       // It arrives with one input and says so, the way the slicers arrive undecided:
       // choosing the other one is a question about the graph, and the graph is on screen
@@ -2033,11 +2105,54 @@ export class MockEngine extends Graph {
     if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
     if (node.op === 'core.real') return dsp.realPart(this._readIQ(p, tEnd, count), count);
     if (node.op === 'core.gain') return scaled(this._detect(p, tEnd, count), node.params.gainDb.value);
+    if (node.op === 'core.symbols') return this._readSymbols(node, tEnd, count);
     if (p.out.kind === 'real') {
       return realOp(node.op, this._detectMono(p, tEnd, count), count, fs, node.params).data;
     }
     const iq = this._readIQ(p, tEnd, count);
     return demodulate(node.op, iq, count, fs, node.params).data;
+  }
+
+  /**
+   * `count` soft symbols ending at `tEnd`, on the same grid every time.
+   *
+   * The one real-to-real operation whose output rate is not its input's, which is what
+   * makes it the only one that cannot read `count` samples from its parent and be done.
+   * A symbol at 4800 is ten samples at 48k, and the ten it is are decided by an absolute
+   * index rather than by where this window happens to start — otherwise two windows that
+   * overlap would disagree about which sample was a symbol, and the decoder downstream
+   * would be handed a different grid every frame.
+   *
+   * So: name the symbols by absolute index, convert that to absolute parent samples, and
+   * read exactly those. The margin either side is the matched filter's own support, and
+   * it is taken by asking for more samples rather than by moving the end — a read is
+   * positioned by `Math.floor(tEnd * sampleRate)` and moving the end by a fraction of a
+   * sample floors somewhere else, which is the bug `_readMerged` documents at length.
+   */
+  _readSymbols(node, tEnd, count) {
+    const p = this.node(node.parent);
+    const fsIn = p.out.sampleRate;
+    const rate = node.out.sampleRate;
+    const sps = fsIn / rate;
+    const pr = node.params;
+
+    const endSym = Math.floor(tEnd * rate);
+    const firstSym = endSym - count;
+    // Half the filter plus a sample of slack for the interpolator.
+    const pad = Math.ceil((SYMBOL_SPAN / 2) * sps) + 2;
+    const a = Math.floor(firstSym * sps + pr.phase.value) - pad;
+    const b = Math.ceil((endSym - 1) * sps + pr.phase.value) + pad + 1;
+    const need = Math.max(1, b - a);
+    // The parent read ends at absolute sample `b`, which is what puts `a` at index 0.
+    const x = this._detectMono(p, b / fsIn, need);
+
+    return dsp.softSymbolsAt(x, need, fsIn, rate, {
+      phase: firstSym * sps + pr.phase.value - a,
+      first: 0, symbols: count,
+      center: pr.center.value, gain: pr.gain.value,
+      invert: pr.invert.value === 'yes',
+      span: SYMBOL_SPAN,
+    });
   }
 
   /**

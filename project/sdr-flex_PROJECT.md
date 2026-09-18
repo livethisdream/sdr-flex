@@ -55,9 +55,9 @@ Working end to end:
   the page picks the server engine when one answers and the in-tab engine otherwise
 - Live radio: a capture program writes a ring recording, the engine reads it exactly as
   it reads a file, and you can scrub back into what already went past
-- Eight external decoders — rtl_433, multimon-ng, dump1090, direwolf, minimodem, M17,
-  redsea, and LoRa as a GNU Radio flowgraph — each checked against the real program, not
-  its docs
+- Nine external decoders — rtl_433, multimon-ng, dump1090, direwolf, minimodem, M17
+  stream mode, M17 packet mode, redsea, and LoRa as a GNU Radio flowgraph — each checked
+  against the real program, not its docs
 - `Identify`: one button runs every decoder that could read this stream and says what
   each found, what it declined to try, and what it decoded but refuses to count
 - Decoders you add yourself: a directory of manifests in `SDRFLEX_ADAPTERS`, badged
@@ -256,7 +256,8 @@ M4.5, and the roadmap was right that it is the best ratio in the plan.
 
 - **An adapter is a table row** in `server/adapters.js`: what to run, what samples it
   wants on stdin, how to read its output. `rtl_433`, `multimon-ng`, `dump1090`,
-  `direwolf`, `minimodem`, `m17-demod`, `redsea` and a LoRa flowgraph — eight rows.
+  `direwolf`, `minimodem`, `m17-demod`, `m17-packet-decode`, `redsea` and a LoRa
+  flowgraph — nine rows.
 - **Format negotiation is derived and reported.** The engine resamples and converts the
   span to what the program wants, and the record pane says which, because it changes
   what the decoder sees.
@@ -484,6 +485,62 @@ the repository. Controls: noise decodes to nothing without erroring, and the cha
 spectrum → tuner → discriminator → decoder, so it fails the way a user would see it.
 
 `Identify` finds it behind the FM demod and ranks it first, in 862 ms.
+
+## M17 packet mode, and the symbol sync (ADR-0040)
+
+Reported from the field: `ext.m17` cannot decode an M17 SMS packet, and the reason is not
+a flag. **M17's two modes are read by two programs from two different upstreams.** Stream
+mode (voice) is `m17-demod`, from `mobilinkd/m17-cxx-demod`, which is what
+`Dockerfile.full` built. Packet mode (SMS and data) is `m17-packet-decode`, from
+`M17-Project/M17_Implementations`, which it did not. The blurb said "voice and data" and
+the data half had never existed. Both halves of that are now true: the blurb says stream
+mode, the empty-result note names packet mode instead of quoting "0.0 s of voice decoded"
+— which on a packet burst is a true statement about the wrong mode, and a confident one.
+
+**The new shape: a decoder that reads symbols.** `m17-packet-decode` does not take
+samples. It takes one float per symbol, already on the symbol grid, because it correlates
+for a syncword rather than recovering a clock. Nothing here produced that, and the
+tempting answer — twenty lines inside the adapter — is the one this tool is against: the
+sampling instant and the level fit are the two numbers that decide whether a decode
+happens. So `core.symbols`, a node, which maps onto `symbol_sync_ff`.
+
+It finds **one** instant for the whole span and holds it — right for a burst that is over
+in a fifth of a second, wrong for hours of live radio, and a tracking loop is a second
+mode on this node if that day comes. Thirty-two candidates across the symbol period,
+scored by how tightly the symbols land on ±1/±3 once centered and scaled.
+
+Three things measurement settled, each of which the obvious implementation gets wrong:
+
+- **Percentiles, not the mean.** On `m17-packet-encode`'s own baseband the mean of the
+  span is 0.43 where the signal's center is 0, because the symbol alphabet is not used
+  evenly. Subtracting it turned a symmetric ±9.49 preamble into 2.25 against −3.00 and
+  cost 12% of the eye — 0.997 down to 0.569.
+- **Gate the fit to the burst.** A span is chosen by dragging on a spectrum, so it is
+  wider than the signal in it. Fitted over everything, a burst padded with silence had its
+  outer levels fitted to the noise and decoded nothing.
+- **Derive over the whole span, not a peek window.** Every other auto parameter here is a
+  property of a carrier and a quarter second tells you. A symbol grid is a property of a
+  *burst*. Derived from a peek, the fixture reported an eye of 0.475 with complete
+  confidence — the wrong answer, arrived at honestly.
+
+Also settled: samples per symbol need not be a whole number. The tuner's own derivation
+puts the fixture at 32 kS/s, so 6.67 samples a symbol, and the matched filter is built
+for whatever it is handed with an odd tap count so its peak lands on a tap. Overriding
+the tuner to suit a decoder would have been the wrong way round.
+
+The RRC taps agree with `libm17/math/rrc.c` to 2.2e-5 across all 81, worst at the centre
+tap where the closed form and their table differ; every other tap is better than a part
+in ten thousand. That agreement is the evidence it is the same filter.
+
+`fixtures/m17-packet` is `m17-packet-encode`'s own baseband, FM-modulated, with a quarter
+second of quiet in front and half behind — the padding is the test, not scenery. Chain:
+tuner → FM demod → **symbol sync** → decode. Eye 0.957 end to end, and the SMS comes back
+with both CRCs matching.
+
+**The trap, stated because it is quiet:** leave the symbol sync out and nothing errors.
+`convert()` resamples 48 kS/s to 4800 and says so — but a resampler low-passes and
+decimates and picks no instant, so the decoder reads a signal with no symbol grid in it.
+The adapter now checks the conversion note and names the missing node when that happens.
 
 ## Frequency hopping, as built
 
@@ -719,7 +776,14 @@ house rule.
   [ADR-0039](../docs/adr/0039-the-menu-answers-the-gesture.md) decides the shape: two
   tiers with the fold in place, and what is in the first tier decided by *which gesture
   opened the menu* — which the code already knows, because `openMenu` has always taken the
-  selection or null. The tiering is not built; the scroll is a one-line fix still to do.
+  selection or null. **The tiering is still not built.**
+
+  **The scroll is fixed.** Re-measured after the hiding below: the largest palette this
+  can draw is 17 rows and 6 headings, 534 px, and opened 40 px from the bottom edge it ran
+  44 px off screen at a 500 px-tall window and 154 px at 390 px — a phone held sideways.
+  `.ctx` now has `max-height: calc(100vh - 1rem)` (the space the positioner has to place
+  it in) with `overflow-y: auto` and a sticky search box, so it scrolls only when the list
+  genuinely does not fit: at 600 px of viewport and above nothing changed.
 
   **Built already:** a decoder whose program is not on the box is not in the menu at all.
   18 entries on `iq` became 15 here, and 12 on `real`. `Identify` still names every one it

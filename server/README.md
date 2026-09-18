@@ -245,7 +245,8 @@ program and the decoder appears in the menu wherever its input type fits.
 | dump1090 | IQ | `dump1090`, `dump1090-mutability`, `dump1090-fa` | `dump1090-mutability` | ADS-B |
 | direwolf | audio | `direwolf` | `direwolf` | APRS / AX.25 |
 | minimodem | audio | `minimodem` | `minimodem` | RTTY, Bell 103/202, any N-baud FSK |
-| M17 | audio | `m17-demod` | build it, see below | M17 — 4FSK digital voice and data |
+| M17 | audio | `m17-demod` | build it, see below | M17 stream mode — 4FSK digital voice |
+| M17 packet | symbols | `m17-packet-decode` | build it, see below | M17 packet mode — SMS and data |
 | redsea | the FM composite | `redsea` | build it, see below | RDS — station name, radiotext, program type |
 | LoRa | IQ | a GNU Radio module | see below | LoRa — chirp spread spectrum, SF7 to SF12 |
 
@@ -274,6 +275,40 @@ audio to stdout, and the record says how many seconds of it there were. If you n
 hear it, run `m17-demod` yourself against an exported channel. Carrying decoded audio back
 into the graph is a real gap and not a small one — see
 [ADR-0013](../docs/adr/0013-external-decoders-as-subprocesses.md).
+
+**This is stream mode only.** M17 also has a packet mode — SMS and arbitrary data — and
+nothing in `m17-cxx-demod` reads it. That is the next section, and it is a different
+program from a different upstream.
+
+### M17 packet mode
+
+Two builds, because `m17-packet-decode` links against libm17:
+
+```sh
+sudo apt install libsndfile1-dev cmake gcc make git
+git clone https://github.com/M17-Project/libm17 && cd libm17
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j && sudo cmake --install build && cd ..
+git clone --recursive https://github.com/M17-Project/M17_Implementations
+sudo make -C M17_Implementations/SP5WWP/m17-packet install
+```
+
+**This one does not read samples.** It reads one float per symbol, already on the symbol
+grid, because it correlates for a syncword rather than recovering a clock. So the chain
+has one more node in it than the others do:
+
+> tune the channel → **FM demod** → **Symbol sync** → **M17 packet**
+
+`Symbol sync` is where the sampling instant, the zero level and the scale are decided,
+and it shows all three with the evidence behind them. Its `eye` — quoted in each of
+those — is the number that says whether it worked: near 1 is every symbol dead on a
+level, near 0.5 is a coin toss. If nothing decodes on a burst you can see, try its
+`inverted` first; a receiver that inverts the discriminator turns every symbol upside
+down and M17's syncword does not survive it.
+
+Leave the `Symbol sync` out and nothing errors — the conversion in front of the decoder
+will resample to 4800 S/s and say so — but nothing decodes either, because a resampler
+low-passes and decimates and picks no sampling instant. The decoder says which node is
+missing when that happens.
 
 ### redsea
 

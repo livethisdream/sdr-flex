@@ -311,6 +311,58 @@ function m17Fm() {
   return { dir, bytes, samples: iq.length / 2, rate };
 }
 
+// ── 6b. M17 packet mode, which is a different program ────────────────────
+// The other half of M17, and the reason there are two adapters: stream mode carries
+// voice and `m17-demod` reads it, packet mode carries SMS and `m17-packet-decode` reads
+// it, and those two programs are from two different upstreams. A capture of one decodes
+// as nothing under the other.
+//
+// This one exists to test the path `ext.m17_packet` needs and nothing else has: a
+// decoder that reads one float per symbol, which means a `core.symbols` node between the
+// discriminator and it. The chain is tuner → FM demod → symbol sync → decode, and the
+// fixture fails if any of the four regresses.
+//
+// `-r` is the modulator's own RRC-shaped baseband at 48 kS/s, which is what a
+// discriminator would recover — so FM-modulating it is the only step done here.
+function m17Packet() {
+  const dir = path.join(HERE, 'm17-packet');
+  const rate = 96_000, centerHz = 144_800_000;
+  const basebandRate = 48_000, deviation = 2_400;
+  if (!which('m17-packet-encode')) {
+    return { dir, skipped: 'm17-packet-encode is not on this machine' };
+  }
+
+  const out = path.join(os.tmpdir(), `m17-packet-${process.pid}.raw`);
+  const r = spawnSync('m17-packet-encode',
+                      ['-S', 'AB1CDE', '-D', 'N0CALL', '-C', '7', '-T', M17_SMS, '-r', '-o', out],
+                      { maxBuffer: 1 << 26, timeout: 60_000 });
+  let raw;
+  try { raw = fs.readFileSync(out); } catch { raw = null; }
+  try { fs.unlinkSync(out); } catch { /* it was never written */ }
+  if (r.status !== 0 || !raw || !raw.length) {
+    return { dir, skipped: 'm17-packet-encode produced nothing' };
+  }
+
+  // +7168 is the +1.0 symbol, which the program states and this depends on: it is what
+  // makes the four levels land at ±1 and ±3 rather than at whatever the file happened
+  // to be scaled to.
+  const n = raw.length / 2;
+  const baseband = new Float32Array(n + basebandRate);       // a quarter second of quiet
+  for (let i = 0; i < n; i++) baseband[i + basebandRate / 4] = raw.readInt16LE(i * 2) / 7168 / 3;
+
+  const iq = narrowbandFm(baseband, basebandRate, rate, deviation, 0x5b17);
+  const bytes = writeSigmf(dir, 'capture', iq, {
+    sampleRate: rate, centerHz,
+    note: `M17 packet mode, one SMS packet from AB1CDE to N0CALL reading ${JSON.stringify(M17_SMS)}, ` +
+          '4FSK at 4800 symbols per second, narrowband FM at 2.4 kHz deviation. Generated ' +
+          'by m17-packet-encode; nobody transmitted it.',
+  });
+  return { dir, bytes, samples: iq.length / 2, rate };
+}
+
+/** What the packet says. Named here because the test asserts on it. */
+export const M17_SMS = 'sdr-flex packet mode fixture';
+
 /** Is a program on PATH? The fixtures that need one say so rather than failing oddly. */
 function which(name) {
   return (process.env.PATH || '').split(path.delimiter).filter(Boolean)
@@ -550,7 +602,7 @@ function rdsBroadcast() {
   return { dir, bytes, samples: n, rate };
 }
 
-for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm, fhssHopping,
+for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm, m17Packet, fhssHopping,
                     ofdmGrid, tempestRaster, dsssSpread, bbcConcurrent, rdsBroadcast]) {
   const r = make();
   if (r.skipped) {

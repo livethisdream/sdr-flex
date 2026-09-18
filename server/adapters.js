@@ -29,6 +29,10 @@ import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { resample } from '../web/src/export.js';
 
+// Color, for a terminal. Two of these programs draw their report rather than print it,
+// and what arrives here is the drawing.
+const ANSI = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g');
+
 /**
  * `wants` is the format and rate the program needs on stdin. `args` builds its command
  * line. `parse` turns its stdout into records. `params` are the knobs worth exposing —
@@ -355,7 +359,7 @@ export const ADAPTERS = {
   'ext.m17': {
     name: 'M17', group: 'Decode', in: 'real', out: 'events',
     command: ['m17-demod'],
-    blurb: 'M17 — 4FSK digital voice and data',
+    blurb: 'M17 stream mode — 4FSK digital voice',
     // M17 is 4FSK at 4800 symbols a second, and its decoder wants the discriminator
     // output rather than IQ — so this goes after an FM demod, the way direwolf does.
     wants: { format: 's16', rate: 48_000 },
@@ -392,16 +396,115 @@ export const ADAPTERS = {
       }
       // A transmission with no link setup in the span is still a transmission, and an
       // empty report would say the opposite.
+      //
+      // `outBytes` is decoded *voice*, 8 kHz signed 16-bit, so this is seconds of speech
+      // and nothing else. It used to be quoted whether or not any came out, which on a
+      // packet-mode burst read "0.0 s of voice decoded" — a true statement about the
+      // wrong mode, and a confident one, which is the worst way to be unhelpful. M17
+      // packet mode is `ext.m17_packet` and a different program entirely; this one
+      // cannot read it, so it says so rather than measuring voice that was never there.
       const seconds = (meta.outBytes || 0) / 2 / 8000;
-      if (!out.length && seconds > 0.05) {
-        return { records: [], note: `${seconds.toFixed(1)} s of voice decoded, but no link ` +
-                                    'setup frame in this span — widen it to catch the start' };
+      if (!out.length) {
+        return { records: [], note: seconds > 0.05
+          ? `${seconds.toFixed(1)} s of voice decoded, but no link setup frame in this ` +
+            'span — widen it to catch the start'
+          : 'nothing decoded. This reads M17 stream mode; a packet-mode burst (SMS or ' +
+            'data) is M17 packet, which reads symbols and needs a Symbol sync in front of it' };
       }
       if (out.length && seconds > 0.05) {
         // Said rather than dropped: the voice is real and this node does not carry it.
         out[0].voiceS = +seconds.toFixed(2);
       }
       return out;
+    },
+    title: ['text'],
+  },
+
+  // M17 again, and the half `ext.m17` cannot do.
+  //
+  // M17 has two modes and they are decoded by two different programs from two different
+  // upstreams. Stream mode carries voice and `m17-demod` (mobilinkd/m17-cxx-demod) reads
+  // it. Packet mode carries SMS and arbitrary data, and nothing in m17-cxx-demod reads it
+  // at all — `m17-packet-decode` is from M17-Project/M17_Implementations, which is a
+  // separate build. The blurb on the other node said "voice and data" and the data half
+  // was never there.
+  //
+  // What makes this one different from every other adapter here: it does not take
+  // samples. It takes one float per symbol, already on the symbol grid, because its
+  // syncword correlator expects them that way — which is why `core.symbols` exists and
+  // why this is the one decoder with a node it has to sit behind. Given samples instead,
+  // the conversion in front of it will resample 48 kS/s down to 4800 and say so, and the
+  // decode will find nothing: a resampler low-passes and decimates, it does not pick a
+  // sampling instant.
+  'ext.m17_packet': {
+    name: 'M17 packet', group: 'Decode', in: 'real', out: 'events',
+    command: ['m17-packet-decode'],
+    blurb: 'M17 packet mode — SMS and data, from symbols',
+    // One float per symbol at M17's 4800 symbols a second. Not a preference: the program
+    // reads a symbol per sample and correlates for the syncword, so a different rate is
+    // a different protocol as far as it is concerned.
+    wants: { format: 'f32', rate: 4800 },
+    params: [
+      { id: 'callsigns', type: 'enum', default: 'decode', values: ['decode', 'raw'],
+        label: 'callsigns',
+        hint: 'decoded from M17’s base-40 packing, or left as the six bytes on the wire' },
+      { id: 'errorfree', type: 'enum', default: 'no', values: ['no', 'yes'],
+        label: 'error-free only',
+        hint: 'drop any frame the Viterbi decoder had to correct, rather than reporting it' },
+    ],
+    args: ({ params }) => [
+      ...(params.callsigns !== 'raw' ? ['-c'] : []),
+      ...(params.errorfree === 'yes' ? ['-f'] : []),
+    ],
+    // Like `m17-demod`, and for the same reason: what it prints is a running report on a
+    // terminal rather than a data stream, so it goes to stderr.
+    recordsOn: 'stderr',
+    // It draws a box. Every line is a branch of a tree with a colored label, which is a
+    // pleasant thing to watch in a terminal and four escape sequences per line to read
+    // here — so the color comes off first and the tree characters are what separates a
+    // field name from its value.
+    parse: (stdout, stderr, spec, meta) => {
+      const plain = String(stderr).replace(ANSI, '');
+      const out = [];
+      let cur = null;
+      const push = () => { if (cur && (cur.text || cur.src)) out.push(cur); cur = null; };
+      for (const raw of plain.split('\n')) {
+        const line = raw.replace(/^[\s─-╿]+/, '').trim();
+        if (!line) continue;
+        if (/Packet received/.test(line)) { push(); cur = { fields: 0 }; continue; }
+        if (!cur) continue;
+        const kv = /^([A-Za-z][A-Za-z ]*):\s*(.*)$/.exec(line);
+        if (!kv) continue;
+        const key = kv[1].trim().toLowerCase(), val = kv[2].trim();
+        cur.fields++;
+        if (key === 'source') cur.src = val;
+        else if (key === 'destination') cur.dest = val;
+        else if (key === 'text') cur.text = val;
+        else if (key === 'type') cur.kind = cur.kind || val;   // the LSF type, then the content's
+        else if (key === 'lsf crc') cur.lsfCrc = val;
+        else if (key === 'payload crc') cur.payloadCrc = val;
+      }
+      push();
+      for (const r of out) {
+        delete r.fields;
+        // A packet whose payload is not text still happened, and a record with no `text`
+        // would be drawn as an empty row. Say what it was instead.
+        if (!r.text) r.text = `${r.kind || 'packet'} from ${r.src || 'somebody'}`;
+        // Said rather than dropped: a CRC that did not match means the bytes above it are
+        // a guess, and a decoder that reports a guess as a decode is the thing ADR-0031
+        // is about.
+        if (r.payloadCrc && r.payloadCrc !== 'match') r.suspect = 'payload CRC mismatch';
+      }
+      if (out.length) return out;
+      // The failure this adapter is most likely to hit, named rather than left as
+      // silence: it was handed samples, something resampled them, and there was never a
+      // symbol grid to find.
+      const resampled = /resampled/.test(meta && meta.inputNote ? meta.inputNote : '');
+      return { records: [], note: resampled
+        ? 'nothing decoded — this was handed samples and they were resampled to 4800 S/s. ' +
+          'It reads one float per symbol, so put a Symbol sync between the demodulator and this'
+        : 'nothing decoded — if there is a burst in this span, try the Symbol sync node’s ' +
+          'invert, and check its eye' };
     },
     title: ['text'],
   },
@@ -808,7 +911,9 @@ export function convert(data, kind, fromRate, want) {
     for (let i = 0; i < out.length; i++) {
       bytes.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(out[i] * 32767))), i * 2);
     }
-  } else if (want.format === 'cf32') {
+  } else if (want.format === 'cf32' || want.format === 'f32') {
+    // The same bytes either way — the name says whether the floats are pairs. A decoder
+    // that reads one float per symbol is not reading IQ and should not have to say it is.
     bytes = Buffer.from(out.buffer, out.byteOffset, out.byteLength);
   } else {
     throw new Error(`no conversion to ${want.format}`);
@@ -829,14 +934,14 @@ export function convert(data, kind, fromRate, want) {
 
 /** 44 bytes of canonical RIFF, mono, with a truthful data length. */
 function wavHeader(dataLen, rate, format) {
-  const bits = format === 'cf32' ? 32 : format === 's16' || format === 'cs16' ? 16 : 8;
+  const bits = format === 'cf32' || format === 'f32' ? 32 : format === 's16' || format === 'cs16' ? 16 : 8;
   const h = Buffer.alloc(44);
   h.write('RIFF', 0);
   h.writeUInt32LE(36 + dataLen, 4);
   h.write('WAVE', 8);
   h.write('fmt ', 12);
   h.writeUInt32LE(16, 16);
-  h.writeUInt16LE(format === 'cf32' ? 3 : 1, 20);     // 3 is IEEE float, 1 is PCM
+  h.writeUInt16LE(format === 'cf32' || format === 'f32' ? 3 : 1, 20);  // 3 is IEEE float, 1 is PCM
   h.writeUInt16LE(1, 22);                             // mono
   h.writeUInt32LE(Math.round(rate), 24);
   h.writeUInt32LE(Math.round(rate) * (bits / 8), 28);
@@ -982,7 +1087,11 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
       done = true;
       clearTimeout(timer);
       if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* it is a temp dir */ } }
-      const { records, note: parseNote } = readRecords(a, stdout, stderr, { outBytes });
+      // `inputNote` is what the conversion said it did, so a parser can tell "nothing was
+      // there" from "something in front of this changed what it was looking at" — the
+      // difference between a signal that is absent and one that was resampled away.
+      const { records, note: parseNote } =
+        readRecords(a, stdout, stderr, { outBytes, inputNote: input.note });
 
       // Nothing recognized is a result, not a failure — but a result with no account of
       // itself is a dead end, and "I ran a decoder and it said nothing" is the least
