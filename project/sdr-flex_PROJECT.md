@@ -874,6 +874,47 @@ house rule.
 - **The `view` group label** on the parameter bar may want a more generic name, since
   its contents change with context.
 
+## The chrome is too tall, and it is parked (measured, not built)
+
+Reported: "the bottom pills are stacked and are different sizes, there's lots of wasted
+space around them. Same with the top bar — a ton of wasted space up and to the right."
+
+Measured in Chromium with a tuner and an FM demod on screen, which is the shallowest
+chain anybody actually has:
+
+| | 1440 x 900 | 1280 x 720 |
+|---|---|---|
+| crumb row | 38 px, **8% covered**, 1214 px of nothing to the right of it | 38 px, 9% |
+| tab row | 30 px, 18% covered, all of it in the first 240 px | 30 px, 20% |
+| dock | 105 px: a 588 px transport pill above a 552 px strip pill, both centred | 105 px |
+| **total chrome** | **173 px = 19% of the window** | **173 px = 24%** |
+
+So both halves of the report are right, and the "different sizes" is literal. One thing
+in the report is not: the 2 px the two strip groups sit apart is not a misalignment. The
+strip shares a baseline across its groups on purpose, and the two group *boxes* round to
+26 and 28 px around it. The only real problem at the bottom is that there are two pills.
+
+**A prototype was built and thrown away**, deliberately, because the decision is the
+user's and a half-agreed layout in the tree is worse than none. What it did, and what it
+measured, so it does not have to be rediscovered:
+
+- **One top row.** The tabs become a run inside `.topbar` — no background, no border of
+  their own — with `flex:1 1 20rem` and the whole row `flex-wrap:wrap`. That basis is the
+  entire responsive story: below it the tabs take a line of their own, which is today's
+  layout, so a phone degrades to what it already has.
+- **One bottom bar.** A `.deck` pill holds the transport and the strip as two runs with
+  the same hairline the strip already puts between its own groups; the strip loses its
+  own border, shadow and blur. `flex-wrap` again, and the rule hides under 860 px because
+  a vertical rule between two stacked runs points the wrong way.
+- Chrome came to **92 px (10%) at 1440**, 157 px at 430. A full-width variant — square,
+  no shadow, spanning the window like the axis — came to **74 px (8%)** and 139 px, and
+  buys noticeably more room for cells before the fold, at the cost of reading like a
+  status bar rather than a floating control (docs/08: "chrome sits beside the signal").
+
+Parked at the user's request to keep working on function. The open question is which of
+those two the bar should be, or a third thing; the measurements above are the input to
+that, and nothing else is blocked on it.
+
 ## Loose ends
 
 - ~~Plugins do not survive a reload.~~ Fixed: the box serves every `.js` in
