@@ -40,14 +40,30 @@ const instant = () => Promise.resolve();
 let nextId = 0;
 const nid = (p) => `${p}${++nextId}`;
 
+/** A real stream as IQ with nothing in the imaginary part, for a mixer to take. */
+function interleave(x, count) {
+  const out = new Float32Array(count * 2);
+  for (let i = 0; i < count; i++) out[i * 2] = x[i];
+  return out;
+}
+
 /** Rates, in the one place a merge has to compare two of them out loud. */
 const fmtKS = (hz) => `${(hz / 1e3).toFixed(1)} kS/s`;
 
 // ── operation catalog ────────────────────────────────────────────────────
 // `in`/`out` are semantic stream kinds (ADR-0006); the palette filters on them.
 export const OPS = {
+  // **Takes a demodulated stream as well as IQ**, which is what a mixer can do and a
+  // separate conversion node was pretending it could not. GNU Radio has had this for
+  // decades as `freq_xlating_fir_filter_fcf`: a real input mixed by a complex phasor and
+  // low-passed *is* the analytic baseband of whatever was around that frequency, so the
+  // Hilbert transformer a conversion node needs is work nobody has to do.
+  //
+  // It is also strictly better where it matters. A Hilbert transformer cannot do anything
+  // at zero frequency, so its image rejection falls apart at the bottom of the band — 8 dB
+  // at 500 Hz where a mixer has no such problem, because a mixer has no opinion about DC.
   'core.tuner': {
-    name: 'Tune here', group: 'Narrow', in: 'iq', out: 'iq',
+    name: 'Tune here', group: 'Narrow', in: ['iq', 'real'], out: 'iq',
     fromSelection: true,
   },
   // A time window is a property of a channel, not a node of its own (ADR-0023),
@@ -160,19 +176,13 @@ export const OPS = {
   'core.raster': {
     name: 'Raster', group: 'Analyze', in: ['iq', 'real'], out: 'grid',
   },
-  // ── between the two representations ──────────────────────────────────────
+  // The way back from IQ, and the only one of the pair that has to exist: a chain of
+  // tuners and arithmetic ends complex, and a speaker takes a real stream. `complex_to_real`
+  // in anybody else's vocabulary.
   //
-  // Everything that moves a signal in frequency takes IQ, because a mixer needs a complex
-  // input or it folds the negative half of the spectrum onto the positive one. A
-  // composite is real. So until there was a way across, a demodulated stream could be
-  // looked at (ADR-0036) and not tuned into — and the whole argument for drawing a decode
-  // rather than invoking it (ADR-0038) stopped at the first box.
-  //
-  // Two operations rather than one, because the way back matters as much: a chain of
-  // tuners and arithmetic ends in IQ, and a speaker takes a real stream.
-  'core.analytic': {
-    name: 'To IQ', group: 'Convert', in: 'real', out: 'iq',
-  },
+  // There is no node going the other way. The tuner takes `real` directly, which is what
+  // a mixer can do — a separate Hilbert-based conversion was one more block to explain
+  // and worse near DC.
   'core.real': {
     name: 'To real', group: 'Convert', in: 'iq', out: 'real',
   },
@@ -1197,6 +1207,11 @@ export class MockEngine extends Graph {
     };
 
     if (op === 'core.tuner') {
+      // On IQ the selection is in RF and the mixer offset is the difference from the
+      // parent's centre. On a demodulated stream the numbers are baseband offsets — 38 kHz
+      // means 38 kHz from DC — so the centre *is* the offset, and the parent's `centerHz`
+      // stays what ADR-0036 made it: where the samples came from, not the middle of this
+      // picture.
       const centerHz = (selection.f0 + selection.f1) / 2;
       const widthHz = Math.abs(selection.f1 - selection.f0);
       const target = widthHz * 1.25;
@@ -1283,25 +1298,6 @@ export class MockEngine extends Graph {
         node.out = { kind: 'events', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
         node.label = 'Hop map';
       }
-    } else if (op === 'core.analytic') {
-      node.params = {
-        // More taps reach closer to DC. A Hilbert transformer cannot do anything at all
-        // at zero frequency — the phase shift it is asked for is undefined there — so its
-        // image rejection falls away at the bottom of the band: measured on this
-        // implementation at 160 kS/s, 129 taps gives 47 dB at 2 kHz, 16 dB at 1 kHz and
-        // 8 dB at 500 Hz, against 58 dB and better everywhere above 5 kHz.
-        //
-        // For a composite that is the right trade by a distance: the pilot, the stereo
-        // subcarrier and RDS all live where it is good, and what leaks at the bottom of
-        // the audio band is a conjugate copy of a real signal, which comes back as a small
-        // gain error rather than as something that was not there.
-        taps: param(129, 'manual'),
-      };
-      // Zero, and deliberately. The frequencies in this stream are baseband offsets — the
-      // pilot is 19 kHz from DC, not 19 kHz from wherever the radio was tuned — so a
-      // tuner built on it reads in the units the composite is actually in.
-      node.out = { kind: 'iq', sampleRate: p.out.sampleRate, centerHz: 0 };
-      node.label = 'To IQ';
     } else if (op === 'core.real') {
       node.params = {};
       node.out = { kind: 'real', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
@@ -1613,8 +1609,16 @@ export class MockEngine extends Graph {
       const decim = node.params.decim.value;
       const taps = dsp.lowPassTaps(node.params.taps.value, node.params.widthHz.value / 2, p.out.sampleRate);
       const need = count * decim + taps.length;
-      const src = this._readIQ(p, tEnd, need);
-      const offset = node.params.centerHz.value - p.out.centerHz;
+      // A real parent is handed to the same mixer with an empty imaginary part. Mixing a
+      // real signal by a complex phasor and low-passing keeps the positive-frequency
+      // content around the offset and throws the negative-frequency image away with the
+      // rest — which is the analytic signal, arrived at without a Hilbert transformer.
+      // Half the amplitude, because a real cosine is two phasors and only one survives.
+      const onReal = p.out.kind === 'real';
+      const src = onReal ? interleave(this._detectMono(p, tEnd, need), need)
+                         : this._readIQ(p, tEnd, need);
+      const offset = onReal ? node.params.centerHz.value
+                            : node.params.centerHz.value - p.out.centerHz;
       // The mixer's phase is referenced to the **first sample of the window**, not to its
       // end — which is a different number for every window length, because `need` depends
       // on how many samples were asked for.
@@ -1631,10 +1635,6 @@ export class MockEngine extends Graph {
     }
 
     if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
-
-    if (node.op === 'core.analytic') {
-      return dsp.analytic(this._detectMono(p, tEnd, count), count, node.params.taps.value);
-    }
 
     if (node.op === 'core.dehop') {
       // Same length and same time base as its parent, because it corrects rather than

@@ -7,9 +7,9 @@
 // inside a decode and argue with it (ADR-0024, 09-demods), and a node that does the whole
 // job in one step is the shape that argument is against.
 //
-// So: the same decode, as boxes. A composite made complex, three tuners drawn on it by
-// hand, the pilot squared to make a 38 kHz reference, and a conjugate product against it.
-// Every intermediate result is a node with a spectrum you can look at.
+// So: the same decode, as boxes. Three tuners drawn by hand on the composite, the pilot
+// squared to make a 38 kHz reference, and a conjugate product against it. Every
+// intermediate result is a node with a spectrum you can look at.
 //
 // What this file asserts is that the drawn version *works* — that the machinery added for
 // it (ADR-0037, ADR-0038) composes into the thing it was added for, and gets separation
@@ -62,48 +62,66 @@ function amplitudeAt(x, fs, hz, pad = 4000) {
 }
 const db = (a, b) => 20 * Math.log10((a || 1e-20) / (b || 1e-20));
 
-// ── the two conversions ─────────────────────────────────────────────────────
+// ── tuning into a composite ─────────────────────────────────────────────────
 
-test('a composite can be made complex, and the trip back is the identity', async () => {
+test('a demodulated stream can be tuned into directly', async () => {
+  // No conversion node in front of it. A mixer takes a real input — GNU Radio has had
+  // `freq_xlating_fir_filter_fcf` for decades — and mixing by a complex phasor then
+  // low-passing keeps the positive-frequency content and discards its image, which is
+  // the analytic signal without a Hilbert transformer anywhere.
   const { e, fm } = await station();
-  const an = await e.addNode({ parent: fm.id, op: 'core.analytic', at: 0.3 });
-  assert.equal(an.out.kind, 'iq');
-  assert.equal(an.out.sampleRate, fm.out.sampleRate, 'nothing is resampled crossing over');
-  assert.equal(an.out.centerHz, 0, 'its frequencies are baseband offsets, not RF');
+  assert.equal(fm.out.kind, 'real');
+  const ops = (await e.palette(fm.id)).map((o) => o.id);
+  assert.ok(ops.includes('core.tuner'), 'and the palette offers it');
 
-  const back = await e.addNode({ parent: an.id, op: 'core.real', at: 0.3 });
-  assert.equal(back.out.kind, 'real');
-
-  const before = e._detect(e.node(fm.id), 0.35, 8192);
-  const after = e._detect(e.node(back.id), 0.35, 8192);
-  let worst = 0;
-  for (let i = 0; i < 8192; i++) worst = Math.max(worst, Math.abs(before[i] - after[i]));
-  assert.equal(worst, 0, 'real → iq → real returns exactly what went in');
+  const t = await e.addNode({ parent: fm.id, op: 'core.tuner',
+    selection: { f0: 36_000, f1: 40_000 }, at: 0.3 });
+  assert.equal(t.out.kind, 'iq');
+  assert.equal(t.params.centerHz.value, 38_000, 'the selection was in baseband and stayed there');
 });
 
-test('crossing over adds no delay, so a chain of them stays lined up', async () => {
+test('its numbers are baseband, and so are its children\'s', async () => {
+  // The axis unit follows the signal down the chain: once anything has been demodulated,
+  // 38 kHz means 38 kHz from DC rather than 38 kHz from wherever the radio was tuned.
+  const { e, fm } = await station();
+  assert.equal(e.isBaseband(e.root.id), false, 'the source is RF');
+  assert.equal(e.isBaseband(fm.id), true);
+  const t = await e.addNode({ parent: fm.id, op: 'core.tuner',
+    selection: { f0: 36_000, f1: 40_000 }, at: 0.3 });
+  assert.equal(e.isBaseband(t.id), true, 'and a tuner drawn on it is too');
+  const r = await e.addNode({ parent: t.id, op: 'core.real', at: 0.3 });
+  assert.equal(e.isBaseband(r.id), true);
+});
+
+test('a box at 38 kHz gets the subcarrier and not the pilot', async () => {
+  // Which is the whole reason hand-tuning a composite is worth having: the thing you drew
+  // the box around is the thing you get.
+  const { e, fm } = await station();
+  const tune = async (centerHz) => {
+    const t = await e.addNode({ parent: fm.id, op: 'core.tuner',
+      selection: { f0: centerHz - 2_000, f1: centerHz + 2_000 }, at: 0.3 });
+    const iq = e._readIQ(e.node(t.id), 0.4, 4096);
+    let p = 0;
+    for (let i = 1000; i < 3000; i++) p += iq[i * 2] ** 2 + iq[i * 2 + 1] ** 2;
+    return 10 * Math.log10(p / 2000 + 1e-20);
+  };
+  const pilot = await tune(19_000);
+  const sub = await tune(38_000);
+  const empty = await tune(48_000);
+  assert.ok(pilot - empty > 20, `19 kHz stands ${(pilot - empty).toFixed(0)} dB over an empty part of the band`);
+  assert.ok(sub - empty > 20, `38 kHz stands ${(sub - empty).toFixed(0)} dB over it`);
+});
+
+test('the way back out is a node, and adds no delay', async () => {
   const { delayOf } = await import('../src/delay.js');
   const { e, fm } = await station();
-  const an = await e.addNode({ parent: fm.id, op: 'core.analytic', at: 0.3 });
-  const back = await e.addNode({ parent: an.id, op: 'core.real', at: 0.3 });
+  const t = await e.addNode({ parent: fm.id, op: 'core.tuner',
+    selection: { f0: -15_000, f1: 15_000 }, at: 0.3 });
+  const r = await e.addNode({ parent: t.id, op: 'core.real', at: 0.3 });
+  assert.equal(r.out.kind, 'real');
+  assert.equal(r.out.sampleRate, t.out.sampleRate);
   const at = (n) => delayOf(e.node(n.id), (id) => e.node(id)).seconds;
-  assert.equal(at(an), at(fm));
-  assert.equal(at(back), at(fm));
-});
-
-test('the pilot and the subcarrier are where the axis says they are', async () => {
-  // The thing that makes hand-tuning a composite possible at all: once it is complex, a
-  // box drawn at 19 kHz is a box at 19 kHz.
-  const { e, fm } = await station();
-  const an = await e.addNode({ parent: fm.id, op: 'core.analytic', at: 0.3 });
-  const f = e.frame(an.id, { bins: 4096, window: 'Hann', at: 0.35 });
-  assert.equal(f.kind, 'spectrum');
-  const bin = (hz) => Math.round(f.data.length / 2 + (hz * f.data.length) / f.sampleRate);
-  const floor = [...f.data].sort((a, b) => a - b)[f.data.length >> 1];
-  for (const [hz, what] of [[19_000, 'the pilot'], [38_000, 'the L-R subcarrier']]) {
-    assert.ok(f.data[bin(hz)] - floor > 15, `${what} stands up at +${hz / 1000} kHz`);
-    assert.ok(f.data[bin(-hz)] - floor < 12, `and its image at -${hz / 1000} kHz does not`);
-  }
+  assert.equal(at(r), at(t), 'taking the real part is pointwise');
 });
 
 // ── the whole thing, as boxes ───────────────────────────────────────────────
@@ -112,19 +130,18 @@ test('the pilot and the subcarrier are where the axis says they are', async () =
  * Build the decoder out of nodes and return left and right.
  *
  * ```
- *   FM demod ──▶ To IQ ──┬─▶ Tune  0 kHz ─────────────────────▶ sum
- *                        ├─▶ Tune 19 kHz ─▶ Math a×b ──┐  (the pilot, squared)
- *                        └─▶ Tune 38 kHz ─▶ Math a×conj(b) ─▶ To real ─▶ diff
+ *   FM demod ──┬─▶ Tune  0 kHz ─────────────────────▶ To real ─▶ sum
+ *              ├─▶ Tune 19 kHz ─▶ Math a×b ──┐  (the pilot, squared)
+ *              └─▶ Tune 38 kHz ─▶ Math a×conj(b) ─▶ To real ─▶ diff
  * ```
  */
 async function drawn(e, fm) {
-  const an = await e.addNode({ parent: fm.id, op: 'core.analytic', at: 0.3 });
-  const rate = an.out.sampleRate;
+  const rate = fm.out.sampleRate;
   // Every tuner at the same decimation, because a merge does not resample — which is what
   // makes setting this by hand a thing you do on purpose rather than a thing you forget.
   const DECIM = 8;
   const tune = async (centerHz, widthHz) => {
-    const t = await e.addNode({ parent: an.id, op: 'core.tuner',
+    const t = await e.addNode({ parent: fm.id, op: 'core.tuner',
       selection: { f0: centerHz - widthHz / 2, f1: centerHz + widthHz / 2 }, at: 0.3 });
     await e.setParam(t.id, 'decim', DECIM);
     await e.setParam(t.id, 'taps', 129);
@@ -145,7 +162,7 @@ async function drawn(e, fm) {
 
   const sumR = await e.addNode({ parent: sum.id, op: 'core.real', at: 0.3 });
   const diffR = await e.addNode({ parent: coh.id, op: 'core.real', at: 0.3 });
-  return { sumR: e.node(sumR.id), diffR: e.node(diffR.id), rate: rate / DECIM, nodes: { an, sum, pilot, lr, ref, coh } };
+  return { sumR: e.node(sumR.id), diffR: e.node(diffR.id), rate: rate / DECIM, nodes: { sum, pilot, lr, ref, coh } };
 }
 
 test('the drawn chain recovers left and right, and keeps them apart', async () => {

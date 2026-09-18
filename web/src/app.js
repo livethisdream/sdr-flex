@@ -235,14 +235,26 @@ class App {
   }
 
   /**
-   * Is the current node a demodulated stream?
+   * Is the spectrum on screen one-sided?
    *
-   * Everything the spectrum pane does differently for one follows from this: where the
-   * axis starts, what unit it is in, and whether a box drawn on it means anything.
+   * A real stream's spectrum is its own mirror image, so it runs DC to fs/2 and has a
+   * `domain` to choose. Anything complex — including a tuner drawn *on* a real stream —
+   * is two-sided about its own centre like any other channel.
    */
-  onBaseband() {
+  onRealSpectrum() {
     const n = this.node();
     return !!n && n.out.kind === 'real';
+  }
+
+  /**
+   * Are the numbers on the axis baseband offsets rather than RF?
+   *
+   * A separate question from the one above, and it used to be the same one because only a
+   * real stream could be in baseband. A tuner on a composite is complex, two-sided, and
+   * still measured in kilohertz from DC.
+   */
+  basebandUnits() {
+    return this.engine.isBaseband(this.current);
   }
 
   /**
@@ -251,7 +263,7 @@ class App {
    */
   frameOpts(p) {
     const o = { bins: p.bins, window: p.window };
-    if (this.onBaseband()) o.domain = 'frequency';
+    if (this.onRealSpectrum()) o.domain = 'frequency';
     if (this.channels() > 1) o.channel = p.channel;
     return o;
   }
@@ -775,9 +787,9 @@ class App {
   viewHz() {
     const n = this.node();
     const p = this.vp(this.current);
-    const base = this.onBaseband();
-    const lo0 = base ? 0 : n.out.centerHz - n.out.sampleRate / 2;
-    const span = base ? n.out.sampleRate / 2 : n.out.sampleRate;
+    const oneSided = this.onRealSpectrum();
+    const lo0 = oneSided ? 0 : n.out.centerHz - n.out.sampleRate / 2;
+    const span = oneSided ? n.out.sampleRate / 2 : n.out.sampleRate;
     return { lo: lo0 + p.zoomLo * span, hi: lo0 + p.zoomHi * span };
   }
 
@@ -787,8 +799,9 @@ class App {
     const z = 1 / Math.max(1e-6, p.zoomHi - p.zoomLo);
     // Baseband is tens of kilohertz, and four decimal places of megahertz makes the
     // pilot and the RDS subcarrier both read as 0.0000. The unit follows the signal
-    // rather than the pane.
-    const base = this.onBaseband();
+    // rather than the pane — and it follows it down, so a tuner drawn on a composite is
+    // labelled in kilohertz too.
+    const base = this.basebandUnits();
     $('#axis').innerHTML = [0, 0.25, 0.5, 0.75, 1].map((f) => {
       const hz = lo + (hi - lo) * f;
       return base
@@ -2153,11 +2166,6 @@ class App {
 
     stage.addEventListener('pointerdown', (e) => {
       if (this.view() !== 'Spectrum') return;
-      // A box is a request to tune, and there is nothing left to tune inside a stream
-      // that has already been demodulated: the menu it opens would offer slicers, which
-      // do not take a frequency. Zoom and pan still work — reading the axis is the
-      // whole point of being here.
-      if (this.onBaseband()) return;
       if (e.target.closest('#cbar-wrap') || e.target.closest('#markers')) return;
       const r = stage.getBoundingClientRect();
       const wf = $('#wf').getBoundingClientRect();

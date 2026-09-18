@@ -110,7 +110,7 @@ Working end to end:
   Measured separation is 54–62 dB in the browser on a synthetic station; a good receiver
   off the air manages thirty to forty. De-emphasis lives here too, and nowhere upstream
 
-Tests: 365 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 366 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -693,22 +693,20 @@ house rule.
   says so, naming both — which makes setting two tuners to the same decimation a thing
   you do on purpose.
 - ~~**The transparent stereo chain.**~~ Built and asserted
-  (`web/test/drawn-stereo.test.mjs`): `core.analytic` makes the composite complex, three
-  hand-drawn tuners take the sum, the pilot and the subcarrier, `core.math` squares the
-  pilot to make the 38 kHz reference and takes the conjugate product against it, and
-  `core.real` comes back out. **72 dB of separation, against 59 dB for `core.stereo`** —
-  the drawn version is better, because its tuners are narrower than the opaque node's
-  fixed filters.
+  (`web/test/drawn-stereo.test.mjs`). The tuner takes a demodulated stream directly, so
+  three hand-drawn boxes on the composite give the sum, the pilot and the subcarrier;
+  `core.math` squares the pilot to make the 38 kHz reference and takes the conjugate
+  product against it; `core.real` comes back out. **85 / 75 dB of separation, against
+  59 dB for `core.stereo`.**
 
-  What it still lacks is a gain node: the difference branch rides a conjugate product, so
-  its scale is the pilot's power, and the matrix needs the two branches balanced. The test
-  supplies the one number a `core.gain` would.
+  A `core.analytic` node existed for about an hour and was removed by asking "which GNU
+  Radio block is this": `freq_xlating_fir_filter_fcf` takes a float input, because a mixer
+  does not need its input to be complex first. One node fewer, and separation went from
+  72 dB to 85 — the Hilbert's image rejection had been the limit.
 
-  **Worth reconsidering:** `core.analytic` may not need to exist. GNU Radio's
-  `freq_xlating_fir_filter_fcf` takes a *float* input, so a tuner could accept `real`
-  directly — one node fewer, no Hilbert, and no poor image rejection near DC. The cost is
-  widening the most load-bearing node in the tool, and the baseband-versus-RF axis
-  question follows it down the chain. Its own pass.
+  Still missing: a gain node. The difference branch rides a conjugate product, so its
+  scale is the pilot's power and the matrix needs the branches balanced. The test supplies
+  the one number a `core.gain` would.
 - **Nothing carries audio back into the graph**, which bites RDS too: `redsea --feed-through`
   echoes the composite while it decodes, and there is nowhere for that to go. Same gap
   as M17's decoded voice, listed below.

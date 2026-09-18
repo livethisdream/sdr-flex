@@ -60,9 +60,13 @@ samples, drawn against a different independent variable.
   0 dBFS here and in the IQ view alike. Half a screen spent on a reflection would be
   half a screen, and 6 dB of disagreement between two panes that claim the same unit
   is worse than either.
-- **No box on a baseband spectrum.** A selection is a request to tune, and there is
-  nothing left to tune inside a stream that has already been demodulated. Zoom, pan
-  and the axis all work; the drag does not start.
+- ~~**No box on a baseband spectrum.**~~ **Reversed.** This said a selection is a request
+  to tune and there is nothing left to tune inside a stream that has already been
+  demodulated. The second half was wrong: a mixer takes a real input, so a tuner can be
+  drawn straight onto a composite, and doing it by hand is how the transparent half of a
+  decode gets built ([ADR-0038](0038-a-node-may-have-two-inputs.md)). Dragging a box at
+  38 kHz on this view now gets you the stereo subcarrier, which is the most useful thing
+  the view does. The axis stopped being a readout and became a control surface.
 - `real` keeps its `centerHz`, which now names where the samples came from rather than
   the middle of the picture. That is provenance ([ADR-0007](0007-stream-context-and-provenance.md)),
   and it is what a decoder downstream still needs.

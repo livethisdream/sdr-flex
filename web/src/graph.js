@@ -151,6 +151,26 @@ export class Graph {
   }
 
   /**
+   * Are this node's frequencies baseband offsets rather than RF?
+   *
+   * True once anything in the chain has been demodulated: a composite's 19 kHz is 19 kHz
+   * from DC, and so is the 19 kHz of a tuner drawn on it. It decides the unit an axis is
+   * labelled in and nothing else — the numbers themselves are already right either way,
+   * which is the point of carrying `centerHz` through as provenance (ADR-0036).
+   *
+   * Derived by walking rather than stored, for the reason `delayOf` is: a stored copy
+   * goes stale and `setParam` propagates one level.
+   */
+  isBaseband(id) {
+    let n = this.node(id);
+    while (n) {
+      if (n.out && n.out.kind === 'real') return true;
+      n = n.parent ? this.node(n.parent) : null;
+    }
+    return false;
+  }
+
+  /**
    * Could this node be the second input of that one?
    *
    * No if it is that node, and no if it reads it — directly or at any remove — because an
