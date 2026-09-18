@@ -1,0 +1,143 @@
+/* Layout mockups — chrome study.
+ *
+ * This file only ever sets *layout*. Everything visual — color, type, the pill
+ * shapes, the tab and crumb styling — comes from `web/style.css`, loaded first and
+ * unmodified. That is deliberate: if a mockup could restyle a control it could
+ * flatter a layout that the real app would not be able to build. The diff between
+ * these screens and today's app is exactly the diff being proposed.
+ */
+
+/* The app stylesheet pins the document to the viewport and hides overflow, which is
+   right for an app and wrong for a gallery of them. Each screen gets that treatment
+   back locally, below. */
+html, body { height:auto; overflow:auto; }
+body { font-family:var(--sans); }
+
+.wrap { max-width:1180px; margin:0 auto; padding:2.2rem 1.4rem 6rem; }
+
+h1 { font-family:var(--display); font-size:1.5rem; color:var(--bright); margin:0 0 .3rem; font-weight:600; }
+.sub { color:var(--dim); font-size:.86rem; margin:0 0 1.6rem; line-height:1.6; max-width:68ch; }
+.sub b { color:var(--body); font-weight:600; }
+
+/* ── the control bar ── */
+.controls {
+  position:sticky; top:0; z-index:20;
+  display:flex; flex-wrap:wrap; align-items:center; gap:.5rem;
+  padding:.6rem .8rem; margin:0 0 2rem;
+  background:var(--float); border:1px solid var(--rule); border-radius:10px;
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  box-shadow:0 10px 30px -14px var(--shadow);
+}
+.controls .lab { font-size:.56rem; letter-spacing:.13em; text-transform:uppercase; color:var(--dim); margin-right:.1rem; }
+.seg { display:flex; gap:.15rem; }
+.seg button {
+  font-family:var(--mono); font-size:.68rem; padding:.28rem .5rem; border-radius:5px;
+  color:var(--dim); border:1px solid transparent;
+}
+.seg button:hover { color:var(--bright); background:var(--raised); }
+.seg button.on { color:var(--on-accent); background:var(--accent); border-color:var(--accent); font-weight:600; }
+.controls .spacer { flex:1; }
+
+/* ── one screen ── */
+.screen { margin:0 0 2.6rem; }
+.screen > h2 {
+  font-family:var(--display); font-size:1rem; color:var(--bright);
+  margin:0 0 .15rem; font-weight:600;
+  display:flex; align-items:baseline; gap:.5rem;
+}
+.screen > h2 .key {
+  font-family:var(--mono); font-size:.62rem; color:var(--dim);
+  border:1px solid var(--rule); border-radius:4px; padding:.05rem .32rem;
+}
+.screen > .why { color:var(--dim); font-size:.82rem; line-height:1.6; margin:0 0 .75rem; max-width:72ch; }
+.screen > .why b { color:var(--body); font-weight:600; }
+.screen > .why .risk { color:var(--warn); }
+
+/* The device frame is real pixels, then scaled to fit the page. offsetHeight ignores
+   transforms, so everything the readout reports is measured at true size. */
+.frame { position:relative; }
+.scaler { transform-origin:top left; }
+.device {
+  position:relative; overflow:hidden;
+  border:1px solid var(--rule); border-radius:8px;
+  background:var(--ground); box-shadow:0 20px 50px -24px var(--shadow);
+}
+.device .app { height:100%; }
+
+/* ── the readout ── */
+.budget {
+  display:flex; flex-wrap:wrap; align-items:center; gap:.2rem .9rem;
+  margin:.65rem 0 0; font-family:var(--mono); font-size:.68rem; color:var(--dim);
+}
+.budget b { color:var(--bright); font-weight:500; }
+.budget .good { color:var(--ok); }
+.budget .bad { color:var(--crit); }
+.bar { display:flex; height:6px; width:100%; margin:.45rem 0 0; border-radius:99px; overflow:hidden; background:var(--rule-lo); }
+.bar i { display:block; height:100%; }
+.bar .b-chrome { background:var(--accent); }
+.bar .b-stage  { background:var(--ok); }
+
+/* ── shared bits the schemes rearrange ── */
+.dock .transport, .dock .strip { margin:0; }
+
+/* A: one row carries source › channel and the views. The rule between them is the
+   same 1px separator the strip already uses between parameter runs. */
+.path {
+  display:flex; align-items:stretch; gap:0;
+  background:var(--raised); border-bottom:1px solid var(--rule);
+  padding:0 .5rem 0 .7rem; min-width:0;
+}
+.path .crumbs { flex:none; align-self:center; padding-right:.5rem; }
+.path .tabs {
+  border-bottom:none; background:none; flex:1 1 auto; min-width:0; padding-left:0;
+  /* The tab run is the thing with slack in a crowded row, so it is the thing that
+     scrolls — the same treatment the strip already has, and for the same reason.
+     Hiding the overflow would let a scheme look like it fits when it does not. */
+  overflow-x:auto; scrollbar-width:none;
+}
+.path .tabs::-webkit-scrollbar { display:none; }
+.path .sep {
+  flex:none; align-self:center; width:1px; height:1.1em;
+  background:var(--rule); margin:0 .55rem 0 .15rem;
+}
+.path .themebtn { flex:none; align-self:center; margin-left:.3rem; }
+
+/* B: the two pills share the bottom row instead of stacking. They total 952 px at
+   1440 and 899 at 1024, so one row is not a squeeze — it is the shape they were
+   already the right size for. */
+.dock.row { flex-direction:row; align-items:center; justify-content:space-between; gap:.6rem; }
+.dock.row .transport { flex:none; }
+.dock.row .strip { flex:0 1 auto; min-width:0; }
+@media (max-width:640px) {
+  .dock.row { flex-direction:column; align-items:center; }
+}
+
+/* C: the state runs along the top row, in the 89% of it that is empty today. */
+.path .strip {
+  margin-left:auto; flex:0 1 auto; min-width:0;
+  background:none; border:none; box-shadow:none; backdrop-filter:none;
+  padding-block:.2rem; align-self:center;
+}
+
+/* D: the path floats in the spectrum's headroom and costs the canvas no height. */
+.stage.hosts-path { position:relative; }
+.floatpath {
+  position:absolute; z-index:6; top:.5rem; left:.6rem; right:.6rem;
+  display:flex; align-items:center; gap:.4rem; pointer-events:none;
+}
+.floatpath > * { pointer-events:auto; }
+.floatpath .crumbs, .floatpath .tabs {
+  flex:none; background:var(--float); border:1px solid var(--rule); border-radius:999px;
+  padding:.1rem .45rem; box-shadow:0 10px 30px -14px var(--shadow);
+  backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+}
+.floatpath .crumbs { flex:0 1 auto; min-width:0; overflow-x:auto; scrollbar-width:none; }
+/* Two pills side by side need 550 px and a phone has 390, so on a phone the tab run
+   scrolls rather than losing its right-hand end — the same rule the strip follows. */
+.floatpath .tabs {
+  margin-left:auto; border-bottom:1px solid var(--rule);
+  flex:0 1 auto; min-width:0; overflow-x:auto; scrollbar-width:none;
+}
+.floatpath .crumbs::-webkit-scrollbar, .floatpath .tabs::-webkit-scrollbar { display:none; }
+.floatpath .tab { padding:.3rem .55rem; border-bottom:none; border-radius:999px; }
+.floatpath .tab.on { background:var(--accent-lo); border-bottom:none; }
