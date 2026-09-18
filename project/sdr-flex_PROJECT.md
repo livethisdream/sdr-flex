@@ -90,7 +90,7 @@ Working end to end:
   Radio implementation
 - `Dockerfile.full`: one command for Node, the five packaged decoders, the vendor capture
   programs, GNU Radio, gr-lora_sdr, m17-cxx-demod and rx_sdr. 1.9 GB, and the banner then
-  reads **7 of 7 external decoders installed**
+  reads **9 of 9 external decoders installed**
 - The **baseband spectrum**: a `domain` pill on any demodulated stream swaps the waveform
   for a one-sided spectrum, DC to `fs/2`, in the same pane the IQ spectrum uses
   (ADR-0036). This is what makes wideband FM readable — the pilot at 19 kHz, whether
@@ -553,6 +553,55 @@ with both CRCs matching.
 `convert()` resamples 48 kS/s to 4800 and says so — but a resampler low-passes and
 decimates and picks no instant, so the decoder reads a signal with no symbol grid in it.
 The adapter now checks the conversion note and names the missing node when that happens.
+
+### `Identify` can find it (and the M17 stream path is now exercised)
+
+Two follow-ups, both reported after the node landed.
+
+**The button could not find what the node made findable.** `Identify` demodulates a span
+speculatively and hands the result to every decoder that could read it — samples, not
+symbols. So `ext.m17_packet` was findable by hand and invisible to the one button whose
+whole job is finding a decoder for you. `via` is a **chain** now rather than a single
+demodulator, and the adapter declares what has to sit in front of it:
+
+```js
+after: [{ op: 'core.symbols', rate: 48_000 }],
+minRate: 12_000,
+```
+
+The `rate` is not decoration. `Identify` narrows the IQ once and shares it, sized from
+`wants.rate` — which for this decoder is 4800 **symbols** a second. Taken as a sample
+rate it would have decimated a 96 kS/s capture to about 19 kS/s with a filter to match,
+removing the 4FSK before the symbol sync saw it, and reported "nothing decoded" with
+complete confidence. `minRate` is the floor from Carson: 4FSK at 4800 Bd with ±2.4 kHz
+deviation is about 9.6 kHz occupied, so under 12 kS/s the signal is not in the channel.
+
+Intermediate stages are cached by **prefix**, so one discriminator is shared between the
+decoders that read it and the ones that read a symbol sync on top of it.
+
+**And it produced a real false positive, which is the more interesting half.** Pointed at
+the *envelope* of an M17 burst rather than its frequency — which `Identify` tries, because
+which demodulator is right is the question it is asking — `m17-packet-decode` returned
+**five packets** with plausible callsigns (`QJ.I67040`, `FJDX1-RLK`) and a failed link
+setup CRC on every one, and outranked the one real decode five to one. Two fixes:
+
+- `sweep: { errorfree: 'yes' }` — the program's own `-f`, and exactly what `sweep` is for.
+  A person who wants to see the guesses can still turn it off.
+- A general rule, since the next decoder may have no such flag: a row where *every* record
+  failed its own checksum carries `suspect` and ranks with the thin ones — shown, never
+  the headline. ADR-0031 applied to the rank rather than to a single decode. A rule
+  watching only the payload CRC would have called all five clean; they never reached a
+  payload, because the link setup failed first.
+
+**The stream-mode path had never run here.** `m17-cxx-demod` built in a couple of minutes
+against `libcodec2-dev` and `libboost-program-options-dev`; `fixtures/m17-lsf` passes, so
+the `ext.m17` changes above did not break it. That it was silently untested is the real
+finding, and it now has a guard: the conformance suite reports which decoders were not
+exercised on this run, and **fails if every decoder fixture skipped** — a green suite that
+tested nothing is the failure mode that looks like success. There is also a coverage test
+that every adapter has a golden capture or is named in a short list of why not
+(`ext.multimon` and `ext.minimodem` are the two, both covered in `adapters.test.mjs` but
+not pinned as a chain).
 
 ## Frequency hopping, as built
 

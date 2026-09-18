@@ -1,7 +1,8 @@
 # ADR-0040: A decoder may read symbols, and then the clock is a node
 
 **Status:** Accepted — `core.symbols` in `web/src/engine.js`, `softSymbols` in
-`web/src/dsp.js`, `ext.m17_packet` in `server/adapters.js`, `fixtures/m17-packet`
+`web/src/dsp.js`, `ext.m17_packet` in `server/adapters.js`, `fixtures/m17-packet`, and
+the chain `Identify` builds for it in `web/src/identify.js`
 
 ## Decision
 
@@ -12,7 +13,8 @@ sampling instant, where zero is, how far out the outer level is) are auto parame
 with their evidence on them, like every other derived parameter here (ADR-0017).
 
 An adapter that reads symbols says so with `wants: { format: 'f32', rate: <symbol rate> }`
-and is put behind one.
+and `after: [{ op: 'core.symbols', rate: <the rate that stage wants ahead of it> }]`, and
+is put behind one — by hand, and by `Identify`, which reads `after` and builds the chain.
 
 ## Why this came up
 
@@ -82,6 +84,44 @@ arrive at 32 kS/s — 6.67 samples each. The matched filter is built for whateve
 handed, with an odd tap count so its peak lands on a tap, and the sampling instants are
 interpolated. Requiring an integer would have meant overriding the tuner's own derivation
 to suit a decoder, which is the wrong way round.
+
+## What making `Identify` find one settled
+
+The three above were settled by building the node. These three were settled afterwards,
+when the button that is supposed to find a decoder for you could not find this one:
+`Identify` demodulates a span speculatively and hands the result to everything that could
+read it, which produces samples and not symbols. The packet was findable by hand and
+invisible to the button.
+
+**A chain, not a demodulator.** `Identify` had always modelled "what goes in front of this
+decoder" as one demodulator — `via` was a single op id. A decoder that needs a stage on
+top of that makes it a list, and the adapter declares the list rather than the plan
+knowing which decoders are special. The cache of intermediate results is keyed by the
+*prefix*, so the discriminator is computed once and shared between the decoders that read
+it and the ones that read a symbol sync on top of it.
+
+**`wants.rate` is not always a sample rate, and something had to say so.** The shared
+decimation in front of every demodulator is sized from `wants.rate`, which for this
+decoder is 4800 *symbols* a second. Taken as a sample rate it narrows a 96 kS/s capture to
+about 19 kS/s with a filter to match, removing the 4FSK signal before the symbol sync
+could look at it — and reporting, quite confidently, that nothing decoded. `after` carries
+both halves: the stage, and the rate the stage wants ahead of it.
+
+**A speculative pass has to refuse to guess, and this decoder made that concrete.**
+Pointed at the *envelope* of an M17 burst rather than its frequency — which `Identify`
+tries, because which demodulator is right is the question it is asking —
+`m17-packet-decode` returns five packets with plausible-looking callsigns (`QJ.I67040`,
+`FJDX1-RLK`) and a failed link setup CRC on every one. Ranked by record count, five
+guesses beat one decode. Two things came out of that. `sweep: { errorfree: 'yes' }`, which
+is the program's own `-f` and exactly what `sweep` exists for; and a general rule in the
+report, since the next decoder may have no such flag: a row where *every* record failed
+its own checksum carries `suspect`, and ranks with the thin ones — shown, never the
+headline. That is [ADR-0031](0031-identify-says-what-it-will-not-claim.md) applied to the
+rank rather than to a single decode.
+
+A rule that only watched the payload CRC would have called all five clean, because they
+never reached a payload: the link setup failed first and the decoder printed no content
+section at all.
 
 ## Cost
 

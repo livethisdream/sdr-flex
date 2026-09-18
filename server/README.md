@@ -482,7 +482,7 @@ here:
 SDRFLEX_DOCKERFILE=Dockerfile.full docker compose up -d --build
 ```
 
-Ten to twenty minutes, about 1.9 GB, and the startup banner then says **8 of 8 external
+Ten to twenty minutes, about 1.9 GB, and the startup banner then says **9 of 9 external
 decoders installed**. There are four images and this is the largest of them:
 
 | Image | Has |
@@ -490,7 +490,7 @@ decoders installed**. There are four images and this is the largest of them:
 | `Dockerfile` | Node and this repository, and nothing else |
 | `Dockerfile.decoders` | ...plus the five packaged decoders |
 | `Dockerfile.radio` | ...plus the vendor capture programs |
-| `Dockerfile.full` | ...plus GNU Radio, gr-lora_sdr, m17-cxx-demod, redsea and rx_sdr |
+| `Dockerfile.full` | ...plus GNU Radio, gr-lora_sdr, both M17 builds, redsea and rx_sdr |
 
 Take a smaller one if you know you do not need LoRa, M17, RDS or a Soapy radio — they build
 in seconds, and the four are otherwise the same server.

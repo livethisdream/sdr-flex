@@ -33,12 +33,13 @@ export const RATE_HEADROOM = 4;
 export function plan(adapters, { kind, sampleRate, demods = [] }) {
   const tried = [], skipped = [];
   for (const a of adapters || []) {
-    const row = { id: a.id, name: a.name, blurb: a.blurb, wants: a.wants, params: settings(a) };
+    const row = { id: a.id, name: a.name, blurb: a.blurb, wants: a.wants,
+                  params: settings(a), feedRate: feedRate(a) };
     if (!a.available) { skipped.push({ ...row, why: `${a.command} is not installed on this machine` }); continue; }
 
     if (a.in === kind) {
       if (!wideEnough(a, sampleRate)) { skipped.push({ ...row, why: narrowWhy(a, sampleRate) }); continue; }
-      if (fits(a, sampleRate)) tried.push({ ...row, via: null, viaLabel: null });
+      if (fits(a, sampleRate)) tried.push({ ...row, ...chain(a, null) });
       else skipped.push({ ...row, why: rateWhy(a, sampleRate) });
       continue;
     }
@@ -48,7 +49,7 @@ export function plan(adapters, { kind, sampleRate, demods = [] }) {
     if (a.in === 'real' && kind === 'iq' && demods.length) {
       if (!wideEnough(a, sampleRate)) { skipped.push({ ...row, why: narrowWhy(a, sampleRate) }); continue; }
       if (!fits(a, sampleRate)) { skipped.push({ ...row, why: rateWhy(a, sampleRate) }); continue; }
-      for (const d of demods) tried.push({ ...row, via: d.op, viaLabel: d.label });
+      for (const d of demods) tried.push({ ...row, ...chain(a, d) });
       continue;
     }
     skipped.push({ ...row, why: `takes ${say(a.in)}, and this is ${say(kind)}` });
@@ -56,7 +57,43 @@ export function plan(adapters, { kind, sampleRate, demods = [] }) {
   return { tried, skipped };
 }
 
-const fits = (a, sampleRate) => !(a.wants.rate > sampleRate * RATE_HEADROOM);
+/**
+ * Everything that has to run between the node being identified and this decoder.
+ *
+ * A list rather than the single demodulator it used to be, because one decoder here does
+ * not read samples: `m17-packet-decode` reads one float per symbol, so a symbol sync has
+ * to sit between the discriminator and it (ADR-0040). The adapter declares that as
+ * `after`, so this stays a question about data rather than a list of special cases — and
+ * a decoder that grows a second stage later costs a field, not an edit here.
+ *
+ * `null` still means "hand it the stream as it is", which is what every other adapter on
+ * a matching stream gets.
+ */
+function chain(a, demod) {
+  const ops = [...(demod ? [demod.op] : []), ...(a.after || []).map((s) => s.op)];
+  if (!ops.length) return { via: null, viaLabel: null };
+  const labels = [...(demod ? [demod.label] : []), ...(a.after || []).map((s) => label(s.op))];
+  return { via: ops, viaLabel: labels.join(' \u2192 ') };
+}
+
+// The one place a stage's name is written down. A plan is built from descriptors and
+// cannot reach into the engine's operation table (ADR-0029), and two names is not a table.
+const label = (op) => (op === 'core.symbols' ? 'Symbol sync' : op.replace(/^core\./, ''));
+
+/**
+ * The rate the stream feeding this decoder's chain should be at.
+ *
+ * Usually the rate it reads itself. Not always: a symbol decoder reads 4800 *symbols* a
+ * second off a stream that has to have been wide enough to contain them, and sizing the
+ * shared decimation from 4800 would narrow the channel to a few kilohertz and remove the
+ * signal before the symbol sync ever saw it. The adapter says which.
+ */
+export function feedRate(a) {
+  const first = (a.after || [])[0];
+  return (first && first.rate) || a.wants.rate;
+}
+
+const fits = (a, sampleRate) => !(feedRate(a) > sampleRate * RATE_HEADROOM);
 
 /**
  * Some decoders read something that is not in a narrow stream at all.
@@ -91,8 +128,9 @@ export function settings(a) {
 }
 
 function rateWhy(a, sampleRate) {
-  const f = a.wants.rate / sampleRate;
-  return `wants ${fmtRate(a.wants.rate)} and this stream is ${fmtRate(sampleRate)} — ` +
+  const want = feedRate(a);
+  const f = want / sampleRate;
+  return `wants ${fmtRate(want)} and this stream is ${fmtRate(sampleRate)} — ` +
          `resampling up ${f.toFixed(f < 10 ? 1 : 0)}× cannot put back bandwidth the capture never had`;
 }
 

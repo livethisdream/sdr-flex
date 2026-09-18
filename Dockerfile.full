@@ -195,9 +195,9 @@ COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 COPY --from=build /opt/oot/ /usr/local/
 RUN ldconfig
 
-# Fail the build rather than the first click. A missing module shows up in this tool as
-# a greyed row in a menu, which is the correct behavior and a terrible way to find out
-# that an image did not build what it said it did.
+# Fail the build rather than the first click. A decoder whose program is missing is not
+# in the menu at all — which is the correct behavior and a terrible way to find out that
+# an image did not build what it said it did.
 RUN node --version \
  && python3 -c "from gnuradio import lora_sdr" && echo 'lora_sdr ok' \
  && m17-demod --help > /dev/null && m17-mod --help > /dev/null && echo 'm17 ok' \

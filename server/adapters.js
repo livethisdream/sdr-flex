@@ -444,6 +444,22 @@ export const ADAPTERS = {
     // reads a symbol per sample and correlates for the syncword, so a different rate is
     // a different protocol as far as it is concerned.
     wants: { format: 'f32', rate: 4800 },
+    // What has to be in front of it, and what that thing wants in front of *it*.
+    //
+    // `wants.rate` has always meant "the rate of the stream handed to this program's
+    // stdin", and for this one that is a symbol rate — 4800 symbols a second, not 4800
+    // samples. Nothing else here reads a stream whose rate is not a sample rate, and the
+    // difference is not cosmetic: `Identify` sizes the shared decimation from
+    // `wants.rate`, so taken as a sample rate it would narrow the channel to a few
+    // kilohertz and destroy the very signal the symbols are in. `after` says both halves
+    // — the stage, and the rate the stage wants ahead of it.
+    after: [{ op: 'core.symbols', rate: 48_000 }],
+    // 4FSK at 4800 symbols a second with M17's ±2.4 kHz deviation is about 9.6 kHz of
+    // occupied bandwidth by Carson (2 × (2400 + 2400)). Rounded up to the nearest round
+    // number a tuner would land on: below this the signal is not in the channel, and no
+    // amount of resampling puts it back — same claim `minRate` makes for redsea, arrived
+    // at from a modulation index rather than from a subcarrier frequency.
+    minRate: 12_000,
     params: [
       { id: 'callsigns', type: 'enum', default: 'decode', values: ['decode', 'raw'],
         label: 'callsigns',
@@ -452,6 +468,15 @@ export const ADAPTERS = {
         label: 'error-free only',
         hint: 'drop any frame the Viterbi decoder had to correct, rather than reporting it' },
     ],
+    // What "try everything" means here is the opposite of what it means for multimon-ng,
+    // and for a reason worth writing down. Measured on `fixtures/m17-packet`: pointed at
+    // the *envelope* of an M17 burst rather than its frequency — which `Identify` tries,
+    // because which demodulator is right is the question it is asking — this decoder
+    // returns five packets with plausible-looking headers and payload CRCs that do not
+    // match. A speculative pass that reports those has ranked five guesses above one
+    // decode. `-f` is the program's own answer: only frames the Viterbi decoder did not
+    // have to correct. A person who wants to see the guesses can still turn it off.
+    sweep: { errorfree: 'yes' },
     args: ({ params }) => [
       ...(params.callsigns !== 'raw' ? ['-c'] : []),
       ...(params.errorfree === 'yes' ? ['-f'] : []),
@@ -490,10 +515,18 @@ export const ADAPTERS = {
         // A packet whose payload is not text still happened, and a record with no `text`
         // would be drawn as an empty row. Say what it was instead.
         if (!r.text) r.text = `${r.kind || 'packet'} from ${r.src || 'somebody'}`;
-        // Said rather than dropped: a CRC that did not match means the bytes above it are
+        // Said rather than dropped: a CRC that did not match means the fields above it are
         // a guess, and a decoder that reports a guess as a decode is the thing ADR-0031
         // is about.
-        if (r.payloadCrc && r.payloadCrc !== 'match') r.suspect = 'payload CRC mismatch';
+        //
+        // *Both* checksums, and the link setup one matters more than it first looks.
+        // Measured on the envelope of an M17 burst rather than its frequency: five
+        // records came back with plausible callsigns — `QJ.I67040`, `FJDX1-RLK` — and a
+        // failed LSF CRC on every one. Those never reached a payload at all, so a rule
+        // that only watched the payload CRC called all five clean.
+        const bad = [r.lsfCrc && r.lsfCrc !== 'match' ? 'link setup' : null,
+                     r.payloadCrc && r.payloadCrc !== 'match' ? 'payload' : null].filter(Boolean);
+        if (bad.length) r.suspect = `${bad.join(' and ')} CRC mismatch`;
       }
       if (out.length) return out;
       // The failure this adapter is most likely to hit, named rather than left as
@@ -859,6 +892,11 @@ export function list() {
       wants: wants(a, defaults(a)),
       // The narrowest stream this decoder could possibly read, when it has an opinion.
       ...(a.minRate ? { minRate: a.minRate } : {}),
+      // And the stages that have to sit between a demodulated stream and it, for the one
+      // kind of decoder that does not read samples (ADR-0040). Data, like everything else
+      // here: the client builds the chain and must not have to know which decoders are
+      // special.
+      ...(a.after ? { after: a.after } : {}),
       available: available(id),
       // Yours or ours. The UI says so, because a decoder you added behaving oddly and
       // one that shipped behaving oddly are different problems.

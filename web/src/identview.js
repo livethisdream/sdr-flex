@@ -76,9 +76,9 @@ export class IdentifyPanel {
   close() { this.el.hidden = true; }
   get isOpen() { return !this.el.hidden; }
 
-  /** Solid first, thin next, silent last — the same order the engine's report uses. */
+  /** Solid first, unconvincing next, silent last — the same order the engine's report uses. */
   _sort() {
-    const tier = (r) => (r.records > 0 && !r.thin ? 0 : r.records > 0 ? 1 : 2);
+    const tier = (r) => (r.records > 0 && !r.thin && !r.suspect ? 0 : r.records > 0 ? 1 : 2);
     this.rows.sort((a, b) => tier(a) - tier(b) || (b.records || 0) - (a.records || 0) ||
                              a.name.localeCompare(b.name) ||
                              String(a.viaLabel).localeCompare(String(b.viaLabel)));
@@ -94,7 +94,7 @@ export class IdentifyPanel {
   _render() {
     const a = this.about || {};
     const answered = this.rows.filter((r) => r.state === 'done').length;
-    const found = this.rows.filter((r) => r.records > 0 && !r.thin).length;
+    const found = this.rows.filter((r) => r.records > 0 && !r.thin && !r.suspect).length;
 
     const head =
       `<div class="idhead"><b>Identify</b>` +
@@ -133,8 +133,9 @@ export class IdentifyPanel {
   _row(r) {
     const waiting = r.state !== 'done';
     // A thin result is shown and can be opened, but it is not the answer: it does not
-    // get the accent, and it does not get counted.
-    const hit = r.records > 0 && !r.thin;
+    // get the accent, and it does not get counted. Nor does one the decoder had to guess
+    // at — every record in it failed its own checksum (ADR-0031).
+    const hit = r.records > 0 && !r.thin && !r.suspect;
     const any = r.records > 0;
     const via = r.viaLabel ? `<span class="idvia">via ${esc(r.viaLabel)}</span>` : '';
     const count = waiting ? '<span class="idwait">running…</span>'
@@ -143,7 +144,9 @@ export class IdentifyPanel {
     // is one click away and has all of it.
     const say = any ? `<div class="idsay${hit ? '' : ' thin'}">${esc(r.sample[0])}</div>` : '';
     const thin = r.thin
-      ? '<div class="idtold">too little to be a message — more likely something found in noise</div>' : '';
+      ? '<div class="idtold">too little to be a message — more likely something found in noise</div>'
+      : r.suspect
+      ? '<div class="idtold">every record failed its own checksum — a decoder pattern-matching, not a decode</div>' : '';
     // A decoder that found nothing but measured something says so — the same answer the
     // tool gives everywhere else: here is what the signal actually looked like.
     const told = !hit && r.explained && (r.explained.measured || r.explained.suggestion)
@@ -154,13 +157,14 @@ export class IdentifyPanel {
       : !hit && r.rejected ? `<div class="idtold">${esc(r.rejected)}</div>` : '';
     const err = !hit && r.error ? `<div class="iderr">${esc(r.error)}</div>` : '';
 
-    return `<li class="idr${hit ? ' hit' : ''}${r.thin ? ' thin' : ''}${waiting ? ' waiting' : ''}"` +
+    return `<li class="idr${hit ? ' hit' : ''}${r.thin || r.suspect ? ' thin' : ''}${waiting ? ' waiting' : ''}"` +
            `${any ? ` data-key="${esc(r.key)}" role="button" tabindex="0" title="build this chain"` : ''}>` +
            `<div class="idtop"><b>${esc(r.name)}</b>${via}${count}</div>${say}${thin}${told}${err}</li>`;
   }
 }
 
-const key = (c) => `${c.id}|${c.via || ''}`;
+// A chain identifies a row as surely as one demodulator did.
+const key = (c) => `${c.id}|${[].concat(c.via || []).join('>')}`;
 
 function fmtSeconds(s) {
   if (!(s > 0)) return 'the whole capture';

@@ -777,14 +777,19 @@ class App {
   }
 
   /**
-   * Build what a row describes: the demodulator if it needed one, then the decoder,
-   * configured the way the run that answered was configured.
+   * Build what a row describes: whatever had to run in front of the decoder, then the
+   * decoder, configured the way the run that answered was configured.
+   *
+   * `via` is a list rather than one demodulator, because one decoder here does not read
+   * samples — `m17-packet-decode` wants a symbol sync between the discriminator and it
+   * (ADR-0040). The row already carries the whole chain, so this walks it rather than
+   * knowing which decoders are special.
    */
   async buildFromIdentify(parentId, row) {
     const sel = this.defaultSelection();
     let parent = parentId;
-    if (row.via) {
-      const d = await this.engine.addNode({ parent, op: row.via, selection: sel });
+    for (const op of [].concat(row.via || [])) {
+      const d = await this.engine.addNode({ parent, op, selection: sel });
       parent = d.id;
     }
     const node = await this.engine.addNode({ parent, op: row.id, selection: sel });

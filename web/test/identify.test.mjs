@@ -18,9 +18,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MockEngine, demodsFor } from '../src/engine.js';
+import { MockEngine, demodsFor, demodulate, realOp } from '../src/engine.js';
 import { Capture } from '../src/capture.js';
-import { plan, settings, RATE_HEADROOM } from '../src/identify.js';
+import { plan, settings, RATE_HEADROOM, feedRate } from '../src/identify.js';
 import * as adapters from '../../server/adapters.js';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures');
@@ -43,7 +43,12 @@ const TABLE = [
     available: true, command: 'subdec', params: [] },
 ];
 
-const by = (rows, id, via = null) => rows.find((r) => r.id === id && (r.via || null) === via);
+// `via` is a chain rather than a single demodulator (ADR-0040), so a row is found by
+// the whole chain. A bare string still means what it always did — the one-stage case is
+// most of them and spelling it `['core.fm_discriminator']` everywhere would be noise.
+const chainOf = (r) => [].concat(r.via || []).join('>');
+const by = (rows, id, via = null) =>
+  rows.find((r) => r.id === id && chainOf(r) === [].concat(via || []).join('>'));
 
 // ── the plan ────────────────────────────────────────────────────────────────
 
@@ -55,7 +60,7 @@ test('an adapter that takes this stream directly is tried', () => {
 
 test('an audio decoder on IQ is tried behind each demodulator', () => {
   const { tried } = plan(TABLE, { kind: 'iq', sampleRate: 250_000, demods: DEMODS });
-  const vias = tried.filter((r) => r.id === 'a.audio').map((r) => r.via);
+  const vias = tried.filter((r) => r.id === 'a.audio').map(chainOf);
   assert.deepEqual(vias.sort(), ['core.am_envelope', 'core.fm_discriminator'],
                    'both demodulators, because which one is right is the question');
 });
@@ -272,7 +277,7 @@ async function engineOn(name) {
 }
 
 const have = (id) => adapters.available(id);
-const hit = (r, id, via = null) => r.results.find((x) => x.id === id && (x.via || null) === via);
+const hit = (r, id, via = null) => by(r.results, id, via);
 
 test('an engine with no decoders on the box says so', async () => {
   const e = new MockEngine({ latency: false });
@@ -317,11 +322,103 @@ test('AX.25 over FM: both packet decoders, behind the right demodulator', async 
   // the report would not be telling anybody anything.
   assert.equal(hit(r, 'ext.direwolf', 'core.am_envelope').records, 0);
 
-  assert.deepEqual(r.results.slice(0, 2).map((x) => x.via),
+  assert.deepEqual(r.results.slice(0, 2).map(chainOf),
                    ['core.fm_discriminator', 'core.fm_discriminator'], 'what worked is on top');
   // The row has to be reproducible by clicking it, which means carrying the settings
   // that produced it rather than the adapter's cheap defaults.
   assert.match(hit(r, 'ext.multimon', 'core.fm_discriminator').params.modes, /AFSK1200/);
+});
+
+test('M17 packet mode: found on its own, with the symbol sync it needs', async (t) => {
+  // The gap this closes. `Identify` speculatively demodulates a span and hands the result
+  // to every decoder that could read it — which worked for every decoder here except the
+  // one that does not read samples. `m17-packet-decode` wants one float per symbol, and
+  // until the plan could put a stage in front of a decoder there was no way for a
+  // speculative pass to produce that: the packet was findable by hand and invisible to
+  // the button (ADR-0040).
+  if (!have('ext.m17_packet')) { t.skip('m17-packet-decode is not installed on this machine'); return; }
+  const e = await engineOn('m17-packet');
+  const tuner = await e.addNode({ parent: e.root.id, op: 'core.tuner', at: 0.5,
+                                  selection: { f0: 144_788_000, f1: 144_812_000 } });
+  const r = await e.identify(tuner.id, { at: 0.5 });
+
+  const m = hit(r, 'ext.m17_packet', ['core.fm_discriminator', 'core.symbols']);
+  assert.ok(m, `no M17 packet row: ${JSON.stringify(r.tried.map(chainOf))}`);
+  assert.equal(m.records, 1, `found ${m.records}`);
+  assert.equal(m.thin, false, 'a whole SMS packet is not a thin decode');
+  assert.match(m.sample.join(' '), /packet mode fixture/);
+  assert.equal(m.viaLabel, 'FM demod \u2192 Symbol sync', 'and the report says what it put in front');
+  assert.equal(r.results[0].id, 'ext.m17_packet', 'it is the top row');
+
+  // A speculative pass asks for error-free frames only, and this is why. Pointed at the
+  // *envelope* of an M17 burst rather than its frequency — which Identify tries, because
+  // which demodulator is right is the question it is asking — this decoder returned five
+  // packets with plausible headers and payload CRCs that did not match, and ranked them
+  // above the one real decode. `-f` is the program's own answer to that.
+  assert.equal(m.params.errorfree, 'yes', 'the sweep asked for frames it did not have to correct');
+  const wrong = hit(r, 'ext.m17_packet', ['core.am_envelope', 'core.symbols']);
+  assert.ok(wrong, 'it is tried behind both, because which demodulator is right is the question');
+  assert.equal(wrong.records, 0, `the envelope chain found ${wrong.records}: ${wrong.sample}`);
+});
+
+test('a row where every record failed its own checksum is not the headline', async (t) => {
+  // ADR-0031, applied to the rank rather than to a single decode. Run the same decoder
+  // with `errorfree` off and the guesses come back — which is correct, because somebody
+  // asked for them — but the row carries `suspect` and sorts with the thin ones, so the
+  // report cannot lead with five packets nobody should believe.
+  if (!have('ext.m17_packet')) { t.skip('m17-packet-decode is not installed on this machine'); return; }
+  const e = await engineOn('m17-packet');
+  const tuner = await e.addNode({ parent: e.root.id, op: 'core.tuner', at: 0.5,
+                                  selection: { f0: 144_788_000, f1: 144_812_000 } });
+  const got = await e.runAdapterData({
+    adapter: 'ext.m17_packet', kind: 'real', sampleRate: 4800,
+    params: { callsigns: 'decode', errorfree: 'no' },
+    ...(await (async () => {
+      const span = await e.readSpan(tuner.id, 0, e.duration());
+      const fm = demodulate('core.am_envelope', span.data, span.count, tuner.out.sampleRate);
+      const sym = realOp('core.symbols', fm.data, span.count, tuner.out.sampleRate);
+      return { data: sym.data };
+    })()),
+  });
+  assert.ok(got.records.length > 0, 'the guesses are still reported when somebody asks for them');
+  assert.ok(got.records.every((x) => x.suspect), 'and every one of them says it is a guess');
+  assert.match(got.records[0].suspect, /CRC/);
+});
+
+test('a symbol decoder is not asked to find symbols in a channel too narrow to hold them', () => {
+  // `wants.rate` is 4800 for this one and that is a *symbol* rate, so the old check —
+  // "can this stream be resampled up to what it wants" — passed trivially at any width.
+  // What actually decides it is whether 4FSK at 4800 Bd could have fitted in the channel.
+  // The real descriptor's numbers, with `available` forced — this is a test of the rule,
+  // not of what happens to be installed on the machine running it.
+  const real = adapters.list().find((a) => a.id === 'ext.m17_packet');
+  assert.ok(real && real.after && real.minRate, 'the adapter still declares both');
+  const table = [{ ...real, available: true, command: 'm17-packet-decode' }];
+
+  const wide = plan(table, { kind: 'iq', sampleRate: 96_000, demods: DEMODS });
+  assert.equal(wide.tried.length, 2, 'two demodulators, one stage each');
+  assert.deepEqual(wide.tried.map(chainOf).sort(),
+                   ['core.am_envelope>core.symbols', 'core.fm_discriminator>core.symbols']);
+
+  const narrow = plan(table, { kind: 'iq', sampleRate: 8_000, demods: DEMODS });
+  assert.equal(narrow.tried.length, 0);
+  assert.match(narrow.skipped[0].why, /at least 12 kS\/s/);
+});
+
+test('the shared decimation is sized by what the chain needs, not by what the decoder reads', () => {
+  // The bug this prevents, which would have been silent: `Identify` narrows the IQ once
+  // for everything behind a demodulator, sized from the widest `wants.rate`. Taking
+  // 4800 as a sample rate would have decimated a 96 kS/s capture to about 19 kS/s with a
+  // filter to match — removing the 4FSK signal before the symbol sync could look at it,
+  // and reporting "nothing decoded".
+  const a = { id: 'x', name: 'x', in: 'real', out: 'events', available: true, command: 'x',
+              params: [], wants: { format: 'f32', rate: 4800 },
+              after: [{ op: 'core.symbols', rate: 48_000 }] };
+  assert.equal(feedRate(a), 48_000, 'the rate the stage in front wants, not the symbol rate');
+  const plain = { ...a, after: undefined };
+  assert.equal(feedRate(plain), 4800, 'and the ordinary decoder is unchanged');
+  const { tried } = plan([a], { kind: 'iq', sampleRate: 96_000, demods: DEMODS });
+  assert.equal(tried[0].feedRate, 48_000, 'and it travels in the plan, where the runner reads it');
 });
 
 test('a decoder that recognized nothing still says what it measured', async (t) => {

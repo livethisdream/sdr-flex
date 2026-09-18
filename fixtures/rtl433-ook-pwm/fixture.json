@@ -2,7 +2,7 @@
   "name": "rtl_433 over OOK PWM",
   "why": "The external adapter path end to end: a span of IQ out of the graph, converted and resampled to what rtl_433 wants on stdin, its JSON read back as records. Protects against an upstream flag change, a format-negotiation mistake, and an output parser that quietly drops the part that matters.",
   "capture": "capture.sigmf-data",
-  "needs": "rtl_433",
+  "needs": "ext.rtl433",
   "chain": [
     {
       "op": "ext.rtl433",

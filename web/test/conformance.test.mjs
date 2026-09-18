@@ -116,6 +116,61 @@ test('there are fixtures to run', () => {
   assert.ok(dirs.length > 0, 'no fixtures found — the harness is not protecting anything');
 });
 
+/**
+ * Which adapters have no golden capture, and why that is allowed.
+ *
+ * A list rather than a silence. ADR-0025 says every decoder ships with a capture and the
+ * records it must produce; the two below do not, and writing that down here is the
+ * difference between a known gap and one nobody notices when the tenth adapter lands
+ * without a fixture either.
+ */
+const NO_FIXTURE = {
+  // Exercised in adapters.test.mjs against three of its demodulators, and reached in
+  // identify.test.mjs behind an FM demod — but there is no chain of its own pinned end to
+  // end, which is what a conformance fixture is for.
+  'ext.multimon': 'covered by adapters.test.mjs and identify.test.mjs, but not pinned as a chain',
+  'ext.minimodem': 'covered by adapters.test.mjs only',
+};
+
+test('every external decoder has a golden capture, or is listed as not having one', () => {
+  const covered = new Set(dirs
+    .map((d) => JSON.parse(fs.readFileSync(path.join(FIXTURES, d, 'fixture.json'), 'utf8')).needs)
+    .filter(Boolean));
+  const gaps = Object.keys(adapters.ADAPTERS).filter((id) => !covered.has(id));
+  assert.deepEqual(gaps.sort(), Object.keys(NO_FIXTURE).sort(),
+    'an adapter gained or lost a fixture — say so in NO_FIXTURE above, or write the fixture');
+  // And the list does not outlive the adapters it excuses.
+  for (const id of Object.keys(NO_FIXTURE)) {
+    assert.ok(adapters.ADAPTERS[id], `NO_FIXTURE names ${id}, which is not an adapter any more`);
+  }
+});
+
+/**
+ * What this run actually exercised.
+ *
+ * The failure mode this catches is the one that looks like success: on a machine with no
+ * decoders installed every fixture skips, the suite is green, and nothing was tested. A
+ * skip is the right answer for a program that is not here — a box without direwolf has
+ * nothing to say about the direwolf adapter — but a run where *everything* skipped is a
+ * suite protecting nothing, and it should say so rather than pass quietly.
+ */
+test('this run exercised at least one decoder against its real program', (t) => {
+  const needed = dirs
+    .map((d) => JSON.parse(fs.readFileSync(path.join(FIXTURES, d, 'fixture.json'), 'utf8')).needs)
+    .filter(Boolean);
+  const ran = needed.filter(have);
+  const absent = [...new Set(needed.filter((n) => !have(n)))].sort();
+  if (absent.length) {
+    t.diagnostic(`not exercised here, the program is not installed: ${absent.join(', ')}`);
+  }
+  t.diagnostic(`${ran.length} of ${needed.length} decoder fixtures ran against the real program`);
+  // Fixtures that need no external program at all — a grid, a raster, a plugin — always
+  // run, so this is only ever about the decoders.
+  assert.ok(ran.length > 0 || needed.length === 0,
+    `every decoder fixture skipped: none of ${absent.join(', ')} is installed. ` +
+    'The suite is green and has tested nothing. Dockerfile.full builds all of them.');
+});
+
 for (const name of dirs) {
   const dir = path.join(FIXTURES, name);
   const { spec } = load(dir);

@@ -96,6 +96,7 @@ Everything required, with `rtl_433` as the example:
 | `sweep` | what "try everything" means for this decoder, used by **Identify** |
 | `recordsOn` | `"stderr"`, for a program whose stdout is not records — see below |
 | `minRate` | the narrowest stream that could contain what this decodes — see below |
+| `after` | the stages that must run between a demodulated stream and this decoder, each `{ op, rate }` — only for a decoder that does not read samples, see below |
 
 **A flag whose value is empty is left out, with its flag.** That is what the `if` form is
 for: "restrict to one protocol" and "restrict to no protocol" are different command
@@ -166,6 +167,32 @@ low-passes and decimates — it picks no sampling instant — so the decoder rea
 that has no symbol grid in it and reports nothing at all. Write the "nothing decoded"
 note to name that case; `ext.m17_packet` checks `meta.inputNote` for the word `resampled`
 and says which node is missing.
+
+**And say it in the manifest too, so `Identify` can build the chain for you.** A
+speculative pass demodulates a span and hands the result to every decoder that could read
+it — which produces samples, not symbols, so without this a decoder like yours is
+findable by hand and invisible to the button:
+
+```js
+after: [{ op: 'core.symbols', rate: 48_000 }],
+minRate: 12_000,
+```
+
+Two numbers, and they mean different things. `rate` is what the stream *in front of the
+stage* should be: `Identify` narrows the IQ once and shares it, and it sizes that from
+`wants.rate` unless you say otherwise — which for a symbol decoder would decimate the
+channel to a few kilohertz and remove the signal before the stage ever saw it.
+`minRate` is the floor: 4FSK at 4800 symbols a second with ±2.4 kHz deviation occupies
+about 9.6 kHz, so under about 12 kS/s the signal is not in the channel at all and the
+report says that instead of trying.
+
+**A speculative pass should refuse to guess.** `sweep` is where that goes. Measured on
+`fixtures/m17-packet`: pointed at the *envelope* of an M17 burst rather than its
+frequency — which `Identify` tries, because which demodulator is right is the question —
+`m17-packet-decode` returns five packets with plausible callsigns and a failed link setup
+CRC on every one. `sweep: { errorfree: 'yes' }` turns on the program's own `-f`. Where a
+program has no such flag, mark the record instead: a record with a `suspect` field is
+shown, is never the headline, and sorts with the thin ones (ADR-0031).
 
 ## When a manifest is not enough
 

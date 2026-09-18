@@ -53,6 +53,10 @@ const GAIN_TARGET = 0.25;
 // a receiver's filter has to be the transmitter's or it is not matched to anything.
 const SYMBOL_SPAN = 8;
 
+// M17's, and the only symbol rate anything here reads. A second one makes this a
+// parameter of the operation rather than a constant.
+const SYMBOL_RATE = 4800;
+
 // How much of a span a symbol sync fits itself over. The whole thing, up to this — at 48
 // kS/s that is two million samples through a matched filter and a thirty-two-way search,
 // which is a second of work and happens once per node.
@@ -296,6 +300,24 @@ export function demodulate(op, iq, count, fs, params = null) {
  * here rather than a branch in the engine.
  */
 export function realOp(op, x, count, fs, params = null) {
+  if (op === 'core.symbols') {
+    // The only one of these whose output rate is not its input's, which is why the
+    // return may carry a rate and a count of its own. Given no parameters it measures
+    // them — which is exactly what `Identify` needs, since a speculative pass has no
+    // node to have derived them on (ADR-0040).
+    const rate = params ? Number(params.symbolRate.value) : SYMBOL_RATE;
+    if (params) {
+      return {
+        data: dsp.softSymbolsAt(x, count, fs, rate, {
+          phase: params.phase.value, center: params.center.value, gain: params.gain.value,
+          invert: params.invert.value === 'yes', span: SYMBOL_SPAN,
+        }),
+        sampleRate: rate, label: 'Symbol sync',
+      };
+    }
+    const fit = dsp.softSymbols(x, count, fs, rate);
+    return { data: fit.symbols, count: fit.n, sampleRate: rate, eye: fit.eye, label: 'Symbol sync' };
+  }
   if (op === 'core.stereo') {
     // Number(), because the strip offers this as a list and a list hands back strings.
     const tau = params ? Number(params.deemphasisUs.value) : 75;
@@ -432,7 +454,7 @@ const textLength = (records) =>
 
 /** Solid first, thin next, silent last; then by how much, then by name. */
 function rank(a, b) {
-  const tier = (r) => (r.records > 0 && !r.thin ? 0 : r.records > 0 ? 1 : 2);
+  const tier = (r) => (r.records > 0 && !r.thin && !r.suspect ? 0 : r.records > 0 ? 1 : 2);
   return tier(a) - tier(b) || b.records - a.records ||
          a.name.localeCompare(b.name) || String(a.viaLabel).localeCompare(String(b.viaLabel));
 }
@@ -1141,15 +1163,39 @@ export class MockEngine extends Graph {
     // first is what the chain being proposed would do anyway: this *is* the tuner,
     // run once and shared, and a discriminator that is not listening to 2.4 MHz of
     // noise is a better discriminator too.
-    const audioRate = Math.max(...tried.filter((c) => c.via).map((c) => c.wants.rate), 0);
+    // `feedRate`, not `wants.rate`: a symbol decoder reads 4800 symbols a second off a
+    // stream that has to have been wide enough to contain them, and decimating to 4800
+    // would take the signal out before the symbol sync ever saw it.
+    const audioRate = Math.max(...tried.filter((c) => c.via).map((c) => c.feedRate || c.wants.rate), 0);
     const narrow = audioRate ? decimateFor(got, fs, audioRate) : null;
 
-    // Demodulate once per way of demodulating, not once per decoder behind one.
-    const audio = new Map();
+    // Run each stage once, not once per decoder behind it.
+    //
+    // A chain is a list now rather than a single demodulator, and the cache is keyed by
+    // the *prefix* rather than by the whole chain — so `fm_discriminator` is computed
+    // once and both the decoders that read its output and the ones that read a symbol
+    // sync on top of it share that one discriminator. Three decoders behind one demod was
+    // always the common case; a stage behind a stage is the new one.
+    const stages = new Map();
     const feed = (via) => {
-      if (!via) return { data: got.data, kind: got.kind, rate: fs };
-      if (!audio.has(via)) audio.set(via, demodulate(via, narrow.data, narrow.count, narrow.rate).data);
-      return { data: audio.get(via), kind: 'real', rate: narrow.rate };
+      if (!via || !via.length) return { data: got.data, kind: got.kind, rate: fs };
+      let cur = { data: narrow.data, count: narrow.count, rate: narrow.rate, kind: 'iq' };
+      let key = '';
+      for (const op of via) {
+        key = key ? `${key}>${op}` : op;
+        if (!stages.has(key)) {
+          const out = cur.kind === 'iq'
+            ? { ...demodulate(op, cur.data, cur.count, cur.rate), count: cur.count, rate: cur.rate }
+            : realOp(op, cur.data, cur.count, cur.rate);
+          stages.set(key, {
+            data: out.data, kind: 'real',
+            count: out.count != null ? out.count : cur.count,
+            rate: out.sampleRate != null ? out.sampleRate : cur.rate,
+          });
+        }
+        cur = stages.get(key);
+      }
+      return { data: cur.data, kind: 'real', rate: cur.rate };
     };
 
     const results = [];
@@ -1179,6 +1225,12 @@ export class MockEngine extends Graph {
         // The row still shows what it said, so nothing is hidden — it just does not get
         // to be the headline.
         thin: out.records.length > 0 && textLength(out.records) < MIN_DECODE_CHARS,
+        // A parser may mark a record as one the decoder had to guess at — a checksum
+        // that did not agree, most often. One suspect record among real ones is a lossy
+        // decode and still a decode; a row where *every* record is suspect is a decoder
+        // pattern-matching on noise, and ADR-0031 is the whole reason this distinction
+        // is drawn rather than counted. It ranks with `thin`: shown, never the headline.
+        suspect: out.records.length > 0 && out.records.every((r) => r.suspect),
         // Enough of what it said to recognize the answer, not the whole decode: the
         // point of the report is choosing a decoder, and the decoder's own pane is
         // three characters away once one is chosen.
@@ -1402,7 +1454,7 @@ export class MockEngine extends Graph {
       // symbol grid each time it was asked — so this reads a window now, keeps what it
       // found, and every frame afterwards is `softSymbolsAt` doing arithmetic.
       const fs = p.out.sampleRate;
-      const rate = 4800;                       // M17's, and the only one anything here reads
+      const rate = SYMBOL_RATE;
       // Over the whole span, not a peek window. Every other auto parameter here is a
       // property of a carrier, which any quarter second of it will tell you; a symbol
       // grid is a property of a *burst*, and a packet is over in a fifth of a second
