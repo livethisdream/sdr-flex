@@ -261,7 +261,13 @@ merely missing a fixture, when in fact no chain ending in a plugin could be buil
 - **Identify** runs it along with everything else, and will say why it was skipped if it
   cannot read the stream in front of it
   ([ADR-0031](adr/0031-identify-says-what-it-will-not-claim.md)).
-- A missing program is still listed, greyed, naming what to install.
+- A decoder whose program is not on the box is **not in the menu**
+  ([ADR-0039](adr/0039-the-menu-answers-the-gesture.md)) — the menu answers "what do you
+  want to do with this", and one that cannot run is not an answer. `Identify` still names
+  it, with the reason, which is where "what could this box do that it cannot do yet"
+  belongs. One from *your* pack is the exception and stays listed, greyed, naming what it
+  wants: you wrote that manifest expecting it to run, so its absence is a mistake to be
+  told about.
 - The node is **opaque** — you cannot drill into somebody else's decoder, and the tab is
   drawn differently to say so. That is the trade for hundreds of protocols you did not
   write; the native chain is there for when you need to *understand* a decode rather than

@@ -128,6 +128,53 @@ test('a decoder that is not installed is named, not dropped', () => {
                'and every name it might have gone by is named');
 });
 
+test('a decoder that cannot run is not in the menu, but Identify still names it', async () => {
+  // ADR-0039. The two halves are one decision: the menu stops carrying dead rows *because*
+  // the report carries them. Testing them apart would let either half be removed without
+  // the other noticing.
+  const { MockEngine } = await import('../src/engine.js');
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  const absent = { id: 'ext.nowhere', name: 'nowhere', in: 'iq', out: 'events',
+                   wants: { format: 'cu8', rate: 250_000 }, available: false,
+                   command: 'nowhere-ng', params: [] };
+  e.adapters = [absent, TABLE[0]];
+  const ops = await e.palette(e.root.id);
+  assert.ok(!ops.some((o) => o.id === 'ext.nowhere'), 'absent from the menu');
+  assert.ok(ops.some((o) => o.id === 'a.iq'), 'and the installed one is still there');
+
+  const { skipped } = plan(e.adapters, { kind: 'iq', sampleRate: 250_000, demods: DEMODS });
+  const row = by(skipped, 'ext.nowhere');
+  assert.ok(row, 'and the report has not forgotten it');
+  assert.match(row.why, /nowhere-ng is not installed/);
+});
+
+test('but one from your own pack stays, because you expected it to run', async () => {
+  const { MockEngine } = await import('../src/engine.js');
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  e.adapters = [{ id: 'ext.mine', name: 'mine', in: 'iq', out: 'events', local: 'mypack',
+                  wants: { format: 'cu8', rate: 250_000 }, available: false,
+                  command: 'mine-ng', params: [] }];
+  const row = (await e.palette(e.root.id)).find((o) => o.id === 'ext.mine');
+  assert.ok(row, 'still offered');
+  assert.equal(row.stub, true, 'and not clickable');
+  assert.match(row.soon, /needs mine-ng/, 'saying what it wants, rather than a milestone');
+});
+
+test('M4 means M4, and nothing else does', async () => {
+  const { MockEngine, OPS } = await import('../src/engine.js');
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  e.adapters = [{ id: 'ext.gone', name: 'gone', in: 'iq', out: 'events', local: 'p',
+                  wants: { format: 'cu8', rate: 1 }, available: false, command: 'gone', params: [] }];
+  const ops = await e.palette(e.root.id);
+  const m4 = ops.filter((o) => o.soon === 'M4');
+  assert.deepEqual(m4.map((o) => o.id), ['core.burst_detector'],
+    'the one built-in operation that is genuinely not written yet');
+  assert.ok(OPS['core.burst_detector'].stub, 'and it is the one the catalog marks');
+});
+
 test('nothing is dropped silently — every adapter is in one list or the other', () => {
   for (const [kind, rate] of [['iq', 250_000], ['iq', 10_000], ['real', 48_000], ['bytes', 1000]]) {
     const { tried, skipped } = plan(TABLE, { kind, sampleRate: rate, demods: demodsFor(kind) });

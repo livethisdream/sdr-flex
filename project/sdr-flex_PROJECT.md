@@ -719,8 +719,21 @@ house rule.
   [ADR-0039](../docs/adr/0039-the-menu-answers-the-gesture.md) decides the shape: two
   tiers with the fold in place, and what is in the first tier decided by *which gesture
   opened the menu* — which the code already knows, because `openMenu` has always taken the
-  selection or null. Nothing is built; the scroll is a one-line bug fix that should go
-  first regardless.
+  selection or null. The tiering is not built; the scroll is a one-line fix still to do.
+
+  **Built already:** a decoder whose program is not on the box is not in the menu at all.
+  18 entries on `iq` became 15 here, and 12 on `real`. `Identify` still names every one it
+  could not try, which is where "what could this box do that it cannot" belongs. A
+  decoder from *your* pack is the exception and stays, because you wrote that manifest
+  expecting it to run. And `M4` means M4 again — it had been shared with "not installed",
+  so a machine without rtl_433 was told rtl_433 arrives in a future milestone.
+
+  **A correction worth keeping:** the greyed-row rule was never in ADR-0013. It lived in
+  three documentation pages describing a behaviour nobody argued for. The one place it
+  *was* argued — `server/README.md`, about radio drivers — makes a good case that turns on
+  the surface: a short explicit list of eight radios you are deliberately browsing is not
+  an eighteen-row menu opened over the signal by a gesture. The radio picker keeps its
+  behaviour.
 
   The part worth remembering from writing it: **ADR-0017 derives values, not intentions.**
   Ranking the menu by what the signal looks like is the obvious next thought and it is

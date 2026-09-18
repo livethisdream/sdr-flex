@@ -108,7 +108,7 @@ export class ContextMenu {
       `<button class="ctx-i${o.stub ? ' stub' : ''}${!headed && gi > 0 && i === 0 ? ' gsep' : ''}" data-op="${o.id}">${o.name}` +
       `${o.local ? `<span class="ext mine" title="from your ${o.local} pack">yours</span>`
         : o.external ? '<span class="ext">ext</span>' : ''}` +
-      `${o.stub ? '<span class="soon">M4</span>' : ''}` +
+      `${o.soon ? `<span class="soon">${o.soon}</span>` : ''}` +
       `${o.key && !o.stub ? `<kbd class="ctx-k" title="press ${o.key} to add this">${o.key}</kbd>` : ''}</button>`;
 
     this.el.innerHTML =

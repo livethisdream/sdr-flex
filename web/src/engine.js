@@ -1194,19 +1194,34 @@ export class MockEngine extends Graph {
     const n = this.node(nodeId);
     const built = Object.entries(OPS)
       .filter(([, o]) => accepts(o.in, n.out.kind))
-      .map(([id, o]) => ({ id, ...o }));
+      // `M4` means M4 again. It had been shared with "the program is not installed", which
+      // told a machine without rtl_433 that rtl_433 arrives in a future milestone —
+      // two states with nothing in common but a boolean (ADR-0039).
+      .map(([id, o]) => ({ id, ...o, ...(o.stub ? { soon: 'M4' } : {}) }));
     // Somebody else's decoders, if this build has a table of them. Marked external and
     // opaque: you cannot see inside one, and the UI says so rather than implying you
     // could have (ADR-0013).
     const ext = (this.adapters || [])
       .filter((a) => accepts(a.in, n.out.kind))
+      // **A decoder whose program is not on this box is not in the menu** (ADR-0039). The
+      // menu answers "what do you want to do with this", and one that cannot run is not an
+      // available answer at any altitude. What it was protecting — that you cannot install
+      // what you do not know exists — is `Identify`'s job, and `Identify` already names
+      // every decoder it could not try and why (ADR-0031).
+      //
+      // One that *you* added is different and stays. You wrote that manifest and expected
+      // it to run, so its absence is a mistake to be told about rather than a capability
+      // you have not discovered, and silence is the wrong answer to a mistake.
+      .filter((a) => a.available || a.local)
       .map((a) => ({ id: a.id, name: a.name, group: a.group, in: a.in, out: a.out,
                      external: true, opaque: true, blurb: a.blurb,
                      // Yours or ours (ADR-0026). A decoder you added misbehaving and one
                      // that shipped misbehaving are different problems, and the menu is
                      // where you find out which this is.
                      ...(a.local ? { local: a.local } : {}),
-                     stub: !a.available, needs: a.command }));
+                     // Unclickable, and the badge says *why* rather than borrowing the one
+                     // that means "we have not written this yet".
+                     ...(a.available ? {} : { stub: true, soon: `needs ${a.command}`, needs: a.command }) }));
     // A loaded plugin is an operation like any other — same menu, same filter on
     // stream type, marked so you can see it came from outside (ADR-0013's opacity
     // rule, applied to a kind that is not opaque at all).

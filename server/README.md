@@ -337,7 +337,8 @@ server starts rather than on the first click. The startup banner says how many d
 are actually here.
 
 The container images do not carry GNU Radio — it is about a gigabyte. A decoder whose
-module is missing is still listed, greyed, naming what to install.
+module is missing is not offered in the operation menu at all; `Identify` names it and
+says what is absent, which is where that belongs (ADR-0039).
 
 An adapter lists more than one binary where the program has more than one name: the
 same dump1090 is `dump1090-mutability` on Debian and `dump1090-fa` from FlightAware, and
@@ -404,7 +405,10 @@ Three things are worth knowing:
   is in `SDRFLEX_ADAPTERS` (below). An adapter is a command line, so a *droppable* one
   would be arbitrary code execution on the box — the same reason dropped plugins run in
   your browser instead.
-- **A missing program is still listed**, greyed, naming what it wants.
+- **A missing program is not in the operation menu** (ADR-0039). `Identify` lists it with
+  the reason, and the startup banner counts it. A *radio driver* whose program is missing
+  is still listed, greyed, naming what it wants — a short explicit list is a different
+  surface from a menu opened over the signal by a gesture.
 
 ### Decoders you added
 
@@ -469,7 +473,7 @@ Three things about the full image are worth knowing:
   moving a pin is a one-line change and a re-run of `web/test/adapters.test.mjs`.
 - **The build fails rather than the first click.** The last step imports `lora_sdr`, runs
   `m17-demod`, runs `redsea` and looks for `rx_sdr`. A decoder that did not build shows up in this tool
-  as a greyed row in a menu, which is the right behavior at runtime and a terrible way
+  as a decoder that is simply not offered, which is the right behavior at runtime and a terrible way
   to find out that an image is wrong.
 
 The image was checked by running the adapter conformance suite inside it —
