@@ -154,6 +154,50 @@ test('a burst in a span of silence is fitted to the burst', () => {
             `gain ${got.gain} against ${tight.gain} with no padding`);
 });
 
+test('a burst QUIETER than what surrounds it is still fitted to the burst', () => {
+  // The bug this exists for, found on the GRCon26 signal-ID composite and not findable on
+  // anything synthesized here before it: **through an FM discriminator the burst is the
+  // quiet part.** Measured there — an M17 packet at 13 dB SNR tiled across ninety seconds
+  // — the burst reads 0.153 RMS and the dead air between bursts reads 0.51. Demodulated
+  // noise swings across the whole channel because there is no carrier holding it
+  // anywhere; a constrained ±3-unit signal does not.
+  //
+  // The gate at the time kept the loud part, which is right on a baseband recording and
+  // exactly backwards here. It kept the noise, fitted the levels to it, and the eye came
+  // out at 0.508 where the answer was 0.78. Nothing errored and nothing decoded.
+  const want = symbolRun(400);
+  const quiet = burst(want, 10, { lead: 24_000, tail: 24_000, scale: 0.15 });
+
+  // **Band-limited** noise, which is the part that makes this a real test. White noise
+  // would be thrown away by the matched filter and the burst would come back out as the
+  // loud part after all — the first version of this test passed against the very code it
+  // was written to catch, for exactly that reason. What a discriminator hands over has
+  // already been through the tuner's channel filter, so its noise lives in the same few
+  // kilohertz the symbols do and no matched filter can tell them apart by bandwidth.
+  const rnd = noise(4242);
+  const white = new Float32Array(quiet.length);
+  for (let i = 0; i < white.length; i++) white[i] = rnd();
+  const band = dsp.fir(white, dsp.lowPassTaps(65, 5_000, 48_000));
+  let rms = 0;
+  for (const v of band) rms += v * v;
+  rms = Math.sqrt(rms / band.length);
+  for (let i = 0; i < quiet.length; i++) {
+    const inBurst = i >= 24_000 && i < quiet.length - 24_000;
+    if (!inBurst) quiet[i] += (band[i] / rms) * 0.8;   // about 5x the burst's own level
+  }
+  // Measured at this noise level: 0.996 with the two-population split, 0.590 without it.
+  // Louder still (about 8x) and neither recovers, which is honest rather than a limit
+  // worth hiding — there is a point where the burst is not in the span any more.
+  const got = dsp.softSymbols(quiet, quiet.length, 48_000, 4800);
+  assert.ok(got.eye > 0.9, `eye ${got.eye.toFixed(3)} — the loud noise took the fit again`);
+
+  // And the scale is the burst's, not the noise's: fitted to what surrounds it the gain
+  // would come out several times too small and every symbol would land inside ±1.
+  const tight = dsp.softSymbols(burst(want, 10, { scale: 0.15 }), 4000, 48_000, 4800);
+  assert.ok(Math.abs(got.gain / tight.gain - 1) < 0.35,
+            `gain ${got.gain.toFixed(2)} against ${tight.gain.toFixed(2)} fitted to the burst alone`);
+});
+
 test('noise degrades the eye rather than the answer', () => {
   const want = symbolRun(600);
   let last = 1;

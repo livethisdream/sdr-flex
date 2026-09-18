@@ -603,6 +603,64 @@ that every adapter has a golden capture or is named in a short list of why not
 (`ext.multimon` and `ext.minimodem` are the two, both covered in `adapters.test.mjs` but
 not pinned as a chain).
 
+### What a real capture found that a synthetic one could not
+
+Two reports against the merged build, both reproduced, both mine.
+
+**"Hotkeys aren't working — it just enters text into the search box."** Exactly right, and
+the cause was two features that were each defensible alone. The menu draws the key on
+every row it applies to (`press f to add this`) because a shortcut shown on the row you
+were about to click is learned by the third time you click it. And every printable key
+belonged to the menu's search box, so `f` could not mean both "FM demod" and "type an f".
+Together: the menu advertised a key and then swallowed it. Since the drag that opens the
+menu is the *main gesture*, that is the common path, not a corner. A row now answers to
+the key it advertises while nothing has been typed; after that letters are a search again.
+The rule lives in `keys.js` as `menuTakesKey` so it is written down once and testable
+without a DOM.
+
+**"M17 still doesn't decode the sigid M17 section."** Also right, and the fixture could
+never have caught it. The slot is `m17.cf32`: 4FSK at 4800 sym/s, ±2.4 kHz deviation,
+declared 9 kHz wide, at +170 kHz in a 500 kS/s composite, **13 dB SNR**, a 0.2 s burst
+tiled across 90 s at 21% duty. Rebuilt here from the challenge's own `gen_m17.py` and
+`fdm_combine.py` and measured. Three things were wrong:
+
+- **Through an FM discriminator the burst is the *quiet* part.** Measured: 0.153 RMS in
+  the burst, 0.51 in the dead air between bursts. Demodulated noise swings across the
+  whole channel because there is no carrier holding it anywhere; a constrained ±3-unit
+  signal does not. The gate kept the loud part — right on a baseband recording, backwards
+  here — so it fitted the levels to the noise. Eye 0.508 where the answer is 0.78, and
+  nothing decoded. Now the span is split into two populations by level (Otsu, the same
+  split the slicers use) and *both* sides are fitted, along with the whole span; whichever
+  lands on the levels best wins. Which part of a span is the burst is measured, not
+  assumed. The per-symbol gate stays — the two catch different things, and taking it out
+  regressed the clean fixture while fixing the composite.
+- **`minRate: 12_000` was a round number above the real one.** Carson for this signal is
+  9.6 kHz. A tuner sized to the slot's *own declared* 9 kHz width lands at 11.9 kS/s, so
+  `Identify` skipped the decoder on the exact selection the metadata describes. Erring low
+  costs an attempt that fails; erring high costs the answer, silently.
+- **`after[0].rate` was being used as a floor as well as for sizing.** It is the rate the
+  symbol sync would *like* in front of it, 48 kS/s, and testing 11.9 kS/s against it
+  rejected the stream for being 4.03× short of a number that was never a requirement.
+  `minRate` is the floor; the preference only sizes the shared decimation.
+
+And one usability finding that only a long capture shows: with `errorfree` off, 90 seconds
+containing a 0.2 s packet returned **362 records** — one the flag, the rest dead air where
+demodulated noise correlates with a syncword. All carry a failed CRC and are marked
+`suspect`, so none is ranked as a decode, but a pane you scroll 361 rows to read is not a
+pane. The default is now `-f`; turn it off to see what was rejected.
+
+End to end on the rebuilt composite the packet's text comes back intact — 95 records, one
+per tiled burst, at 16 and 24 kHz selections, and 12 at the natural 9 kHz one. The text
+itself is not written down here: it is a CTF flag, this repository is public, and
+`.githooks/pre-commit` stopped the first draft of this paragraph for saying it. Which is
+the control working, so the paragraph changed rather than the hook.
+
+The regression test took two attempts and the first one is the lesson: a synthetic quiet
+burst in *white* noise passes against the buggy code, because the matched filter throws
+white noise away and the burst comes back out as the loud part. Real discriminator noise
+has already been through the tuner's channel filter, so it lives in the same few kilohertz
+the symbols do. With band-limited noise the separation is 0.996 against 0.590.
+
 ## Frequency hopping, as built
 
 ADR-0033. Two nodes over one capability: **Hop map** (`iq` → `events`) reports the

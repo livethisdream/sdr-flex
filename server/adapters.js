@@ -454,29 +454,29 @@ export const ADAPTERS = {
     // kilohertz and destroy the very signal the symbols are in. `after` says both halves
     // — the stage, and the rate the stage wants ahead of it.
     after: [{ op: 'core.symbols', rate: 48_000 }],
-    // 4FSK at 4800 symbols a second with M17's ±2.4 kHz deviation is about 9.6 kHz of
-    // occupied bandwidth by Carson (2 × (2400 + 2400)). Rounded up to the nearest round
-    // number a tuner would land on: below this the signal is not in the channel, and no
-    // amount of resampling puts it back — same claim `minRate` makes for redsea, arrived
-    // at from a modulation index rather than from a subcarrier frequency.
-    minRate: 12_000,
+    // 4FSK at 4800 symbols a second with M17's ±2.4 kHz deviation occupies about 9.6 kHz
+    // by Carson (2 × (2400 + 2400)), and that is the number rather than a round one above
+    // it. Rounding up to 12 kHz was wrong in a way worth recording: a tuner sized to the
+    // GRCon26 composite's own declared 9 kHz M17 slot lands at 11.9 kS/s, so `Identify`
+    // skipped the decoder on the exact selection the signal's own metadata describes.
+    // Erring low costs a decode attempt that fails; erring high costs the answer, silently.
+    minRate: 9_600,
     params: [
       { id: 'callsigns', type: 'enum', default: 'decode', values: ['decode', 'raw'],
         label: 'callsigns',
         hint: 'decoded from M17’s base-40 packing, or left as the six bytes on the wire' },
-      { id: 'errorfree', type: 'enum', default: 'no', values: ['no', 'yes'],
+      // On by default, which is the opposite of what "show me everything" instinct says
+      // and is what the numbers ask for. Measured on the GRCon26 composite: 90 seconds
+      // containing a 0.2 s packet at 21% duty returns **362 records** with this off —
+      // one of them the flag and the rest the dead air between bursts, where demodulated
+      // noise happens to correlate with a syncword. Every one of those carries a failed
+      // CRC and is marked `suspect`, so nothing is hidden and nothing is ranked as a
+      // decode; but a pane you have to scroll 361 rows of garbage to read is not a pane.
+      // Turn it off to see what the decoder rejected.
+      { id: 'errorfree', type: 'enum', default: 'yes', values: ['yes', 'no'],
         label: 'error-free only',
         hint: 'drop any frame the Viterbi decoder had to correct, rather than reporting it' },
     ],
-    // What "try everything" means here is the opposite of what it means for multimon-ng,
-    // and for a reason worth writing down. Measured on `fixtures/m17-packet`: pointed at
-    // the *envelope* of an M17 burst rather than its frequency — which `Identify` tries,
-    // because which demodulator is right is the question it is asking — this decoder
-    // returns five packets with plausible-looking headers and payload CRCs that do not
-    // match. A speculative pass that reports those has ranked five guesses above one
-    // decode. `-f` is the program's own answer: only frames the Viterbi decoder did not
-    // have to correct. A person who wants to see the guesses can still turn it off.
-    sweep: { errorfree: 'yes' },
     args: ({ params }) => [
       ...(params.callsigns !== 'raw' ? ['-c'] : []),
       ...(params.errorfree === 'yes' ? ['-f'] : []),

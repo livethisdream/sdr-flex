@@ -9,7 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HOTKEYS, KEY_FOR, RESERVED, opForKey, firstOpNamed } from '../src/keys.js';
+import { HOTKEYS, KEY_FOR, RESERVED, opForKey, firstOpNamed, menuTakesKey } from '../src/keys.js';
 import { MockEngine, OPS } from '../src/engine.js';
 import { Capture } from '../src/capture.js';
 
@@ -81,6 +81,51 @@ test('inherited properties are not hotkeys', () => {
   // handler that tested truthiness would have treated it as a list of operations.
   assert.equal(opForKey('constructor', []), null);
   assert.equal(opForKey('toString', []), null);
+});
+
+// ── the key, with the menu open ─────────────────────────────────────────────
+
+test('a menu row answers to the key it advertises', () => {
+  // Reported as "hotkeys aren't working — it just enters text into the search box", and
+  // that is exactly what happened: the drag that opens the menu is the main gesture, the
+  // menu draws `press f to add this` on the row, and every printable key then went to the
+  // search box. Two features that were each right on their own.
+  const keys = ['t', 'a', 'f', 's', 'c', 'e'];
+  assert.equal(menuTakesKey('f', { filter: '', keys }), true);
+  assert.equal(menuTakesKey('t', { filter: '', keys }), true);
+});
+
+test('a key for something not on offer here goes to the search box', () => {
+  // `keys` is what the rows actually show, not the whole table. On a stream where FM
+  // demod is not valid there is no row wearing an `f`, so `f` is a letter.
+  assert.equal(menuTakesKey('f', { filter: '', keys: ['e'] }), false);
+  assert.equal(menuTakesKey('z', { filter: '', keys: ['t', 'f'] }), false);
+});
+
+test('once you are searching, letters are a search', () => {
+  // The case the old rule existed to protect, and it still holds: `f` cannot mean both
+  // "FM demod" and "type an f", so the moment there is a filter it means the letter.
+  const keys = ['t', 'a', 'f'];
+  assert.equal(menuTakesKey('f', { filter: 'x', keys }), false);
+  assert.equal(menuTakesKey('t', { filter: 'fm', keys }), false);
+});
+
+test('slash always asks for the search box, never a row', () => {
+  assert.equal(menuTakesKey('/', { filter: '', keys: ['/', 't'] }), false);
+});
+
+test('a keystroke that is not a single character is not a pick', () => {
+  for (const k of ['Enter', 'ArrowDown', 'Escape', 'Shift', '', undefined, null]) {
+    assert.equal(menuTakesKey(k, { filter: '', keys: ['t'] }), false, `${k}`);
+  }
+});
+
+test('every key the table names can be taken by a row that offers it', () => {
+  // The badge and the handler read the same table, so a key drawn on a row is a key a
+  // row answers to. If these ever came from two places this is what would catch it.
+  for (const key of Object.keys(HOTKEYS)) {
+    assert.equal(menuTakesKey(key, { filter: '', keys: [key] }), true, `${key} is takeable`);
+  }
 });
 
 // ── against a real palette ──────────────────────────────────────────────────

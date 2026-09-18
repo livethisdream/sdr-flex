@@ -87,13 +87,27 @@ const label = (op) => (op === 'core.symbols' ? 'Symbol sync' : op.replace(/^core
  * second off a stream that has to have been wide enough to contain them, and sizing the
  * shared decimation from 4800 would narrow the channel to a few kilohertz and remove the
  * signal before the symbol sync ever saw it. The adapter says which.
+ *
+ * **Sizing only.** This is a preference — the rate the stage in front would like — and
+ * not a floor, which is the distinction the check below turns on.
  */
 export function feedRate(a) {
   const first = (a.after || [])[0];
   return (first && first.rate) || a.wants.rate;
 }
 
-const fits = (a, sampleRate) => !(feedRate(a) > sampleRate * RATE_HEADROOM);
+/**
+ * Could this stream be resampled up to what the decoder reads, without inventing
+ * bandwidth the capture never had?
+ *
+ * `wants.rate`, not `feedRate`. For a decoder with a stage in front of it the two are
+ * different questions and only `minRate` answers the second one — measured on the
+ * GRCon26 composite, whose M17 slot its own metadata calls 9 kHz wide: a tuner sized to
+ * that lands at 11.9 kS/s, and testing it against the symbol sync's preferred 48 kS/s
+ * rejected it for being 4.03× short of a number that was never a requirement. The signal
+ * was there and the decoder was never asked.
+ */
+const fits = (a, sampleRate) => !(a.wants.rate > sampleRate * RATE_HEADROOM);
 
 /**
  * Some decoders read something that is not in a narrow stream at all.
@@ -128,7 +142,7 @@ export function settings(a) {
 }
 
 function rateWhy(a, sampleRate) {
-  const want = feedRate(a);
+  const want = a.wants.rate;
   const f = want / sampleRate;
   return `wants ${fmtRate(want)} and this stream is ${fmtRate(sampleRate)} — ` +
          `resampling up ${f.toFixed(f < 10 ? 1 : 0)}× cannot put back bandwidth the capture never had`;

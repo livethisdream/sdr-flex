@@ -2303,33 +2303,34 @@ function lerp(x, at) {
  *
  * Percentiles rather than the mean and the maximum, and that is the whole trick here.
  * Measured on `m17-packet-encode`'s own baseband: the mean of the span is 0.43 where the
- * signal's actual center is 0, because the symbol alphabet is not used evenly and a
- * burst is surrounded by whatever the span caught. Subtracting that mean cost 12% of the
- * eye and turned a symmetric ±9.49 preamble into 2.25 against −3.00. The 5th and 95th
- * percentiles are the outer levels, whatever the distribution between them does.
+ * signal's actual center is 0, because the symbol alphabet is not used evenly. Subtracting
+ * that mean cost 12% of the eye and turned a symmetric ±9.49 preamble into 2.25 against
+ * −3.00. The 5th and 95th percentiles are the outer levels, whatever the distribution
+ * between them does.
  */
-function levelFit(sym, levels) {
+function levelFit(sym, levels, quantile = 0.05) {
   const outer = levels[levels.length - 1];
   const pick = (sorted, q) =>
     sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * q)))];
 
-  // Which of these symbols are signal. A span is chosen by dragging on a spectrum, so it
-  // is nearly always wider than the burst in it, and the silence either side is both the
-  // majority of the samples and at none of the levels. Left in, it sets the percentiles
-  // — a burst padded with half a second of quiet fitted its outer level to the noise and
-  // decoded nothing, which is the failure this gate exists for.
+  // Which of these symbols are signal, decided among the symbols themselves.
+  //
+  // This is the second of two gates and they catch different things. `candidates` splits
+  // the *span* into loud and quiet stretches, which is what finds a burst inside seconds
+  // of something else. This one works within whatever it is handed: a run that is mostly
+  // signal with a little silence in it still wants the silence kept out of its
+  // percentiles, and there is no block structure left to use by then.
   const all = Float64Array.from(sym).sort();
   const rest = pick(all, 0.5);
   const dev = Float64Array.from(sym, (v) => Math.abs(v - rest)).sort();
-  const loud = pick(dev, 0.99);
-  const gate = 0.3 * loud;
+  const gate = 0.3 * pick(dev, 0.99);
   const active = [];
   for (const v of sym) if (Math.abs(v - rest) > gate) active.push(v);
-  // Under a tenth of the span carrying signal is not a gate any more, it is a guess.
-  const use = active.length >= Math.max(16, sym.length * 0.02) ? active : [...sym];
+  // Under a fiftieth of what was handed over is not a gate any more, it is a guess.
+  const use = active.length >= Math.max(16, sym.length * 0.02) ? active : sym;
 
   const sorted = Float64Array.from(use).sort();
-  const hi = pick(sorted, 0.95), lo = pick(sorted, 0.05);
+  const hi = pick(sorted, 1 - quantile), lo = pick(sorted, quantile);
   const center = (hi + lo) / 2;
   const gain = outer / Math.max(1e-12, (hi - lo) / 2);
   let err = 0;
@@ -2342,29 +2343,42 @@ function levelFit(sym, levels) {
   // 0 is every symbol dead on a level; 1 is every symbol as far from one as it can get,
   // which for evenly spaced levels is half the spacing.
   const halfStep = levels.length > 1 ? Math.abs(levels[1] - levels[0]) / 2 : 1;
-  return { center, gain, active: use.length, err: err / (use.length || 1) / halfStep };
+  return { center, gain, err: err / (use.length || 1) / halfStep };
 }
 
-/**
- * A real stream at `sampleRate`, read as one soft symbol per symbol period.
- *
- * This is the step between a discriminator and a decoder that wants symbols rather than
- * samples — `symbol_sync_ff` in GNU Radio, the `symbol_recovery` flowgraph M17 ships
- * with its decoder. What it does not do is track a drifting clock: it finds one sampling
- * instant for the whole span and holds it, which is right for a capture (the span is a
- * burst, and a burst is short) and wrong for hours of live radio.
- *
- * The instant is found by trying them. There is no closed form for "where is the eye
- * widest", and a Gardner or Mueller-Müller loop is an answer to a question this is not
- * asking — they converge over time, and a packet that is over in a fifth of a second
- * does not give them time. A search over the symbol period is exhaustive at this
- * resolution and costs one pass per candidate.
- *
- * Three things come out beside the symbols: the instant that won, the gain that put the
- * outer level where it belongs, and how tightly the symbols landed on the levels once
- * both were applied. That last one is the number that says whether this worked, and it
- * is what the node shows as the evidence for the other two (ADR-0017).
- */
+// Where to read the outer levels off the sorted symbols. See the note at the call site:
+// which one is right depends on how much of what is being scored is actually the burst,
+// and that is measured rather than assumed.
+const QUANTILES = [0.05, 0.25];
+
+function candidates(x, count, sampleRate, blockSeconds = 0.02) {
+  const blk = Math.max(8, Math.round(blockSeconds * sampleRate));
+  const nb = Math.floor(count / blk);
+  // Under a handful of blocks there are no two populations to find, only one short burst.
+  if (nb < 8) return { blk, nb: 0, masks: [null] };
+
+  const level = new Float32Array(nb);
+  for (let b = 0; b < nb; b++) {
+    let m = 0;
+    for (let k = 0; k < blk; k++) m += x[b * blk + k];
+    m /= blk;
+    let v = 0;
+    for (let k = 0; k < blk; k++) { const d = x[b * blk + k] - m; v += d * d; }
+    level[b] = Math.sqrt(v / blk);
+  }
+
+  const cut = otsuThreshold(level).value;
+  const side = (want) => {
+    const mask = new Uint8Array(nb);
+    let kept = 0;
+    for (let b = 0; b < nb; b++) if ((level[b] <= cut) === want) { mask[b] = 1; kept++; }
+    return kept && kept < nb ? mask : null;
+  };
+  // `null` means "every symbol counts", which is the right answer when there is only one
+  // population and the wrong one to arrive at by splitting it anyway.
+  return { blk, nb, masks: [null, side(true), side(false)].filter((m, i) => i === 0 || m) };
+}
+
 export function softSymbols(x, count, sampleRate, symbolRate, opts = {}) {
   const { alpha = 0.5, span = 8, levels = [-3, -1, 1, 3], steps = 32, matched = true } = opts;
   const sps = sampleRate / symbolRate;
@@ -2373,9 +2387,9 @@ export function softSymbols(x, count, sampleRate, symbolRate, opts = {}) {
 
   // No DC removal before the filter: the filter is linear, so whatever DC is there comes
   // through scaled and `levelFit` takes it out where it can see all four levels at once.
-  // Removing a mean here instead was measurably worse — see the note on `levelFit`.
+  // Filtered once, here — every candidate below reads the same samples, and only differs
+  // in which of them it is allowed to score.
   const y = matched ? fir(x.subarray ? x.subarray(0, count) : x, rrcTaps(alpha, span, sps)) : x;
-
   // Only whole symbols, and only ones the filter did not truncate: `fir` clamps its taps
   // at the ends rather than zero-padding, so the first and last half-span of samples are
   // filtered with part of the filter and are not symbols yet.
@@ -2383,18 +2397,43 @@ export function softSymbols(x, count, sampleRate, symbolRate, opts = {}) {
   const n = Math.max(0, Math.floor(count / sps) - 2 * guard);
   if (!n) return none;
 
-  const probe = new Float32Array(n);
-  let best = { err: Infinity, off: guard * sps, center: 0, gain: 1 };
-  for (let s = 0; s < steps; s++) {
-    const off = guard * sps + (s / steps) * sps;
-    for (let k = 0; k < n; k++) probe[k] = lerp(y, off + k * sps);
-    const fit = levelFit(probe, levels);
-    if (fit.err < best.err) best = { err: fit.err, off, center: fit.center, gain: fit.gain };
-  }
+  // Masks rather than copied samples, which matters and is easy to get wrong: lifting the
+  // kept blocks into a new array and fitting that would break the symbol grid, because a
+  // block is a whole number of *samples* and almost never a whole number of symbols. The
+  // phase measured on the copy would then be a phase into the copy.
+  const { blk, masks } = candidates(x, count, sampleRate, opts.blockSeconds);
 
+  const probe = new Float32Array(n);
+  const score = new Float32Array(n);
+  let best = null;
+  for (const mask of masks) {
+    for (let s = 0; s < steps; s++) {
+      const off = guard * sps + (s / steps) * sps;
+      let m = 0;
+      for (let k = 0; k < n; k++) {
+        const at = off + k * sps;
+        probe[k] = lerp(y, at);
+        if (!mask || mask[Math.floor(at / blk)]) score[m++] = probe[k];
+      }
+      if (m < 16) continue;
+      // Two readings of the same symbols, because where the outer levels are is itself a
+      // guess when part of the span is not signal. The 5th/95th percentile is right when
+      // most of what is scored is the burst; the 25th/75th is right when it is not, and
+      // the wider one quietly puts the outer level out among whatever else is in the span.
+      for (const q of QUANTILES) {
+        const fit = levelFit(score.subarray(0, m), levels, q);
+        if (!best || fit.err < best.err) best = { err: fit.err, off, center: fit.center, gain: fit.gain };
+      }
+    }
+  }
+  if (!best) return none;
+
+  // The winning fit's numbers, applied to the span as it actually is — a mask was only
+  // ever a way to measure the instant, the center and the gain.
   const symbols = new Float32Array(n);
   for (let k = 0; k < n; k++) symbols[k] = (lerp(y, best.off + k * sps) - best.center) * best.gain;
-  return { symbols, n, offset: best.off, center: best.center, gain: best.gain, eye: 1 - best.err, sps };
+  return { symbols, n, offset: best.off, center: best.center, gain: best.gain,
+           eye: 1 - best.err, sps };
 }
 
 /**

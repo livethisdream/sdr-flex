@@ -400,9 +400,16 @@ test('a symbol decoder is not asked to find symbols in a channel too narrow to h
   assert.deepEqual(wide.tried.map(chainOf).sort(),
                    ['core.am_envelope>core.symbols', 'core.fm_discriminator>core.symbols']);
 
+  // 9.6 kHz is Carson for 4FSK at 4800 Bd with M17's ±2.4 kHz deviation, and it is the
+  // floor because it is the number rather than a round one above it. 12 kHz was the round
+  // one, and it skipped the decoder on a tuner sized to the GRCon26 composite's own
+  // declared 9 kHz M17 slot — which lands at 11.9 kS/s and decodes.
   const narrow = plan(table, { kind: 'iq', sampleRate: 8_000, demods: DEMODS });
   assert.equal(narrow.tried.length, 0);
-  assert.match(narrow.skipped[0].why, /at least 12 kS\/s/);
+  assert.match(narrow.skipped[0].why, /at least 9\.60 kS\/s/);
+  // And the slot's own width is above it, which is the case that was getting skipped.
+  assert.equal(plan(table, { kind: 'iq', sampleRate: 11_900, demods: DEMODS }).tried.length, 2,
+               'a tuner sized to a 9 kHz M17 slot must not be turned away');
 });
 
 test('the shared decimation is sized by what the chain needs, not by what the decoder reads', () => {

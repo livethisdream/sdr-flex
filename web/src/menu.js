@@ -2,6 +2,8 @@
 // gesture the tool teaches is also how you discover it. Flat, grouped, searchable —
 // menu depth stays at 1.
 
+import { menuTakesKey } from './keys.js';
+
 export class ContextMenu {
   constructor(root) {
     this.el = document.createElement('div');
@@ -21,6 +23,17 @@ export class ContextMenu {
       // it empty; any other printable key asks for it and is the first thing in it.
       const opening = e.key === '/';
       if (!opening && e.key.length !== 1) return;
+
+      // A row that says "press f to add this" has to answer to f — see `menuTakesKey`,
+      // which is where that rule and its exceptions are written down.
+      const rows = [...this.el.querySelectorAll('.ctx-i[data-key]')];
+      if (menuTakesKey(e.key, { filter: this.filter, keys: rows.map((b) => b.dataset.key) })) {
+        e.preventDefault();
+        e.stopPropagation();
+        rows.find((b) => b.dataset.key === e.key).click();
+        return;
+      }
+
       const input = this.el.querySelector('input');
       if (!input) {
         this.searching = true;
@@ -105,7 +118,8 @@ export class ContextMenu {
     // documented in a help screen is a shortcut nobody learns; shown on the row you were
     // about to click, it is learned by the third time you click it.
     const item = (o, i, gi) =>
-      `<button class="ctx-i${o.stub ? ' stub' : ''}${!headed && gi > 0 && i === 0 ? ' gsep' : ''}" data-op="${o.id}">${o.name}` +
+      `<button class="ctx-i${o.stub ? ' stub' : ''}${!headed && gi > 0 && i === 0 ? ' gsep' : ''}"` +
+      ` data-op="${o.id}"${o.key && !o.stub ? ` data-key="${o.key}"` : ''}>${o.name}` +
       `${o.local ? `<span class="ext mine" title="from your ${o.local} pack">yours</span>`
         : o.external ? '<span class="ext">ext</span>' : ''}` +
       `${o.soon ? `<span class="soon">${o.soon}</span>` : ''}` +
