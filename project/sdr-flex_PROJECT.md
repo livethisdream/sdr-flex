@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built; the stereo decode drawn as a graph) · merged to `main`
+**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built; the stereo decode drawn as a graph; ADR-0039 on the menu) · merged to `main`
 
 **`main` is the default branch**, as of this session. It was
 `claude/sdr-flex-toolkit-planning-c4ghl1` — the branch this project happened to be
@@ -27,7 +27,7 @@ Previous: 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBF
 
 MVP in the browser, the same tool with its engine in a container, and live radio into a
 ring recording. Static ES modules, no build step, no dependencies on either side.
-38 ADRs.
+39 ADRs.
 
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
@@ -712,6 +712,21 @@ house rule.
   both sides. It reported 85 dB where the honest answer is 49. Forty-nine is also the
   believable one: a good broadcast receiver manages thirty to fifty, and eighty-five
   should have been the tell.
+- **The contextual menu is a wall, and clips.** Measured: 18 entries and 6 headings on
+  `iq`, rendering 500 px tall — 69% of a 720 px laptop viewport — and 582 px with the
+  adapters installed. `.ctx` is `overflow: hidden` with no scroll, so below about 590 px
+  of viewport height rows are unreachable and nothing says so.
+  [ADR-0039](../docs/adr/0039-the-menu-answers-the-gesture.md) decides the shape: two
+  tiers with the fold in place, and what is in the first tier decided by *which gesture
+  opened the menu* — which the code already knows, because `openMenu` has always taken the
+  selection or null. Nothing is built; the scroll is a one-line bug fix that should go
+  first regardless.
+
+  The part worth remembering from writing it: **ADR-0017 derives values, not intentions.**
+  Ranking the menu by what the signal looks like is the obvious next thought and it is
+  wrong — a deviation has a correct answer in the samples, and "what do you want to do
+  with this" does not. A guess at intent with an evidence line under it would be the first
+  dishonest number in the product.
 - **Nothing carries audio back into the graph**, which bites RDS too: `redsea --feed-through`
   echoes the composite while it decodes, and there is nowhere for that to go. Same gap
   as M17's decoded voice, listed below.

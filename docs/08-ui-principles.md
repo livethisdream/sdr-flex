@@ -47,6 +47,11 @@ contract we can be held to, with numbers.
    `Space` play/pause, `=`/`-`/`0` zoom, `Esc` clears. A power user should be able to
    run UC-2 without the mouse leaving the waterfall.
 
+   The menu itself is ranked rather than exhaustive
+   ([ADR-0039](adr/0039-the-menu-answers-the-gesture.md)): it answers the gesture that
+   opened it, shows at most six, and folds the rest in place. Six headings over fifteen
+   items had become a label on a label, and 500 px at the cursor is most of a laptop.
+
    **A key for the operations you reach for constantly** — `t` tune, `a`/`f`/`s`/`c`
    the detectors, `l` listen, `e` export — so tuning a station and hearing it is
    `t f l` and nothing else. Three rules make that a shortcut rather than a second

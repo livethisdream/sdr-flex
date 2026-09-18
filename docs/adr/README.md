@@ -43,3 +43,4 @@ why, what it costs, and what would make us change our minds.
 | [0036](0036-a-domain-is-a-view-parameter.md) | Which axis a stream is read on is a view parameter | Accepted |
 | [0037](0037-channels-are-a-parameter-of-real.md) | Channel count is a parameter of `real`, not a stream type of its own | Accepted |
 | [0038](0038-a-node-may-have-two-inputs.md) | A node may have two inputs, and one of them is the primary | Accepted |
+| [0039](0039-the-menu-answers-the-gesture.md) | The menu answers the gesture, and folds everything else | Accepted, not yet built |
