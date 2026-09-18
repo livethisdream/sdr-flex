@@ -183,8 +183,8 @@ const METHODS = {
     return { ops: await this.engine.palette(nodeId) };
   },
 
-  async addNode({ parent, op, selection, at }) {
-    const n = await this.engine.addNode({ parent, op, selection, at });
+  async addNode({ parent, op, selection, at, withNode = null }) {
+    const n = await this.engine.addNode({ parent, op, selection, at, withNode });
     return { id: n.id };
   },
 

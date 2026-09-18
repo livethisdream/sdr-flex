@@ -407,6 +407,35 @@ The one hard case — clipping while four levels deep, with gain belonging to th
 source — is answered by the rig bar carrying live source health: the clip indicator
 is clickable and moves the breadcrumb to the source. One click, no permanent chrome.
 
+### A reload is not a decision
+
+The browser's reload button is an inch from the tab bar, and nothing in this tool is a
+document, so nothing was ever saved. An afternoon's chain and every parameter turned by
+hand went with one mis-click. Two things answer that and they answer different halves:
+
+- **The window asks before it unloads**, when there is a chain to lose. The browser
+  supplies its own wording and there is no way to say what is at stake — the point is
+  only the pause.
+- **What is on screen is written down every few seconds** and offered back on the next
+  load (`web/src/resume.js`). That is what covers the reloads the prompt does not stop: a
+  crash, a closed tab, a container restart.
+
+Three rules keep the offer from being worse than the loss:
+
+- **It is a recipe, not a snapshot.** Nodes, operations, the parameters somebody turned,
+  and which capture — a few kilobytes. Not samples, not spectra, not records, and not one
+  derived value: those are reproducible from the recipe and the capture, and a stored
+  copy of a derived number is a copy that can disagree with what it was derived from
+  ([ADR-0017](adr/0017-auto-parameters-with-evidence.md)).
+- **It is an offer, not an action.** Restoring by itself would be right nine times out of
+  ten and infuriating the tenth, and there is no undo. A bar above the dock, one button,
+  and a dismiss that forgets.
+- **It says what it cannot do rather than failing halfway.** A capture from the box comes
+  back by id. A file dragged onto the window cannot — the browser will not hand the same
+  bytes back — and a live radio is gone whatever anybody does. Both are checked before
+  the offer is drawn, so a restore never stops three nodes in and leaves a graph nobody
+  chose.
+
 ## Law 12 in detail — because the naive version is harmful
 
 "Move text into tooltips" taken literally produces a wall of unlabeled controls: the

@@ -56,6 +56,17 @@
         <div class="axis" id="gridaxis"></div>
       </div>
     </div>
+
+    <!-- What you had open last time. Not a dialog: it does not block anything, it does
+         not restore by itself, and it is gone the moment you touch the spectrum. Losing
+         an afternoon's chain to a mis-clicked reload is the problem; a modal on every
+         load would be a worse one. Inside `.panes` rather than fixed to the window, so
+         it sits above the dock at every window height rather than on top of it. -->
+    <div class="resume" id="resume" hidden>
+      <span class="rs-t" id="resume-text"></span>
+      <button class="rs-go" id="resume-go">restore</button>
+      <button class="rs-no" id="resume-no" title="forget it" aria-label="forget it">×</button>
+    </div>
   </div>
 
   <div class="dock">

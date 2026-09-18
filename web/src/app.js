@@ -23,6 +23,7 @@ import { WINDOWS, spectrumHasSignal } from './dsp.js';
 // known in advance, so it is the one source that can just say what is in it.
 import * as scene from './scene.js';
 import { CRCS } from './frames.js';
+import * as resume from './resume.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 
@@ -36,6 +37,11 @@ const fmtRate = (r) => (r >= 1e6 ? (r / 1e6).toFixed(3) + ' MS/s' : (r / 1e3).to
 // freshly computed spectrum every time: 25 a second reads as continuous and
 // costs a third of what 60 does. Waterfall rows keep their own clock on top.
 const SPEC_PERIOD = 1 / 25;
+
+// How often what is on screen is written down for a reload to find. Three seconds is
+// under the time it takes to turn one parameter and look at the result, and the write is
+// skipped entirely when nothing changed.
+const KEEP_PERIOD_MS = 3000;
 
 const VIEWS = {
   iq: ['Spectrum', 'Flow'],
@@ -121,7 +127,114 @@ class App {
     this.tabs.set(root.id, 'spectrum');
     this.wire();
     this.refresh();
+    // Written down every few seconds, and asked about on the way out. See resume.js for
+    // what a recipe is and why it is not a snapshot.
+    this._keeper = setInterval(() => this.keep(), KEEP_PERIOD_MS);
+    addEventListener('beforeunload', (e) => {
+      this.keep();
+      if (this.engine.nodes.size <= 1) return;
+      // The browser shows its own wording, and there is no way to say what is at stake.
+      // The point is only the pause: a reload is one key away from a tab close and this
+      // tool has no document to have saved.
+      e.preventDefault();
+      e.returnValue = '';
+    });
+    this.offerResume();
     requestAnimationFrame((t) => this.loop(t));
+  }
+
+  /**
+   * Write down what is on screen, if it has changed.
+   *
+   * On a timer rather than at every call site that mutates the graph. There are a dozen
+   * of those and there will be more; one of them being forgotten is a reload that loses
+   * exactly the work somebody just did, which is the failure this is here to stop. A
+   * recipe is a few kilobytes of JSON and this compares it against the last one written
+   * before touching the store, so the cost of a quiet minute is one `stringify`.
+   *
+   * **An empty graph does not erase what is stored.** A page that has just loaded has an
+   * empty graph, and this timer runs three seconds later — so deleting on empty would
+   * throw away last session's work while the offer to restore it was still on screen.
+   * What is stored is replaced by the next thing worth storing, and cleared by dismissing
+   * the offer; nothing else removes it.
+   */
+  keep() {
+    try {
+      const r = resume.recipe(this.engine, {
+        source: this.openedFrom, current: this.current, channel: this.channel, tabs: this.tabs,
+      });
+      if (!r) return;
+      const text = JSON.stringify(r.nodes) + JSON.stringify(r.source);
+      if (text === this._kept) return;
+      this._kept = text;
+      resume.keep(r);
+    } catch (err) { /* a browser with no store is a browser that does not resume */ }
+  }
+
+  /**
+   * Offer back what was open last time, if it can be put back.
+   *
+   * An offer and not an action. Restoring by itself would be right about nine times out
+   * of ten and infuriating the tenth — somebody who opened the tool to look at something
+   * else would have to undo a chain they did not ask for, and this tool has no undo.
+   */
+  async offerResume() {
+    const bar = $('#resume');
+    if (!bar) return;
+    const saved = resume.saved();
+    if (!saved) return;
+    let captures = [];
+    if (saved.source && saved.source.kind === 'library') {
+      try { captures = await this.engine.listCaptures(); } catch { captures = []; }
+    }
+    const can = resume.canReplay(saved, { captures, remote: !!this.remote });
+    const what = `${saved.nodes.length} node${saved.nodes.length === 1 ? '' : 's'} on ` +
+                 `${saved.source.label || 'a capture'}`;
+    $('#resume-text').textContent = can.ok ? `Last time: ${what}` : `Last time: ${what} — ${can.why}`;
+    $('#resume-go').hidden = !can.ok;
+    bar.hidden = false;
+
+    const close = (forget) => { bar.hidden = true; if (forget) resume.forget(); };
+    $('#resume-no').onclick = () => close(true);
+    $('#resume-go').onclick = async () => {
+      close(false);
+      this.metrics.beginOp();
+      try {
+        if (can.open) {
+          this.mixer.removeAll();
+          await this.engine.openCapture(can.open.id);
+          this.afterOpen();
+          this.openedFrom = { kind: 'library', id: can.open.id, label: can.open.label };
+        }
+        const done = await resume.replay(this.engine, saved);
+        if (done.map.size) {
+          const land = saved.view && saved.view.current && done.map.get(saved.view.current);
+          const chan = saved.view && saved.view.channel && done.map.get(saved.view.channel);
+          if (chan) this.channel = chan;
+          if (land) { this.current = land; this.vp(land); }
+          for (const [id, tab] of saved.view?.tabs || []) {
+            const to = done.map.get(id);
+            if (to) this.tabs.set(to, tab);
+          }
+        }
+        this.refresh();
+        this.notify(done.skipped.length
+          ? `restored ${done.made.length} of ${saved.nodes.length} — ` +
+            `${done.skipped.map((k) => k.op).join(', ')} did not come back`
+          : `restored ${done.made.length} node${done.made.length === 1 ? '' : 's'}`,
+        done.skipped.length ? 12000 : 6000);
+      } catch (err) {
+        this.notify(`could not restore that: ${err.message}`, 9000);
+      }
+      this.metrics.endOp();
+    };
+    // It is an offer about the past, and the moment somebody does something it is about
+    // the past of a different session.
+    addEventListener('pointerdown', function once(e) {
+      if (bar.contains(e.target)) return;
+      removeEventListener('pointerdown', once, true);
+      bar.hidden = true;
+    }, true);
   }
 
   vp(id) {
@@ -1668,6 +1781,11 @@ class App {
       try {
         this.mixer.removeAll();
         await this.engine.openCapture(id);
+        // Which capture this is, in the terms it can be opened by again. The engine's
+        // mirror carries a capture's facts and not its library id, because nothing that
+        // draws a spectrum has ever needed one — so the window that asked for it is
+        // where it is remembered (resume.js).
+        this.openedFrom = { kind: 'library', id, label: c.label };
         this.afterOpen(c);
         this.notify(`${c.label} · ${(c.sampleRate / 1e6).toFixed(3)} MS/s · ${c.durationS.toFixed(2)} s` +
                     ` · rate and center from ${c.derived}`);
@@ -1782,6 +1900,10 @@ class App {
       if (!cap.samples) throw new Error('that file has no samples in it');
       this.mixer.removeAll();
       await this.engine.openCapture(cap);
+      // A dropped file has no id to open it by again — the browser will not hand the
+      // same bytes back without somebody choosing the file. Remembered by name, so the
+      // offer after a reload can say that rather than fail halfway through.
+      this.openedFrom = { kind: 'file', label: cap.label };
       this.afterOpen();
       this.notify(
         `${cap.label} · ${FORMATS[cap.format].name} · ${(cap.sampleRate / 1e6).toFixed(3)} MS/s` +

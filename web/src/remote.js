@@ -219,11 +219,14 @@ export class RemoteEngine extends Graph {
     return r.ops.concat(ext.filter((o) => !have.has(o.id)));
   }
 
-  async addNode({ parent, op, selection, at }) {
+  async addNode({ parent, op, selection, at, withNode = null }) {
     const spec = plugins.get(op);
     if (spec) return this._addPluginNode({ parent, op, spec });
     const r = await this.call('addNode', {
-      parent, op, selection,
+      // `withNode` travels. A Math node made from the menu already carries its second
+      // input at creation (ADR-0038) and this call used to drop it, so on a server engine
+      // it arrived with one — which reads as the node having forgotten what you told it.
+      parent, op, selection, withNode,
       at: at != null ? at : this.effectiveTime(parent),
     });
     this._forget();

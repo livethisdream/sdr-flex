@@ -353,6 +353,28 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .metrics b.bad { color:var(--warn); }
 .metrics i { font-style:normal; color:var(--faint); }
 
+/* What you had open last time (resume.js). Bottom centre, above the dock, in the
+   shape of the other transient bars — it is an offer, not a state, so it sits where a
+   notice sits and not where a panel would. */
+.resume {
+  /* Against `.panes`, which ends where the dock begins — fixed to the window it landed
+     on top of the transport at anything under about 800 px of height. */
+  position:absolute; z-index:45; left:50%; bottom:14px; transform:translateX(-50%);
+  display:flex; align-items:center; gap:.5rem; max-width:min(92vw, 34rem);
+  padding:.4rem .4rem .4rem .7rem;
+  background:var(--panel); border:1px solid var(--rule); border-radius:5px;
+  box-shadow:0 18px 44px -14px var(--shadow-hard); font-size:.74rem; color:var(--body);
+}
+.resume[hidden] { display:none; }
+.resume .rs-t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.resume .rs-go {
+  flex:none; padding:.22rem .6rem; border-radius:3px; font-size:.72rem; font-weight:600;
+  color:var(--on-accent); background:var(--accent);
+}
+.resume .rs-go:hover { filter:brightness(1.1); }
+.resume .rs-no { flex:none; padding:.1rem .35rem; color:var(--faint); font-size:.9rem; line-height:1; }
+.resume .rs-no:hover { color:var(--bright); }
+
 /* ── contextual menu ── */
 /* The menu is `position:fixed` and was `overflow:hidden` with no height limit, so a list
    taller than the window ran off the bottom of it with no way to reach what was down

@@ -893,8 +893,24 @@ house rule.
   re-pointing at a fixture that can live in a public repo.
 - One capture in the set is 0.1 s long, which the author believes is a packaging bug
   on their side.
+- ~~A reload lost everything.~~ Fixed, in two halves, because it is two problems.
+  `beforeunload` asks when there is a chain to lose, which stops the mis-click; and
+  `web/src/resume.js` writes what is on screen down every three seconds and offers it
+  back on the next load, which covers the ones a prompt cannot stop — a crash, a closed
+  tab, a container restart. What is written is a **recipe**: nodes, operations, the
+  parameters somebody turned by hand, and which capture. Not samples, not spectra, and
+  *not one derived value* — re-deriving gives the same answer with fresh evidence, and a
+  stored copy of a measurement is a copy that can go stale against the signal it
+  measured. An offer rather than an action, since there is no undo. Measured: the bar
+  clears the dock at every window height down to 360 × 500.
+
+  Found on the way: `withNode` was being dropped by `remote.addNode`, so a Math node
+  built from the menu on a **server** engine arrived with one input instead of two
+  (ADR-0038). Never noticed because the mock engine, which the tests mostly drive,
+  passes it straight through.
 - The remote engine has no reconnect. If the socket drops the page says so and keeps
-  showing its last frames, but recovering means a reload.
+  showing its last frames, but recovering means a reload. Less painful now that a reload
+  brings the chain back, but still a gap.
 - `readSpan` on a long channel still builds the whole span in the tab's memory. The
   server chunks it over the wire, but export is the one path that still wants all of it
   at once.
