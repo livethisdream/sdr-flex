@@ -208,6 +208,43 @@ particular is worth checking first:
   why — and the fix is a scale factor, not a redesign. `iio_attr -u ip:192.168.2.1 -c
   ad9361-phy voltage0` will tell you what the channel actually reports.
 
+## Updating
+
+```sh
+git pull
+SDRFLEX_DOCKERFILE=Dockerfile.full docker compose up -d --build   # whichever image you use
+curl -s localhost:8722/version
+```
+
+**The pull is the step, and leaving it out fails silently.** `docker compose` builds from
+`context: .` — the checkout on the box, not anything on a registry — so a rebuild without
+a pull rebuilds the code that is already there. That succeeds, produces a byte-identical
+image, and compose then has no reason to recreate the container. Nothing is replaced and
+nothing says so: `docker compose ps` still shows the container it showed before, with its
+uptime still counting from whenever it actually started.
+
+That is one of two ways a rebuild appears not to take, and they look nothing alike once
+you know to check:
+
+| | what you see | what happened |
+|---|---|---|
+| **no pull** | no output of note, uptime unchanged | built the same code; nothing to replace |
+| **build failed** | an error, then uptime unchanged | compose leaves the running container alone when the build fails |
+
+Either way the container's age gives it away:
+
+```sh
+docker compose ps                                              # STATUS — "Up 37 hours" is the tell
+docker image inspect sdr-flex:latest --format '{{.Created}}'   # when the image was actually built
+```
+
+And to see a build failure plainly rather than scrolled past, build without starting
+anything:
+
+```sh
+SDRFLEX_DOCKERFILE=Dockerfile.full docker compose build
+```
+
 ## Which build is this?
 
 After a rebuild, the question is whether the thing now running is the thing you built.
@@ -238,7 +275,8 @@ capture to the library is not a different build of the tool.
 A checkout with uncommitted edits reports a sha describing a tree that is not the one
 running, which is the other reason the hash is what counts.
 
-**If a rebuild seems not to have taken**, check the decoder line first:
+**If a rebuild seems not to have taken**, start with *Updating* above — the usual cause
+is a missing `git pull`. Then check the decoder line:
 
 ```
 [sdr-flex] 9 of 9 external decoders installed: ...

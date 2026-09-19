@@ -1063,11 +1063,20 @@ Four surfaces, no new chrome:
 
 The page and the engine are served by the same process, so one number covers both.
 
-Also worth writing down, because it is what made the rebuild look like a no-op rather
-than a failure: **`docker compose up -d --build` leaves the running container alone when
-the build fails.** A failed build and a build that changed nothing look identical from
-outside. The decoder line distinguishes them without any new code — nine adapters is this
-version, eight is older than M17 packet mode.
+Two ways a rebuild appears not to take, and neither announces itself:
+
+- **`docker compose up -d --build` leaves the running container alone when the build
+  fails.** A failed build and a build that changed nothing look identical from outside.
+- **A rebuild without a `git pull` is a silent no-op.** `build: context: .` is the
+  checkout on the box, so rebuilding unchanged source produces a byte-identical image and
+  compose has no reason to recreate anything. This one prints nothing at all.
+
+The second was ours to fix and it was a documentation hole: `git pull` appeared nowhere
+in `server/README.md`, which said `docker compose up -d --build` in three places and left
+the reader to know that it builds local files. There is an *Updating* section now, with
+the two failure shapes side by side and `docker compose ps` as the tell — a container's
+uptime is the one indicator that works on every version, including the ones too old to
+have `/version`.
 
 ## Loose ends
 
