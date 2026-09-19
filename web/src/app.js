@@ -1734,6 +1734,20 @@ class App {
       this.hasLibrary = !!hello.captures;
       this.hasRadios = !!hello.radios;
       this.hasPluginDir = !!hello.plugins;
+      this.build = hello.version || null;
+      this.metrics.build = this.build;
+      // On the console rather than on the screen. "Which build is this" is a question
+      // somebody asks about twice a month, usually right after a deploy, and a line of
+      // permanent chrome answering it is the accretion docs/08 is about. The console is
+      // free, it is where somebody already looks when something is wrong, and it is one
+      // keystroke away. `curl host:8722/version` is the same answer without a browser.
+      if (this.build) {
+        // eslint-disable-next-line no-console
+        console.info(`sdr-flex — build ${this.build.id}` +
+                     `${this.build.git ? ` · git ${this.build.git}` : ''}` +
+                     `${this.build.builtAt ? ` · ${this.build.builtAt}` : ''}` +
+                     `\n  the page and the engine are served by the same process, so this is both.`);
+      }
       remote.onStatus(({ connected }) => {
         if (!connected) this.notify('lost the engine — the page is showing its last frames', 12000);
       });

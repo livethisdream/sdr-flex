@@ -21,6 +21,7 @@ import { Session } from './session.js';
 import { Library } from './library.js';
 import { PluginDir } from './plugindir.js';
 import * as adapters from './adapters.js';
+import { version, versionLine } from './version.js';
 import { AdapterDir } from './adapterdir.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -108,6 +109,18 @@ function underWSL() {
 function serveStatic(req, res, webDir) {
   const url = new URL(req.url, 'http://x');
   let rel = decodeURIComponent(url.pathname);
+
+  // `curl -s host:8722/version` — the check that needs no browser, no websocket and no
+  // scrolling back through a log. It is the first thing to reach for after a rebuild.
+  if (rel === '/version') {
+    const body = JSON.stringify({ ...version(), line: versionLine() }, null, 1);
+    res.writeHead(200, { 'content-type': 'application/json',
+                         'content-length': Buffer.byteLength(body),
+                         'cache-control': 'no-store' });
+    res.end(body);
+    return;
+  }
+
   if (rel === '/') rel = '/index.html';
   const full = path.join(webDir, rel);
   // the client is a directory of static files, and nothing above it is served
@@ -198,6 +211,10 @@ export async function start(cfg = CONFIG) {
     if (underWSL() && hosts.some((h) => h.host === '127.0.0.1')) {
       log('under WSL: Windows reaches that first address as http://localhost:' + cfg.port);
     }
+    // Before the capabilities, because "which build is this" is the question somebody
+    // has after a rebuild and the decoder count cannot answer it — that line reads the
+    // same before and after any change that is not about decoders.
+    log(versionLine());
     if (library) {
       const n = library.list().length;
       log(`${n} capture${n === 1 ? '' : 's'} in ${cfg.captureDir}`);

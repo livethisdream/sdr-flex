@@ -208,6 +208,47 @@ particular is worth checking first:
   why — and the fix is a scale factor, not a redesign. `iio_attr -u ip:192.168.2.1 -c
   ad9361-phy voltage0` will tell you what the channel actually reports.
 
+## Which build is this?
+
+After a rebuild, the question is whether the thing now running is the thing you built.
+The decoder count answers a different question, and answers it the same way before and
+after any change that is not about decoders.
+
+```sh
+curl -s localhost:8722/version
+```
+
+```json
+{ "id": "666b869db6b7", "files": 77, "builtAt": "2026-09-19T06:34:47.407Z", "git": "5463382" }
+```
+
+The same line is the second thing the server prints at startup, so `docker compose logs`
+has it too, and the browser puts it on the console when the page connects. Press `m` for
+the metrics strip and it is on the end of that row.
+
+**`id` is a hash of the code, not a number somebody bumps.** There is no build step in
+this project and nothing to increment, and a version maintained by hand is wrong exactly
+when it matters — after the change somebody forgot to bump it for. This is a SHA-256 over
+every `.js`, `.mjs`, `.css` and `.html` under `server/` and `web/`, so it changes when and
+only when the code does. Captures and fixtures are data and are not in it: adding a
+capture to the library is not a different build of the tool.
+
+`git` is a hint and not the identity. The image has no `.git` in it at all — it copies
+`web`, `server` and `fixtures` and nothing else — so the field is simply absent there.
+A checkout with uncommitted edits reports a sha describing a tree that is not the one
+running, which is the other reason the hash is what counts.
+
+**If a rebuild seems not to have taken**, check the decoder line first:
+
+```
+[sdr-flex] 9 of 9 external decoders installed: ...
+```
+
+Nine is this version. If it says *of 8*, the container is older than M17 packet mode and
+the build did not replace it — `docker compose up -d --build` leaves the running
+container alone when the build itself fails, so a failed build looks exactly like a
+build that did nothing. Scroll up for the error.
+
 ## Decoders
 
 Two places a decoder can come from, with deliberately different trust stories:

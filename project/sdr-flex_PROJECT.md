@@ -1034,6 +1034,41 @@ Parked at the user's request to keep working on function. The open question is w
 those two the bar should be, or a third thing; the measurements above are the input to
 that, and nothing else is blocked on it.
 
+## A build says which build it is
+
+Asked for after a rebuild that did not take: "how do i know if it worked? i think we need
+a version somewhere". Right, and nothing here could answer it — the banner's decoder
+count is a good functional check and a bad identity check, since it reads the same before
+and after any change that is not about decoders.
+
+**The version is a hash of the code, not a number somebody bumps.** There is no build step
+in this project and nothing to increment, and a hand-maintained version is wrong exactly
+when it matters: after the change somebody forgot to bump it for. `server/version.js`
+takes a SHA-256 over every `.js`, `.mjs`, `.css` and `.html` under `server/` and `web/` —
+77 files today — so it changes when and only when the code does. Captures and fixtures
+are data and stay out of it.
+
+A git sha rides along when there is a `.git` to read one from, and it is a hint rather
+than the identity for two reasons that are both real: the image has no `.git` in it (it
+copies `web`, `server`, `fixtures` and nothing else), and a checkout with uncommitted
+edits reports a sha describing a tree that is not the one running.
+
+Four surfaces, no new chrome:
+
+- `curl -s localhost:8722/version` — the check that needs no browser and no websocket.
+- The second line of the startup banner, so `docker compose logs` has it.
+- `console.info` when the page connects. "Which build is this" gets asked about twice a
+  month and a permanent line on screen answering it is the accretion docs/08 warns about.
+- The metrics strip (`m`), where the rest of the instrumentation already lives.
+
+The page and the engine are served by the same process, so one number covers both.
+
+Also worth writing down, because it is what made the rebuild look like a no-op rather
+than a failure: **`docker compose up -d --build` leaves the running container alone when
+the build fails.** A failed build and a build that changed nothing look identical from
+outside. The decoder line distinguishes them without any new code — nine adapters is this
+version, eight is older than M17 packet mode.
+
 ## Loose ends
 
 - ~~Plugins do not survive a reload.~~ Fixed: the box serves every `.js` in

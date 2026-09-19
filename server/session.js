@@ -18,6 +18,7 @@ import { MockEngine as Engine } from '../web/src/engine.js';
 import { encode, decode } from '../web/src/proto.js';
 import { Radio, list as listDrivers } from './radio.js';
 import * as adapters from './adapters.js';
+import { version } from './version.js';
 
 export const PROTOCOL = 1;
 
@@ -116,6 +117,9 @@ const METHODS = {
     const table = adapters.list();
     return { protocol: PROTOCOL, engine: 'node', captures: !!this.library, radios: true,
              plugins: !!this.pluginDir,
+             // Which build answered. The page is served by this same process, so this is
+             // the version of the client too — one number, not two that can disagree.
+             version: version(),
              adapters: table.filter((a) => a.available).length,
              // The whole table, not just the count. It is a few hundred bytes, it is
              // sent once, and the client needs it to work out what `Identify` is about
