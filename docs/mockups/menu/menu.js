@@ -343,8 +343,14 @@ function controls() {
   wire('t-sel', (v) => { st.treatment = v; st.paramsOpen = false; });
 }
 
-document.documentElement.dataset.theme =
-  new URLSearchParams(location.search).get('theme') === 'light' ? 'light' : 'dark';
+// Only an explicit `?theme=` pins the palette. Left alone, `web/style.css` already
+// resolves all three states on its own — bare `:root` is dark, `[data-theme="light"]`
+// is light, and a `prefers-color-scheme` query catches the case where nothing is
+// stamped. Forcing dark here overrode a reader who had asked for light.
+{
+  const t = new URLSearchParams(location.search).get('theme');
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+}
 
 $('#another').addEventListener('click', newTarget);
 $('#reset').addEventListener('click', () => { st.runs = []; results(); });
