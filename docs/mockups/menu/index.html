@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDR Flex — one list, two kinds of row?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../../../web/style.css">
+<link rel="stylesheet" href="menu.css">
+</head>
+<body>
+
+<div class="wrap">
+  <h1>One list, two kinds of row?</h1>
+  <p class="sub">
+    The gesture discriminator is settled — <code>openMenu(x, y, selection)</code> already
+    exists in <code>app.js</code>, already filters by stream type and by whether a
+    selection is present, and a third answer is a one-line change. <b>This is the half
+    that is not settled</b>, and that I wrongly called free: view parameters are not
+    operations. Every row in the catalog today builds a node; a colormap sets a value
+    and rebuilds nothing. One list holding both means two row types with two handlers —
+    and the open question is whether it still reads as one thing.
+  </p>
+  <p class="sub">
+    The rows are the real ones: 22 operations transcribed from <code>web/src/engine.js</code>
+    with their stream types, and the view parameters from <code>app.js:1018</code> and
+    <code>:1029</code>. Ranking and the six-row fold are ADR-0039's.
+  </p>
+  <p class="sub">
+    <b>Building it turned up something that shrinks the question.</b> View parameters
+    belong to the view, not to the stream — and <code>app.js</code> has exactly two
+    <code>this.view() === …</code> blocks. <em>Spectrum</em> carries seven parameters and
+    <em>Time</em> carries two. Bits, Bytes, Events, Flow, Audio, Export and Grid carry
+    <b>none</b>. So the mixed list only ever exists on two views, and on one of them it
+    is two rows; everywhere else the menu stays exactly what it is today. Switch the
+    <em>view</em> control below and watch the row counts.
+  </p>
+
+  <div class="bar2" id="bar2"></div>
+
+  <div class="device">
+    <div class="stagewrap" id="stagewrap">
+      <canvas id="sp" class="sp"></canvas>
+      <canvas id="wf" class="wf"></canvas>
+    </div>
+    <div class="tmenu" id="menu" style="left:54%;top:24%"></div>
+  </div>
+
+  <div class="nums" id="nums"></div>
+
+  <h2>Where the mixed list actually occurs</h2>
+  <p class="sub">
+    Measured off the toy, across the combinations that really happen:
+  </p>
+  <table class="res">
+    <tr><th>gesture · stream · view</th><th>rows</th><th>operations</th><th>parameters</th><th></th></tr>
+    <tr><td>drag · iq · Spectrum</td><td class="n">22</td><td class="n">15</td><td class="n">7</td>
+        <td class="thin">mixed</td></tr>
+    <tr><td>click · iq · Spectrum</td><td class="n">21</td><td class="n">14</td><td class="n">7</td>
+        <td class="thin">mixed</td></tr>
+    <tr><td>click · real · Spectrum</td><td class="n">18</td><td class="n">9</td><td class="n">9</td>
+        <td class="thin">mixed — the 50/50 worst case</td></tr>
+    <tr><td>click · real · Time</td><td class="n">13</td><td class="n">9</td><td class="n">4</td>
+        <td class="thin">mixed, mildly</td></tr>
+    <tr><td>click · bytes · Bytes</td><td class="n">3</td><td class="n">3</td><td class="n">0</td>
+        <td class="thin">one kind only</td></tr>
+    <tr><td>click · bytes · Flow</td><td class="n">3</td><td class="n">3</td><td class="n">0</td>
+        <td class="thin">one kind only</td></tr>
+    <tr><td>right-click a node · any</td><td class="n">3–14</td><td class="n">all</td><td class="n">0</td>
+        <td class="thin">one kind only</td></tr>
+  </table>
+  <p class="sub" style="margin-top:1rem">
+    <b>The merge is a Spectrum-view problem and nothing else.</b> On Bits, Bytes,
+    Events, Flow, Audio, Export and Grid the menu stays exactly what it is today,
+    and the node menu never carries parameters at all. That is most of the risk gone
+    — but Spectrum is also where the time goes, and <em>real · Spectrum</em> is a
+    nine-against-nine split, which is the hardest version of “does this read as one
+    thing.” Start the drill there.
+  </p>
+  <p class="sub">
+    The fold does its job throughout: six rows and <b>205 px</b> at every combination,
+    against the 500 px that ADR-0039 was written to fix.
+  </p>
+
+  <h2>The drill</h2>
+  <p class="sub">
+    Reading a menu is not the same as finding a row in it, and only the second one can
+    be timed. This names a row — drawn from the whole list, folded ones included — and
+    measures how long you take to click it. Switch treatments between runs; the numbers
+    accumulate per treatment.
+  </p>
+  <p class="sub">
+    Two things about the ladder, both of which the first cut got wrong.
+    <b>Order is held constant</b> across all four — whichever kind the gesture asked
+    about leads, then ADR-0039's rank — so the rungs differ only in how much the seam
+    between the two kinds is marked. And the fourth rung, <em>not merged</em>, is the
+    null: the parameters come out of the list and sit behind one row that opens them in
+    place. Without it the drill could only ever say which merge was best, never whether
+    to merge at all. Opening that row costs a click, and the timer charges for it.
+  </p>
+
+  <div class="drill">
+    <span id="drill-target"><span class="q">Press “another” to start.</span></span>
+    <button class="go" id="another">another</button>
+    <span class="live"><button id="reset" style="color:var(--dim);font-family:var(--mono);font-size:.7rem">reset</button></span>
+  </div>
+
+  <div id="res"></div>
+
+  <h2>What a result would mean</h2>
+  <p class="sub">
+    <b>No gap between the two columns</b> — finding a parameter costs the same as
+    finding an operation — means the list reads as one thing, and
+    <em>values and keys only</em> is enough. <b>A gap that a hairline closes</b> means
+    merge, but mark the seam. <b>A gap that survives headings</b> means the two kinds
+    do not belong in one list, and <em>not merged</em> should win outright — if it does,
+    the answer is that the menu carries operations and one row that opens the view's
+    options, which is still one menu and still depth 1.
+  </p>
+  <p class="sub">
+    Two things this does not measure, and they matter: whether a row that
+    <em>builds a node</em> and a row that <em>changes a color</em> being one click apart
+    causes mistakes you would not catch here, and whether any of it survives a week of
+    use. It is a fifteen-minute instrument, not a study.
+  </p>
+</div>
+
+<script type="module" src="menu.js"></script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+/* One list, two kinds of row — a toy for the one open question.
+ *
+ * `web/style.css` is loaded first and carries the tokens and the type. What is added
+ * here is the menu itself, because the shape under test is not the app's current
+ * menu: it holds operation rows and parameter rows at the same time.
+ */
+
+html, body { height:auto; overflow:auto; }
+.wrap { max-width:1100px; margin:0 auto; padding:2.2rem 1.4rem 6rem; }
+h1 { font-family:var(--display); font-size:1.5rem; color:var(--bright); margin:0 0 .3rem; font-weight:600; }
+h2 { font-family:var(--display); font-size:1rem; color:var(--bright); margin:2rem 0 .5rem; font-weight:600; }
+.sub { color:var(--dim); font-size:.86rem; margin:0 0 1.3rem; line-height:1.65; max-width:70ch; }
+.sub b { color:var(--body); font-weight:600; }
+.sub em { font-style:normal; color:var(--bright); }
+kbd { font-family:var(--mono); font-size:.72rem; border:1px solid var(--rule); border-radius:3px; padding:0 .24rem; color:var(--dim); }
+
+.bar2 {
+  display:flex; flex-wrap:wrap; align-items:center; gap:.45rem .9rem;
+  padding:.6rem .8rem; margin:0 0 1rem;
+  background:var(--float); border:1px solid var(--rule); border-radius:10px;
+}
+.bar2 .lab { font-size:.56rem; letter-spacing:.13em; text-transform:uppercase; color:var(--dim); }
+.seg { display:flex; gap:.15rem; }
+.seg button {
+  font-family:var(--mono); font-size:.68rem; padding:.28rem .5rem; border-radius:5px;
+  color:var(--dim); border:1px solid transparent;
+}
+.seg button:hover { color:var(--bright); background:var(--raised); }
+.seg button.on { color:var(--on-accent); background:var(--accent); border-color:var(--accent); font-weight:600; }
+
+/* the stage, so the menu is judged over the thing it covers */
+.device { position:relative; height:520px; border:1px solid var(--rule); border-radius:8px; overflow:hidden; }
+.device .stagewrap { position:absolute; inset:0; display:flex; flex-direction:column; }
+.device canvas { display:block; width:100%; }
+.device .sp { height:34%; flex:none; }
+.device .wf { flex:1; min-height:0; }
+
+/* ── the menu under test ── */
+.tmenu {
+  position:absolute; z-index:30; width:268px;
+  background:var(--raised); border:1px solid var(--rule); border-radius:8px;
+  box-shadow:0 18px 44px -12px var(--shadow-hard); padding:.35rem;
+  max-height:calc(100% - 24px); overflow-y:auto; scrollbar-width:none;
+}
+.tmenu::-webkit-scrollbar { display:none; }
+.tmenu .mh {
+  font-family:var(--mono); font-size:.56rem; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--dim); padding:.2rem .45rem .35rem;
+}
+.row {
+  display:flex; align-items:center; gap:.45rem; width:100%;
+  padding:.3rem .45rem; border-radius:5px; color:var(--body); font-size:.78rem; text-align:left;
+}
+.row:hover { background:var(--panel); color:var(--bright); }
+.row .rt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* A parameter is labeled with its current value; an operation has no value to show
+   and carries its key instead. That contrast is the whole of treatment "flat" — the
+   question this page exists to answer is whether it is enough on its own. */
+.row .val { font-family:var(--mono); font-size:.68rem; color:var(--dim); flex:none; }
+.row:hover .val { color:var(--accent); }
+.row .k {
+  font-family:var(--mono); font-size:.58rem; color:var(--faint); flex:none;
+  border:1px solid var(--rule); border-radius:3px; padding:0 .22rem;
+}
+.row:hover .k { color:var(--accent); border-color:var(--accent-mid); }
+.row.hit { background:var(--ok); color:var(--on-accent); }
+.row.miss { background:var(--crit); color:#fff; }
+
+.tmenu .rule { height:1px; background:var(--rule); margin:.3rem .3rem; }
+.tmenu .more { color:var(--dim); font-family:var(--mono); font-size:.7rem; }
+.tmenu .fold[hidden] { display:none; }
+
+/* ── measurements and the drill ── */
+.nums {
+  display:grid; gap:.1rem .9rem; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr));
+  margin:.7rem 0 0; font-family:var(--mono); font-size:.68rem; color:var(--dim);
+}
+.nums b { color:var(--bright); font-weight:500; }
+.nums .bad { color:var(--crit); } .nums .good { color:var(--ok); } .nums .warn { color:var(--warn); }
+
+.drill {
+  display:flex; flex-wrap:wrap; align-items:center; gap:.7rem;
+  margin:1rem 0 0; padding:.6rem .8rem;
+  background:var(--panel); border:1px solid var(--rule); border-radius:8px;
+}
+.drill .target { font-size:.9rem; color:var(--bright); font-weight:600; }
+.drill .target .q { color:var(--dim); font-weight:400; font-size:.78rem; }
+.drill .go {
+  font-family:var(--mono); font-size:.72rem; padding:.34rem .7rem; border-radius:6px;
+  background:var(--accent); color:var(--on-accent); font-weight:600;
+}
+.drill .go:hover { filter:brightness(1.1); }
+.drill .live { margin-left:auto; font-family:var(--mono); font-size:.72rem; color:var(--dim); }
+
+table.res { border-collapse:collapse; width:100%; font-size:.78rem; margin:.5rem 0 0; }
+table.res th, table.res td { text-align:left; padding:.32rem .5rem; border-bottom:1px solid var(--rule-lo); }
+table.res th { font-family:var(--mono); font-size:.56rem; letter-spacing:.11em; text-transform:uppercase; color:var(--dim); font-weight:400; }
+table.res td.n { font-family:var(--mono); color:var(--bright); white-space:nowrap; }
+table.res tr.best td { color:var(--ok); }
+table.res td.thin { color:var(--faint); }
+
+/* `split` only: the parameters sit behind one row that opens them in place. */
+.row.gate { color:var(--dim); }
+.row.gate:hover { color:var(--bright); }
+.row.sub { padding-left:1.1rem; }
