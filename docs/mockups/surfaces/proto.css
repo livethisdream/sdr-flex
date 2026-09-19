@@ -1,0 +1,177 @@
+/* Surfaces prototype — layout and the few widgets that do not exist in the app yet.
+ *
+ * As with the layout mockups, `web/style.css` is loaded first and unmodified and
+ * carries everything visual. What is new here is genuinely new: the map popunder, the
+ * hover stats card, and the view tier inside the operations menu. Those borrow the
+ * app's existing tokens rather than inventing any.
+ */
+
+html, body { height:auto; overflow:auto; }
+.wrap { max-width:1180px; margin:0 auto; padding:2.2rem 1.4rem 6rem; }
+h1 { font-family:var(--display); font-size:1.5rem; color:var(--bright); margin:0 0 .3rem; font-weight:600; }
+h2 { font-family:var(--display); font-size:1rem; color:var(--bright); margin:2.2rem 0 .5rem; font-weight:600; }
+.sub { color:var(--dim); font-size:.86rem; margin:0 0 1.4rem; line-height:1.65; max-width:70ch; }
+.sub b { color:var(--body); font-weight:600; }
+.sub em { font-style:normal; color:var(--bright); }
+
+.controls {
+  display:flex; flex-wrap:wrap; align-items:center; gap:.5rem;
+  padding:.6rem .8rem; margin:0 0 1.2rem;
+  background:var(--float); border:1px solid var(--rule); border-radius:10px;
+}
+.controls .lab { font-size:.56rem; letter-spacing:.13em; text-transform:uppercase; color:var(--dim); }
+.controls .spacer { flex:1; }
+.seg { display:flex; gap:.15rem; }
+.seg button { font-family:var(--mono); font-size:.68rem; padding:.28rem .5rem; border-radius:5px; color:var(--dim); border:1px solid transparent; }
+.seg button:hover { color:var(--bright); background:var(--raised); }
+.seg button.on { color:var(--on-accent); background:var(--accent); border-color:var(--accent); font-weight:600; }
+
+/* ── the device ── */
+.device {
+  position:relative; overflow:hidden; height:620px;
+  border:1px solid var(--rule); border-radius:8px; background:var(--ground);
+  box-shadow:0 20px 50px -24px var(--shadow);
+}
+.device .app { height:100%; }
+
+/* One bar. It carries where you are and nothing else; everything that used to sit
+   beside it is now behind the crumb it belongs to. */
+.bar {
+  display:flex; align-items:center; gap:.15rem;
+  padding:.35rem .7rem; background:var(--raised); border-bottom:1px solid var(--rule);
+  position:relative; z-index:12;
+}
+.bar .themebtn { margin-left:auto; }
+.bar .crumb.has:hover, .bar .crumb.has.open { background:var(--raised); }
+.bar .crumb.open { background:var(--accent-lo); color:var(--bright); }
+/* A crumb that opens something says so, quietly, the way the device crumb already
+   does. The caret is the affordance; without it a popunder is a secret. */
+.bar .crumb .car { font-style:normal; color:var(--faint); font-size:.6rem; margin-left:.2rem; }
+.bar .crumb:hover .car, .bar .crumb.open .car { color:var(--accent); }
+
+/* ── the map popunder ── */
+.map {
+  position:absolute; z-index:40; min-width:230px;
+  background:var(--raised); border:1px solid var(--rule); border-radius:8px;
+  box-shadow:0 18px 44px -12px var(--shadow-hard); padding:.4rem;
+  font-size:.78rem;
+}
+.map[hidden] { display:none; }
+.map .mhead {
+  font-family:var(--mono); font-size:.56rem; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--dim); padding:.15rem .4rem .35rem;
+}
+.mrow {
+  display:flex; align-items:center; gap:.4rem; width:100%;
+  padding:.28rem .45rem; border-radius:5px; color:var(--body); text-align:left;
+}
+.mrow:hover { background:var(--panel); color:var(--bright); }
+.mrow.cur { background:var(--accent-lo); color:var(--bright); font-weight:600; }
+.mrow.kid { padding-left:1.5rem; font-size:.74rem; }
+/* The tree rule is drawn rather than typed, so it cannot be selected with the text
+   and does not need a monospace column to line up. */
+.mrow.kid::before {
+  content:""; position:absolute; left:1.05rem; width:7px; height:1px;
+  background:var(--rule); margin-top:.05rem;
+}
+.map .mkids { position:relative; }
+.map .mkids::before {
+  content:""; position:absolute; left:1.05rem; top:0; bottom:.5rem; width:1px; background:var(--rule);
+}
+.mrow .tk { font-family:var(--mono); font-size:.52rem; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin-left:auto; }
+.mrow .key {
+  font-family:var(--mono); font-size:.58rem; color:var(--faint);
+  border:1px solid var(--rule); border-radius:3px; padding:0 .22rem; margin-left:.3rem;
+}
+.mrow:hover .key { color:var(--accent); border-color:var(--accent-mid); }
+.map .msep { height:1px; background:var(--rule); margin:.35rem .3rem; }
+.mrow .live { width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 7px var(--ok); flex:none; }
+
+/* ── the hover stats card ── */
+.stats {
+  position:absolute; z-index:38; min-width:270px; max-width:340px;
+  background:var(--raised); border:1px solid var(--rule); border-radius:8px;
+  box-shadow:0 18px 44px -12px var(--shadow-hard); padding:.5rem .55rem;
+}
+.stats[hidden] { display:none; }
+.stats.pinned { border-color:var(--accent-mid); }
+.stats .shead {
+  display:flex; align-items:center; gap:.5rem;
+  font-family:var(--mono); font-size:.56rem; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--dim); margin-bottom:.45rem;
+}
+.stats .shead .pinmark { margin-left:auto; color:var(--accent); text-transform:none; letter-spacing:0; }
+.srow { display:flex; align-items:baseline; gap:.5rem; padding:.16rem .25rem; border-radius:4px; }
+.srow:hover { background:var(--panel); }
+/* The 2 px mode edge, kept exactly as the strip had it — this is the encoding that
+   would otherwise be lost when the strip goes away. */
+.srow { border-left:2px solid transparent; }
+.srow.au { border-left-color:var(--ok); }
+.srow.mn { border-left-color:var(--accent); }
+.srow.ro { opacity:.65; }
+.srow .sk { font-family:var(--mono); font-size:.56rem; letter-spacing:.11em; text-transform:uppercase; color:var(--dim); width:4.6em; flex:none; }
+.srow .sv { font-family:var(--mono); font-size:.8rem; color:var(--bright); font-variant-numeric:tabular-nums; }
+.srow .su { font-family:var(--mono); font-size:.58rem; color:var(--dim); }
+.srow .ev { margin-left:auto; font-size:.62rem; color:var(--faint); text-align:right; max-width:15ch; line-height:1.3; }
+.stats .foot { font-size:.62rem; color:var(--faint); padding:.4rem .25rem 0; line-height:1.45; }
+.stats .foot kbd { font-family:var(--mono); border:1px solid var(--rule); border-radius:3px; padding:0 .22rem; color:var(--dim); }
+
+/* ── one menu, three gestures ── */
+.ctx {
+  position:absolute; z-index:44; min-width:245px; max-width:300px;
+  background:var(--raised); border:1px solid var(--rule); border-radius:8px;
+  box-shadow:0 18px 44px -12px var(--shadow-hard); padding:.35rem;
+  max-height:60%; overflow-y:auto; scrollbar-width:none;
+}
+.ctx[hidden] { display:none; }
+.ctx::-webkit-scrollbar { display:none; }
+.ctx .chead {
+  font-family:var(--mono); font-size:.56rem; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--dim); padding:.2rem .45rem .35rem;
+}
+.crow {
+  display:flex; align-items:center; gap:.45rem; width:100%;
+  padding:.3rem .45rem; border-radius:5px; color:var(--body); font-size:.78rem; text-align:left;
+}
+.crow:hover { background:var(--panel); color:var(--bright); }
+.crow.on { background:var(--accent-lo); color:var(--bright); }
+.crow .cv { margin-left:auto; font-family:var(--mono); font-size:.68rem; color:var(--dim); }
+.crow:hover .cv { color:var(--accent); }
+/* The key on the row, as law 9 requires — a shortcut in a help screen is a shortcut
+   nobody learns. */
+.crow .key {
+  font-family:var(--mono); font-size:.58rem; color:var(--faint);
+  border:1px solid var(--rule); border-radius:3px; padding:0 .22rem;
+}
+.crow:hover .key { color:var(--accent); border-color:var(--accent-mid); }
+.ctx .csep { height:1px; background:var(--rule); margin:.3rem .3rem; }
+.ctx .more { color:var(--dim); font-family:var(--mono); font-size:.7rem; }
+/* The fold opens in place, in the same menu, at the same position — never a submenu. */
+.ctx .fold[hidden] { display:none; }
+
+/* the value that has to survive the gesture that changes it (law 12) */
+.scrubtip {
+  position:absolute; z-index:60; pointer-events:none;
+  font-family:var(--mono); font-size:.72rem; color:var(--bright);
+  background:var(--float); border:1px solid var(--accent-mid); border-radius:5px;
+  padding:.16rem .4rem; transform:translate(-50%, -160%);
+}
+.scrubtip[hidden] { display:none; }
+
+/* ── the tally ── */
+.tally {
+  display:grid; gap:.1rem .9rem; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr));
+  margin:.7rem 0 0; font-family:var(--mono); font-size:.68rem; color:var(--dim);
+}
+.tally b { color:var(--bright); font-weight:500; }
+.tally .good { color:var(--ok); }
+.tally .bad { color:var(--crit); }
+.tally .warn { color:var(--warn); }
+
+table.cmp { border-collapse:collapse; width:100%; font-size:.78rem; margin:.4rem 0 0; }
+table.cmp th, table.cmp td { text-align:left; padding:.32rem .5rem; border-bottom:1px solid var(--rule-lo); vertical-align:top; }
+table.cmp th { font-family:var(--mono); font-size:.56rem; letter-spacing:.11em; text-transform:uppercase; color:var(--dim); font-weight:400; }
+table.cmp td.n { font-family:var(--mono); color:var(--bright); white-space:nowrap; }
+table.cmp tr.gone td { color:var(--faint); text-decoration:line-through; text-decoration-color:var(--rule); }
+table.cmp tr.gone td.n { text-decoration:none; color:var(--faint); }
+table.cmp tr.gone td.n:last-child { color:var(--ok); }

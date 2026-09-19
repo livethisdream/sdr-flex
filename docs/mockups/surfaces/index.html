@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDR Flex — surfaces prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../../../web/style.css">
+<link rel="stylesheet" href="proto.css">
+</head>
+<body>
+
+<div class="wrap">
+  <h1>How many surfaces?</h1>
+  <p class="sub">
+    The layout study got chrome down to about 90 px and then stopped paying. What is
+    left to win is not height — it is the number of separate things on screen and the
+    number of different menus behind them. This one is <b>clickable</b>, because a
+    popunder and a hover are behaviors and a screenshot cannot say whether they feel
+    worse than what they replace.
+  </p>
+  <p class="sub">
+    <em>Try:</em> click a crumb for the map · hover one for its values ·
+    <kbd>i</kbd> pins that card open · drag a box on the spectrum for operations ·
+    click the spectrum without dragging for view options ·
+    right-click for the node's own menu · <kbd>space</kbd> pauses.
+  </p>
+
+  <div class="controls">
+    <span class="lab">counted live</span>
+    <div class="spacer"></div>
+    <span class="seg"><button id="reset">reset the count</button></span>
+  </div>
+
+  <div class="device" id="device">
+    <div class="app">
+      <div class="bar" id="bar"></div>
+      <div class="panes"><div class="pane">
+        <div class="stage" id="stage">
+          <canvas id="sp" class="sp"></canvas>
+          <div class="splitter"></div>
+          <canvas id="wf" class="wf"></canvas>
+          <div class="selbox" id="selbox" hidden></div>
+        </div>
+        <div class="axis">
+          <span>433.720</span><span>433.820</span><span>433.920 MHz</span><span>434.020</span><span>434.120</span>
+        </div>
+      </div></div>
+      <div class="dock row">
+        <div class="transport">
+          <button class="tbtn">◀◀</button>
+          <button class="tbtn play" id="play">❚❚</button>
+          <button class="tbtn">▶▶</button>
+          <span class="mono clock">12.331 s</span>
+          <button class="track"><i style="width:46%"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="map" id="map" hidden></div>
+    <div class="stats" id="stats" hidden></div>
+    <div class="ctx" id="ctx" hidden></div>
+    <div class="hint" id="flash" hidden></div>
+  </div>
+
+  <div class="tally" id="tally"></div>
+
+  <h2>What it costs and what it buys</h2>
+  <p class="sub">
+    Struck-through rows are surfaces that stop existing. Nothing here is free: the two
+    rows that disappear were also the <em>inventory</em> of what you had built, and the
+    strip was the only place the auto/manual edge was visible without asking.
+  </p>
+  <div id="cmp"></div>
+
+  <h2>What it breaks</h2>
+  <p class="sub">
+    Three of these are real costs against rules already written down, not hypotheticals.
+    Two have answers in the prototype; one does not yet.
+  </p>
+
+  <table class="cmp">
+    <tr><th>the rule</th><th>what this does to it</th><th>answer</th></tr>
+    <tr>
+      <td><b>Law 12</b> — “what you need mid-gesture stays visible. You cannot hover
+          while dragging.”</td>
+      <td>Hover-summoned values vanish the moment a drag starts, which is exactly when
+          you are watching them.</td>
+      <td class="n">answered: <kbd>i</kbd> pins the card and it survives the drag</td>
+    </tr>
+    <tr>
+      <td><b>Law 10</b> — the 2 px auto/manual edge, scannable at a glance</td>
+      <td>The strip was the only place you could see what you had pinned without
+          asking for it.</td>
+      <td class="n">partly: the edge moved onto the card, but you have to summon it</td>
+    </tr>
+    <tr>
+      <td><b>ADR-0018</b> — “siblings stay visible … a breadcrumb that hides the others
+          reads as though the tool forgot what you built”</td>
+      <td>The map is exactly the popunder ADR-0018 already specified — but folding the
+          block tabs in too means the inventory of what you built is now behind a
+          click.</td>
+      <td class="n">open</td>
+    </tr>
+  </table>
+
+  <h2>The interaction budget, honestly</h2>
+  <p class="sub">
+    A popunder adds a click to the two most frequent navigations in the tool. The keys
+    on the map rows are what buys it back — and they are cheaper than today, not merely
+    even. That is the trade to accept or reject.
+  </p>
+
+  <table class="cmp">
+    <tr><th>action</th><th>today</th><th>popunder</th><th>popunder + key</th></tr>
+    <tr><td>Switch to another channel</td><td class="n">1 click</td>
+        <td class="n">2 clicks</td><td class="n">1 key</td></tr>
+    <tr><td>Switch view inside a channel</td><td class="n">1 click</td>
+        <td class="n">2 clicks</td><td class="n">1 key</td></tr>
+    <tr><td>Change the colormap</td><td class="n">2 clicks (strip → popover)</td>
+        <td class="n">2 clicks (canvas → menu)</td><td class="n">—</td></tr>
+    <tr><td>Read why a width is 50 kHz</td><td class="n">1 hover (strip)</td>
+        <td class="n">1 hover (crumb)</td><td class="n">—</td></tr>
+    <tr><td>Retune an existing channel</td><td class="n">1 drag</td>
+        <td class="n">1 drag</td><td class="n">—</td></tr>
+  </table>
+</div>
+
+<script type="module" src="proto.js"></script>
+</body>
+</html>
