@@ -84,6 +84,51 @@
     against the 500 px that ADR-0039 was written to fix.
   </p>
 
+  <h2>Where the hotkeys land in this</h2>
+  <p class="sub">
+    <b>At the key level the merge already happened.</b> <code>keys.js</code> binds seven
+    keys to eight operations — <code>t a f s c l e</code> — and its <code>RESERVED</code>
+    list names what the rest of the keyboard already holds. Most of that list is view
+    parameters: <code>=</code> <code>-</code> <code>0</code> are zoom, which is a view
+    parameter by <a href="../../adr/0019-settings-surfaces.md" style="color:var(--accent)">ADR-0019</a>'s
+    own table. Operations and view parameters have shared one keyboard namespace from
+    the start, with a test asserting the two sets stay disjoint. The menu is the surface
+    that has not caught up.
+  </p>
+  <p class="sub">
+    Three consequences, and none of them is “so the merge is fine”.
+  </p>
+  <table class="res">
+    <tr><th>what hotkeys do</th><th>consequence for the merge</th></tr>
+    <tr><td><b>Only 8 of 22 operations carry a key.</b></td>
+        <td>The key badge cannot mark the seam. The right-hand column has three states,
+            not two — a key, a value, or nothing — and a keyless operation is told
+            apart from a parameter only by the absence of a value. Watch the
+            <em>keyed ops</em> figure above as you change stream type.</td></tr>
+    <tr><td><b>A key names a list, and the type filter picks from it.</b>
+            <code>s</code> is SSB on <code>iq</code> and Stereo decode on
+            <code>real</code>, which is not a collision because the two can never be
+            offered at once.</td>
+        <td><b>That rule does not extend to parameters.</b> <code>c</code> is CW demod;
+            colormap would want <code>c</code> too — and on an <code>iq</code> node both
+            are valid <em>simultaneously</em>. The disambiguation that makes operation
+            keys safe has no answer here.</td></tr>
+    <tr><td><b>An operation is a verb; a parameter is a value.</b></td>
+        <td>One key, one <code>applyOp</code> — but a key cannot “do” a colormap, only
+            cycle it or open its control. Zoom gets away with <code>=</code>/<code>-</code>
+            because it is continuous and has a natural increment. Colormap and window
+            have no such thing.</td></tr>
+  </table>
+  <p class="sub" style="margin-top:1rem">
+    So the split that falls out is not the one the treatments test.
+    <b>Parameters with a natural increment already have direct manipulation</b> — zoom
+    on the wheel, dB range on the color bar — and want no menu row and no new key.
+    <b>Parameters that are a choice from a set</b> — colormap, window, FFT size — cannot
+    have a key at all, and the menu is the only place they can go. Which means the
+    keyboard does not relieve the merge question; it decides <em>which</em> parameters
+    the merge is even about.
+  </p>
+
   <h2>The drill</h2>
   <p class="sub">
     Reading a menu is not the same as finding a row in it, and only the second one can

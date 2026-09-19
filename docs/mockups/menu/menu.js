@@ -75,7 +75,7 @@ const GESTURES = {
  * make the parameters cost a click. Without it on the ladder the toy could only ever
  * tell you which merge was best, never whether to merge. */
 const TREATMENTS = {
-  value:  'values and keys only',
+  value:  'values, and keys where they exist',
   ruled:  '+ a hairline at the seam',
   headed: '+ headings over each run',
   split:  'not merged — params behind one row',
@@ -184,7 +184,9 @@ function measure() {
   const h = el.hidden ? 0 : el.scrollHeight;
   const vh = 720;   // ADR-0039's yardstick: a 720 px laptop viewport
   const pct = (100 * h / vh);
-  const ops = all.filter((r) => r.kind === 'op').length;
+  const opRows = all.filter((r) => r.kind === 'op');
+  const ops = opRows.length;
+  const keyed = opRows.filter((r) => r.key).length;
   const params = all.filter((r) => r.kind === 'param').length;
 
   $('#nums').innerHTML = `
@@ -192,6 +194,8 @@ function measure() {
       params === 0 ? ' <b class="good">(one kind only)</b>' : ''}</span>
     <span>above the fold <b>${shown.length}</b></span>
     <span>height <b class="${pct > 60 ? 'bad' : pct > 40 ? 'warn' : 'good'}">${h} px</b> · ${pct.toFixed(0)}% of 720</span>
+    <span>keyed ops <b class="${keyed / (ops || 1) < 0.5 ? 'warn' : ''}">${keyed} of ${ops}</b>${
+      ops && keyed < ops ? ' — the rest show nothing' : ''}</span>
     <span>treatment <b>${TREATMENTS[st.treatment]}</b></span>`;
 }
 
