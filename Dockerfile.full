@@ -110,6 +110,7 @@ RUN git clone --recursive https://github.com/M17-Project/M17_Implementations /tm
  && git -C /tmp/m17impl checkout --quiet "$M17_IMPL_REF" \
  && make -C /tmp/m17impl/SP5WWP/m17-packet \
       CPATH="$OOT/include" LIBRARY_PATH="$OOT/lib" \
+ && install -d "$OOT/bin" \
  && install -m 0755 /tmp/m17impl/SP5WWP/m17-packet/m17-packet-decode "$OOT/bin/" \
  && install -m 0755 /tmp/m17impl/SP5WWP/m17-packet/m17-packet-encode "$OOT/bin/" \
  && rm -rf /tmp/m17impl
@@ -198,10 +199,17 @@ RUN ldconfig
 # Fail the build rather than the first click. A decoder whose program is missing is not
 # in the menu at all — which is the correct behavior and a terrible way to find out that
 # an image did not build what it said it did.
+#
+# **Grep the output, do not trust the exit code.** `m17-packet-decode -h` prints its
+# usage and exits **255**, which is a perfectly ordinary thing for a small C program to
+# do and which broke this whole image: the `&&` chain below stopped there, so the build
+# failed on the one line that was supposed to prove the build had worked. Matching a
+# string from the help text tests more anyway — it proves the binary ran, which means
+# libm17 resolved, and that it is the program we think it is.
 RUN node --version \
  && python3 -c "from gnuradio import lora_sdr" && echo 'lora_sdr ok' \
  && m17-demod --help > /dev/null && m17-mod --help > /dev/null && echo 'm17 ok' \
- && m17-packet-decode -h > /dev/null && echo 'm17 packet ok' \
+ && m17-packet-decode -h 2>&1 | grep -q 'decode callsigns' && echo 'm17 packet ok' \
  && redsea --version > /dev/null && echo 'redsea ok' \
  && command -v rx_sdr > /dev/null && echo 'rx_sdr ok'
 
