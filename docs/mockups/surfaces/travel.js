@@ -159,7 +159,11 @@ function panel(frame, anchor, dir, html, cls = 'pop', atPoint = false) {
 
 // `sel` is an element in that frame; `open` renders a surface first; `d` is an offset
 // from the previous point, for a menu that arrives under the cursor.
-const START = ['stage', 0.5, 0.62];   // the cursor lives on the signal, low in the waterfall
+// Where the cursor starts drives two of the five results, so it is a parameter rather
+// than a constant: `?sy=0.2` puts it on the spectrum trace, `?sy=0.85` deep in the
+// waterfall. Sweeping it is what showed which findings were real and which were an
+// artifact of one number — see the sensitivity table on the page.
+const START = ['stage', 0.5, +(new URLSearchParams(location.search).get('sy') || 0.62)];   // the cursor lives on the signal, low in the waterfall
 
 const TASKS = [
   {

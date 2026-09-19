@@ -183,6 +183,41 @@
     putting the strip along the top row. Twice now, the top of the screen has measured
     as the expensive place to put something you reach for.
   </p>
+  <h2>Is that an artifact of where the cursor starts?</h2>
+  <p class="sub">
+    Two of those five results depend on a number I chose — the cursor starting low in
+    the waterfall. So it is swept instead: <code>?sy=0.20</code> starts on the spectrum
+    trace, <code>?sy=0.85</code> deep in the waterfall. Travel in pixels, today → proposed:
+  </p>
+
+  <table class="cmp">
+    <tr><th>cursor starts at</th><th>colormap</th><th>read the width</th>
+        <th>switch channel</th><th>switch view</th></tr>
+    <tr><td>0.20 — on the trace</td><td class="n">461 → <b>234</b></td><td class="n">291 → 379</td>
+        <td class="n">301 → 558</td><td class="n">430 → <b>421</b></td></tr>
+    <tr><td>0.40</td><td class="n">423 → <b>234</b></td><td class="n">245 → 397</td>
+        <td class="n">319 → 575</td><td class="n">440 → 444</td></tr>
+    <tr><td>0.62 — the default</td><td class="n">386 → <b>234</b></td><td class="n">197 → 426</td>
+        <td class="n">345 → 605</td><td class="n">455 → 480</td></tr>
+    <tr><td>0.85 — deep in the waterfall</td><td class="n">353 → <b>234</b></td><td class="n">147 → 466</td>
+        <td class="n">378 → 644</td><td class="n">477 → 527</td></tr>
+  </table>
+
+  <p class="sub" style="margin-top:1.1rem">
+    <b>One column does not move.</b> The colormap costs 234 px from anywhere, because
+    the menu arrives at the cursor. Every other column slides with the cursor, because
+    every other target is pinned to a bar. That is the whole finding, and it is
+    stronger than any single row: <em>a surface that comes to the cursor has no travel
+    cost to argue about; a surface anchored to chrome has one that grows the further
+    you are from it.</em>
+  </p>
+  <p class="sub">
+    It also corrects the previous conclusion. “The top of the screen is expensive” was
+    overstated — reading the width costs 88 px more with the cursor on the trace, not
+    229. But switching channel loses by a flat ~260 px at every start point, and that
+    one is real: <b>the map popunder is anchored to the bar, so it inherits exactly the
+    problem the menu was designed to avoid.</b>
+  </p>
   <p class="sub">
     <b>So the trigger is wrong, not the surface.</b> Hovering a crumb drags the cursor
     to the top of the window to read something about the signal underneath it. The
