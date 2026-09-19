@@ -22,10 +22,22 @@
     worse than what they replace.
   </p>
   <p class="sub">
-    <em>Try:</em> click a crumb for the map · hover one for its values ·
-    <kbd>i</kbd> pins that card open · drag a box on the spectrum for operations ·
-    click the spectrum without dragging for view options ·
+    <em>Try:</em> click a crumb for the map · hover the channel crumb for the tuner's
+    stats · <kbd>i</kbd> pins that card open · drag a box on the spectrum for
+    operations · click the spectrum without dragging for view options ·
     right-click for the node's own menu · <kbd>space</kbd> pauses.
+  </p>
+  <p class="sub">
+    <b>The strip splits three ways; it is not replaced by a hover.</b> An earlier pass
+    here collapsed all of it onto the hover card, which was more than the idea asked
+    for. The three kinds of parameter want three different homes:
+    <em>the tuner's numbers</em> are mostly evidence — you set center and width by
+    dragging the box — so they can be summoned from the crumb.
+    <em>View options</em> go in the click menu, where the picture they change is
+    already under the cursor. <em>A block's working parameters</em> — a slicer
+    threshold, a symbol period — are the ones you scrub while watching the result, and
+    those belong on the object: a threshold is a line on the waveform, a symbol period
+    is a spacing on the time axis. That last one is described here, not built.
   </p>
 
   <div class="controls">
@@ -75,59 +87,116 @@
   </p>
   <div id="cmp"></div>
 
-  <h2>What it breaks</h2>
+  <h2>What it costs</h2>
   <p class="sub">
-    Three of these are real costs against rules already written down, not hypotheticals.
-    Two have answers in the prototype; one does not yet.
+    These are prior reasoning to weigh, not rules to comply with — but they were
+    written after someone hit the problem, so the cost is worth naming before spending
+    it. Two citations in the first version of this page were wrong and are corrected
+    here: the 2 px auto/manual edge is <b>law 12</b>, not law 10, and
+    <em>“siblings stay visible”</em> is from
+    <b>08-ui-principles</b>, not ADR-0018 — which in fact says the opposite, that each
+    breadcrumb segment is “a menu of its siblings.” The two documents disagree with
+    each other, and this proposal has to pick one.
   </p>
 
   <table class="cmp">
-    <tr><th>the rule</th><th>what this does to it</th><th>answer</th></tr>
+    <tr><th>the prior reasoning</th><th>what this does to it</th><th>where it lands</th></tr>
     <tr>
       <td><b>Law 12</b> — “what you need mid-gesture stays visible. You cannot hover
           while dragging.”</td>
-      <td>Hover-summoned values vanish the moment a drag starts, which is exactly when
-          you are watching them.</td>
-      <td class="n">answered: <kbd>i</kbd> pins the card and it survives the drag</td>
+      <td>A hover-summoned value vanishes the moment a drag starts, which is when you
+          are watching it.</td>
+      <td class="n">answered twice: <kbd>i</kbd> pins the card, and the parameters you
+          actually scrub move onto the object</td>
     </tr>
     <tr>
-      <td><b>Law 10</b> — the 2 px auto/manual edge, scannable at a glance</td>
-      <td>The strip was the only place you could see what you had pinned without
-          asking for it.</td>
+      <td><b>Law 12</b> again — the 2 px auto/manual edge, a cheaper encoding than a
+          word</td>
+      <td>The strip was the only place you could see what you had pinned without asking
+          for it.</td>
       <td class="n">partly: the edge moved onto the card, but you have to summon it</td>
     </tr>
     <tr>
-      <td><b>ADR-0018</b> — “siblings stay visible … a breadcrumb that hides the others
-          reads as though the tool forgot what you built”</td>
-      <td>The map is exactly the popunder ADR-0018 already specified — but folding the
-          block tabs in too means the inventory of what you built is now behind a
-          click.</td>
-      <td class="n">open</td>
+      <td><b>08-ui-principles</b> — “siblings stay visible … a breadcrumb that hides the
+          others reads as though the tool forgot what you built”<br>
+          <b>ADR-0018</b> — “each segment a menu of its siblings”</td>
+      <td>These two already contradict each other. The map takes ADR-0018's side, and
+          folding the <em>blocks</em> in as well goes further than either.</td>
+      <td class="n">open — a count on the crumb would answer most of it</td>
     </tr>
   </table>
 
-  <h2>The interaction budget, honestly</h2>
+  <h2>Pointer travel, which is the metric that matters</h2>
   <p class="sub">
-    A popunder adds a click to the two most frequent navigations in the tool. The keys
-    on the map rows are what buys it back — and they are cheaper than today, not merely
-    even. That is the trade to accept or reject.
+    The first version of this page led with a click count, and a click count is
+    misleading: two clicks thirty pixels apart are not two clicks at opposite ends of
+    the window. <b>08-ui-principles says this itself</b> — “counting only clicks would
+    have scored the old pinned-sidebar layout as equal to the contextual one. It was
+    not equal — it charged a ~600 px round trip for every single operation.”
+  </p>
+  <p class="sub">
+    So here is the same comparison done properly. Both layouts are built at the same
+    size from the app's own markup, the surfaces each task actually opens are rendered
+    rather than imagined, and the path is summed in real pixels. The cursor starts
+    where it lives: on the signal, low in the waterfall. Budget is
+    <b>&lt; 120 px per operation</b> after a selection drag.
   </p>
 
+  <div id="t-tabs" style="margin:.2rem 0 .1rem"></div>
+  <div id="t-verdict"></div>
+
+  <div class="tlabel"><span class="who">today</span><span id="t-today-out"></span></div>
+  <div class="tframe" id="f-today"></div>
+
+  <div class="tlabel"><span class="who">proposed</span><span id="t-prop-out"></span>
+    <span id="t-variant" class="seg" style="margin-left:auto"></span></div>
+  <div class="tframe" id="f-prop"></div>
+  <!-- the variant not on screen, measured the same way so all three numbers compare -->
+  <div class="tframe" id="f-alt" style="position:absolute;left:-99999px;width:1100px"></div>
+
+  <h2>What the travel numbers actually say</h2>
   <table class="cmp">
-    <tr><th>action</th><th>today</th><th>popunder</th><th>popunder + key</th></tr>
-    <tr><td>Switch to another channel</td><td class="n">1 click</td>
-        <td class="n">2 clicks</td><td class="n">1 key</td></tr>
-    <tr><td>Switch view inside a channel</td><td class="n">1 click</td>
-        <td class="n">2 clicks</td><td class="n">1 key</td></tr>
-    <tr><td>Change the colormap</td><td class="n">2 clicks (strip → popover)</td>
-        <td class="n">2 clicks (canvas → menu)</td><td class="n">—</td></tr>
-    <tr><td>Read why a width is 50 kHz</td><td class="n">1 hover (strip)</td>
-        <td class="n">1 hover (crumb)</td><td class="n">—</td></tr>
-    <tr><td>Retune an existing channel</td><td class="n">1 drag</td>
-        <td class="n">1 drag</td><td class="n">—</td></tr>
+    <tr><th>task</th><th>today</th><th>proposed, mouse</th><th>proposed, key</th></tr>
+    <tr><td>Change the colormap</td><td class="n">386 px · 2 clicks</td>
+        <td class="n">234 px · 3 clicks</td><td class="n">234 px</td></tr>
+    <tr><td>Read why the width is 50 kHz</td><td class="n">197 px · hover</td>
+        <td class="n">426 px · hover</td><td class="n">0 px</td></tr>
+    <tr><td>Switch to channel B</td><td class="n">345 px · 1 click</td>
+        <td class="n">605 px · 2 clicks</td><td class="n">0 px</td></tr>
+    <tr><td>Switch view to AM demod</td><td class="n">455 px · 1 click</td>
+        <td class="n">480 px · 2 clicks</td><td class="n">143 px</td></tr>
+    <tr><td>Drag a box, then demodulate</td><td class="n">265 px · 2 clicks</td>
+        <td class="n">265 px · 2 clicks</td><td class="n">126 px</td></tr>
   </table>
+
+  <p class="sub" style="margin-top:1.1rem">
+    <b>The colormap settles the argument about clicks.</b> The proposal takes
+    <em>one more click</em> and <em>152 px less travel</em>, and it is plainly the
+    better one. A click count scored that as a regression.
+  </p>
+  <p class="sub">
+    <b>Both mouse losses have one cause, and it is not the popunder.</b> Reading the
+    tuner's numbers costs 229 px more and switching channel 260 px more — because in
+    each case the thing moved from the foot of the screen to the head, and the cursor
+    lives low in the waterfall. That is the same result the
+    <a href="../layout/" style="color:var(--accent)">layout study</a> got when it tried
+    putting the strip along the top row. Twice now, the top of the screen has measured
+    as the expensive place to put something you reach for.
+  </p>
+  <p class="sub">
+    <b>So the trigger is wrong, not the surface.</b> Hovering a crumb drags the cursor
+    to the top of the window to read something about the signal underneath it. The
+    hotkey does not: the card and the map arrive <em>at the cursor</em>, which is why
+    the key column wins every row and puts four of five tasks inside the 120 px budget.
+    The crumb hover should stay as the discoverable path — it is how you find out the
+    card exists — but it is the slow one, and the design should not be judged on it.
+  </p>
 </div>
 
 <script type="module" src="proto.js"></script>
+<script type="module">
+  import { mountTravel } from './travel.js';
+  mountTravel();
+</script>
 </body>
 </html>
