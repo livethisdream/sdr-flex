@@ -827,12 +827,6 @@ house rule.
 
 ## Wanted later
 
-- **Listening should not cost a node.** Every demodulator is audio already; adding a
-  `Listen` block to hear one is a round trip out to the menu and back for what is
-  really mute/unmute. Wanted: mute/unmute on the bar, on whichever demodulator is in
-  front of you, with the mixer node created behind the scenes if one is needed at all.
-  Asked for after using it: "it's extra steps clicking back and forth, when all i want
-  is mute/unmute."
 - **Decoding as it plays.** The expectation is that a decoder shows records as the
   bursts arrive, not one blob when a run finishes. The symbol sync now fits per block
   of capture time, which is the half of this that was in the way — a block is an
@@ -979,6 +973,24 @@ house rule.
   keeps declining. The likely shape: native drivers where a board has a protocol worth
   speaking (anything AD936x now is), and `rx_sdr` for everything else. Worth revisiting
   when a board turns up that `rx_sdr` handles badly.
+
+## The speaker on the transport, as built
+
+Listening used to cost a node: out to the menu, add `Listen`, land on its own tab, come
+back. The block still exists and is still on the graph — a sink is a node (ADR-0027) and
+hiding it would make the flowgraph a lie — but the speaker beside the loop button creates
+it, and clicking does not move you off the tab you are on. Muting takes the voice out of
+the mixer and leaves the block, because "not right now" and "I am done with this channel"
+are different statements and the ✕ already means the second one. The button is hidden
+when what is in front of you is not audio, and standing on the `Listen` tab itself means
+the same thing as standing on its source.
+
+Measured, because a button on that bar is not free: at 1440 it costs the scrub track
+nothing, but at 430 it took the track from 112px to 76px and at 390 from 77px to 44px —
+two seconds a pixel on a 90 s capture. Below 560px the track now gets its own row, which
+puts it at 326px at phone width, better than the 77px it had before the speaker existed.
+The pill is 64px tall there instead of 40px; that is the trade, and a usable scrubber is
+worth 24px.
 
 ## Open, needs a decision
 

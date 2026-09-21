@@ -309,6 +309,27 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tbtn.loop:not(.on) { color:var(--dim); }
 
 .transport .track { flex:1 1 auto; width:clamp(44px, 26vw, 320px); min-width:44px; }
+/* The speaker on the transport.
+ *
+ * Listening used to cost a node: out to the menu, add a Listen block, land on its own
+ * tab, and back again for what is really mute/unmute. The block is still there and still
+ * on the graph — a sink is a node (ADR-0027) and hiding it would make the flowgraph a
+ * lie — but it is created behind this button rather than by hand, and clicking here does
+ * not take you anywhere. It is on the transport because that is where "what is happening
+ * right now" lives, beside play and loop.
+ *
+ * On is the plain speaker; off is the same speaker struck through, the way loop already
+ * says the same thing. Hidden entirely when the thing in front of you is not audio,
+ * because a control that cannot do anything is worse than no control. */
+.tbtn.spk svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:2;
+                stroke-linecap:round; stroke-linejoin:round; display:block; }
+.tbtn.spk svg path:first-child { fill:currentColor; stroke:none; }
+.tbtn.spk .slash { display:none; }
+.tbtn.spk:not(.on) { color:var(--dim); }
+.tbtn.spk:not(.on) .wave, .tbtn.spk:not(.on) .wave2 { display:none; }
+.tbtn.spk:not(.on) .slash { display:inline; }
+.tbtn.spk.on { color:var(--bright); }
+
 .tbtn {
   color:var(--body); font-size:.76rem; min-width:34px; min-height:28px;
   border:none; border-radius:6px; background:none;
@@ -331,6 +352,20 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    control you can see and not use. Every source is time-indexed (ADR-0005), so
    this scrubs for real — through the clip when a channel is pinned, through
    everything the session has reached when it is not. */
+/* On a phone the transport is a pill of fixed-size buttons and one elastic thing, so
+ * every button added comes out of the scrub track. Measured: adding the speaker took the
+ * track from 112px to 76px at 430 wide and from 77px to 44px at 390 — and 44px across a
+ * 90 s capture is two seconds a pixel, which is not a scrubber.
+ *
+ * So below this width the track gets its own row instead of a share of one. That also
+ * undoes the squeeze the track was already in before the speaker existed. Nothing moves
+ * on a desktop, where there was never a shortage of room.
+ */
+@media (max-width: 560px) {
+  .transport { flex-wrap:wrap; justify-content:center; border-radius:18px; row-gap:.15rem; }
+  .transport .track { flex:1 0 100%; width:auto; margin-inline:.35rem; }
+}
+
 .track {
   position:relative; height:22px; margin-inline:.5rem; padding:0;
   background:none; border:none; cursor:ew-resize; touch-action:none;

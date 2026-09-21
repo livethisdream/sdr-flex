@@ -36,9 +36,10 @@ export class AudioMixer {
   isMuted(id) { const v = this.voices.get(id); return !!(v && v.muted); }
 
   /**
-   * Browsers only open an AudioContext from a gesture. Adding a Listen node is one,
-   * which is the nicest possible answer: the thing that starts the audio is the same
-   * thing that says audio should exist.
+   * Browsers only open an AudioContext from a gesture. Pressing the speaker on the
+   * transport is one, which is the nicest possible answer: the thing that starts the
+   * audio is the same thing that says audio should exist. (Adding a Listen block by
+   * hand still works and is still a gesture — the button is the short way round.)
    */
   async add(id, atTime, volume = 0.5) {
     if (this.voices.has(id)) return true;

@@ -406,6 +406,7 @@ class App {
     this.renderTabs();
     this.renderStrip();
     this.renderStage();
+    this.renderListen();
   }
 
   /**
@@ -1513,6 +1514,81 @@ class App {
     try { localStorage.setItem('sdrflex.loop', on ? '1' : '0'); } catch { /* no store */ }
   }
 
+  /**
+   * The node a speaker would attach to: whatever is in front of you, if it is audio.
+   *
+   * Standing on the Listen block itself counts as standing on its source, so the button
+   * means the same thing from either tab rather than disappearing on the one tab where
+   * somebody is most likely to look for it.
+   */
+  listenTarget() {
+    const n = this.node();
+    if (!n) return null;
+    if (n.out.kind === 'audio') return this.engine.node(n.parent) || null;
+    return n.out.kind === 'real' ? n : null;
+  }
+
+  /** The Listen block already on that node, if it has one. */
+  listenNode(src) {
+    if (!src) return null;
+    return this.engine.children(src.id).find((c) => c.op === 'core.audio') || null;
+  }
+
+  /**
+   * Mute and unmute, which is all anybody wanted.
+   *
+   * Muting leaves the block on the graph and takes the voice out of the mixer, because
+   * those are different statements: removing the block is "I am done with this channel"
+   * and has its own ✕, while this is "not right now". It also means unmuting is instant
+   * and keeps the volume and squelch somebody set.
+   *
+   * The first click is also the gesture a browser requires before it will open an audio
+   * context — which is why this creates the block rather than the block being created
+   * to make the gesture.
+   */
+  async toggleListen() {
+    const src = this.listenTarget();
+    if (!src) return;
+    let sink = this.listenNode(src);
+    if (sink && this.mixer.has(sink.id)) {
+      this.mixer.remove(sink.id);
+      this.renderListen();
+      this.refresh();
+      return;
+    }
+    if (!sink) {
+      this.metrics.beginOp();
+      try {
+        sink = await this.engine.addNode({ parent: src.id, op: 'core.audio' });
+      } catch (err) {
+        this.notify(`could not listen to that: ${err.message}`, 6000);
+        this.metrics.endOp();
+        return;
+      }
+      this.metrics.endOp();
+    }
+    const ok = await this.mixer.add(sink.id, this.engine.effectiveTime(sink.parent),
+                                    sink.params.volume.value);
+    if (!ok) this.setStageBadge('this browser has no audio output');
+    this.renderListen();
+    this.refresh();
+  }
+
+  /** The speaker's two states, and its absence when there is nothing to listen to. */
+  renderListen() {
+    const b = $('#listen');
+    if (!b) return;
+    const src = this.listenTarget();
+    const sink = this.listenNode(src);
+    const on = !!(sink && this.mixer.has(sink.id));
+    b.hidden = !src;
+    b.classList.toggle('on', on);
+    b.title = !src ? 'listen'
+      : on ? `muting stops ${this.tag(src)} without removing it`
+      : `listen to ${this.tag(src)}`;
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
   setPlaying(on) {
     this.engine.playing = on;
     this._wasPlaying = on;
@@ -1544,7 +1620,8 @@ class App {
         </div>
         <div class="lstate">${state} \u00b7 ${lvl.toFixed(3)}${sq > 0 ? ` \u00b7 squelch ${sq.toFixed(3)}` : ''}</div>
         <div class="lsrc">${src ? `${this.tag(src)} \u00b7 ${fmtRate(src.out.sampleRate)}` : 'nothing upstream'}</div>
-        <div class="lnote">Volume and squelch are in the bar below. The \u2715 on this tab
+        <div class="lnote">Volume and squelch are in the bar below. The speaker on the
+          transport mutes and unmutes without removing anything; the \u2715 on this tab
           stops the audio and removes the block; the transport's pause stops it too.</div>
       </div>`;
   }
@@ -2628,6 +2705,8 @@ class App {
 
     const lb = $('#loop');
     if (lb) lb.addEventListener('click', () => { this.setLoop(!this.engine.loop); this.metrics.interaction(); });
+    const sb = $('#listen');
+    if (sb) sb.addEventListener('click', () => { this.toggleListen(); this.metrics.interaction(); });
     $('#play').addEventListener('click', () => {
       // pressing play at the end of a file means "again", not "stay stopped"
       if (this.engine.ended && !this.engine.playing) {
