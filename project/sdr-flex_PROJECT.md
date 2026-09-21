@@ -10,7 +10,9 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-18 (multimon's demodulators as a multiselect; the menu scrolls; M17 packet mode and the symbol sync it needs, ADR-0040; a reload no longer loses everything; the chrome measured and the layout parked) · merged to `main`
+**Last updated:** 2026-09-21 (`/version` and `check-build.mjs`: a rebuild that did not take is now answerable in one command)
+
+Previous: 2026-09-18 (multimon's demodulators as a multiselect; the menu scrolls; M17 packet mode and the symbol sync it needs, ADR-0040; a reload no longer loses everything; the chrome measured and the layout parked) · merged to `main`
 
 Previous: 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built; the stereo decode drawn as a graph; ADR-0039 on the menu)
 Previous: 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBFM in the scene; the tuner derives its tap count)
@@ -1218,3 +1220,12 @@ have `/version`.
   and is the tool for this. Two rounds were lost to guessing.
 - **Auto parameters must show their evidence** (ADR-0017). Twice, an estimator was
   confidently wrong in a way only its own stated reasoning exposed.
+- **"The rebuild did not take" is three separate questions, and guessing picks the wrong
+  one.** A container ran 37 hours across a dozen `docker compose up -d --build` runs.
+  Three theories were wrong in order — the build is failing, `git pull` is missing, the
+  checkout is on a stale branch — before the timeline placed the image's birth *before*
+  the commit that broke the build, which had been failing at one line at the end of a
+  ten-minute log ever since. **`docker compose up -d --build` leaves the running
+  container alone when the build fails**, so a failed build and a no-op build are the
+  same picture. `/version` and `node check-build.mjs` exist so the next one is a
+  question asked of the machine rather than reasoned about.

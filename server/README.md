@@ -256,7 +256,7 @@ curl -s localhost:8722/version
 ```
 
 ```json
-{ "id": "666b869db6b7", "files": 77, "builtAt": "2026-09-19T06:34:47.407Z", "git": "5463382" }
+{ "id": "500de02ecab6", "files": 78, "builtAt": "2026-09-21T01:26:25.742Z", "git": "a77d414" }
 ```
 
 The same line is the second thing the server prints at startup, so `docker compose logs`
@@ -275,17 +275,39 @@ capture to the library is not a different build of the tool.
 A checkout with uncommitted edits reports a sha describing a tree that is not the one
 running, which is the other reason the hash is what counts.
 
-**If a rebuild seems not to have taken**, start with *Updating* above — the usual cause
-is a missing `git pull`. Then check the decoder line:
+### If a rebuild seems not to have taken
+
+Ask the machine rather than reasoning about it. On the host, in the checkout that
+`docker compose` builds from:
+
+```sh
+node check-build.mjs                 # or: node check-build.mjs http://box:8722
+```
+
+It checks the three things that have to line up, and says which one is wrong:
+
+| | |
+|---|---|
+| the checkout is current | `git pull` has been the missing step more than once |
+| the build succeeded | `docker compose up -d --build` **leaves the running container alone when the build fails**, so a failed build and a build that did nothing look identical |
+| the container was replaced | an image that rebuilds to the same bytes recreates nothing, which is correct and confusing |
+
+It exits 0 when the running build is this checkout, 1 when it is not, and 2 when nothing
+answered — and when the ids differ it prints the build command to run on its own, so the
+error is the last thing on screen instead of one line in a ten-minute log.
+
+A server with **no `/version` at all** is the same answer in a different shape: it is
+older than the stamp itself, so nothing has replaced it since 2026-09-19.
+
+Then check the decoder line:
 
 ```
 [sdr-flex] 9 of 9 external decoders installed: ...
 ```
 
-Nine is this version. If it says *of 8*, the container is older than M17 packet mode and
-the build did not replace it — `docker compose up -d --build` leaves the running
-container alone when the build itself fails, so a failed build looks exactly like a
-build that did nothing. Scroll up for the error.
+Nine is this version. If it says *of 8*, the container is older than M17 packet mode —
+which is a second, independent way to notice the same thing, and the one that works when
+you only have the log and not a shell.
 
 ## Decoders
 
