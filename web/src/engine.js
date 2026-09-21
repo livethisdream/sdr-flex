@@ -57,10 +57,27 @@ const SYMBOL_SPAN = 8;
 // parameter of the operation rather than a constant.
 const SYMBOL_RATE = 4800;
 
-// How much of a span a symbol sync fits itself over. The whole thing, up to this — at 48
-// kS/s that is two million samples through a matched filter and a thirty-two-way search,
-// which is a second of work and happens once per node.
+// How much of a span a symbol sync fits itself over — and, because the two must be the
+// same number, how far one fit is trusted.
+//
+// It was one fit for a whole capture, and that is the bug this constant now prevents.
+// `softSymbols` finds an instant *relative to the window it was given*: fitting a 4 s
+// window ending at t=40, 50, 60, 70, 80 and 90 on the GRCon26 M17 slot returned
+// `offset` 12.323 every single time. Converting that to a capture-absolute phase
+// therefore just re-encodes where the window happened to start, and applying it to the
+// other eighty seconds is applying a number measured somewhere else. Measured, same
+// signal, same decoder, only the fit window moved: **0 records to 95**, with an eye of
+// 0.63 either way — the eye was right, the fits really were equally good, locally.
+//
+// So the capture is cut into blocks of this length, anchored at zero, and each block is
+// fitted on itself. Overlapping reads still agree, because a block's grid is a property
+// of the block rather than of the read (which is what ADR-0040 wanted); and no grid is
+// ever used more than this far from where it was measured. Measured at 5, 10 and 20 s
+// blocks: 94–95 records every time, at both a 9 kHz and a 12 kHz selection.
 const SYMBOL_FIT_SECONDS = 10;
+
+/** The block a moment belongs to. Anchored at zero so every read agrees on the edges. */
+const fitBlock = (t) => Math.floor(Math.max(0, t) / SYMBOL_FIT_SECONDS);
 
 /** Everything in a stream multiplied by one number, given in decibels. */
 function scaled(x, gainDb) {
@@ -1455,23 +1472,18 @@ export class MockEngine extends Graph {
       // found, and every frame afterwards is `softSymbolsAt` doing arithmetic.
       const fs = p.out.sampleRate;
       const rate = SYMBOL_RATE;
-      // Over the whole span, not a peek window. Every other auto parameter here is a
-      // property of a carrier, which any quarter second of it will tell you; a symbol
-      // grid is a property of a *burst*, and a packet is over in a fifth of a second
-      // somewhere in a span that is mostly quiet. Derived from a peek this landed in the
-      // silence after the burst and reported an eye of 0.475 with complete confidence,
-      // which is the wrong answer arrived at honestly — the fix is to look at all of it,
-      // the way the slicers already do.
-      const whole = Math.min(isFinite(this.duration()) ? this.duration() : now, SYMBOL_FIT_SECONDS);
-      const at = isFinite(this.duration()) ? this.duration() : now;
-      const count = Math.max(256, Math.round(whole * fs));
-      const fit = dsp.softSymbols(this._detectMono(p, at, count), count, fs, rate);
-      const sps = fs / rate;
-      // Absolute, not window-relative. `fit.offset` is an index into the window that was
-      // measured, and that window does not start on a symbol boundary — so the phase a
-      // later frame can use is the one taken against the capture's own sample zero.
-      const windowStart = Math.floor(at * fs) - count;
-      const phase = fit.n ? (((windowStart + fit.offset) % sps) + sps) % sps : 0;
+      // The block the playhead is in, measured on itself — not the end of the capture,
+      // which is where this used to look and is nowhere near what anybody is looking at.
+      //
+      // Every other auto parameter here is a property of a carrier, which any quarter
+      // second of it will tell you. A symbol grid is not: it is a measurement of a
+      // stretch of signal, only good near that stretch, and the read path now takes each
+      // block on its own grid. These three numbers are that block's, and they say so —
+      // the span is part of the evidence because without it the number is unfalsifiable.
+      const block = fitBlock(now);
+      const fit = this._symbolGrid(node, block, p, rate);
+      const phase = fit.phase;
+      const where = `${fit.t0.toFixed(0)}–${fit.t1.toFixed(0)} s`;
       const evidence = { confident: fit.eye > 0.7 };
       node.params = {
         symbolRate: param(rate, 'manual'),
@@ -1481,16 +1493,18 @@ export class MockEngine extends Graph {
         // gain are one measurement reported as three, so quoting it three times is
         // honest rather than repetitive.
         phase: param(+phase.toFixed(3), 'auto', { ...evidence, from: fit.n
-          ? `of ${sps} instants in a symbol, this is where ${fit.n} of them fit the levels best (eye ${fit.eye.toFixed(3)})`
+          ? `of ${fs / rate} instants in a symbol, this is where ${fit.n} of them fit the levels ` +
+            `best over ${where} (eye ${fit.eye.toFixed(3)}); every other ${SYMBOL_FIT_SECONDS} s ` +
+            'of the capture is measured on itself'
           : 'nothing to measure yet' }),
         // Where zero is and how far out ±3 is. A discriminator carries the tuning error
         // as the first and the capture's own units as the second, and neither of those
         // is knowable before looking.
         center: param(+fit.center.toPrecision(4), 'auto', { ...evidence, from: fit.n
-          ? `the midpoint between the outer levels, which sit ${fit.eye.toFixed(3)} of the way apart`
+          ? `the midpoint between the outer levels over ${where}, which sit ${fit.eye.toFixed(3)} of the way apart`
           : 'nothing to measure yet' }),
         gain: param(+fit.gain.toPrecision(4), 'auto', { ...evidence, from: fit.n
-          ? `it puts the outer level at ±3, where the decoder expects it (eye ${fit.eye.toFixed(3)})`
+          ? `it puts the outer level at ±3 over ${where}, where the decoder expects it (eye ${fit.eye.toFixed(3)})`
           : 'nothing to measure yet' }),
         invert: param('no', 'manual'),
       };
@@ -2166,20 +2180,62 @@ export class MockEngine extends Graph {
   }
 
   /**
-   * `count` soft symbols ending at `tEnd`, on the same grid every time.
+   * The grid for one block of capture time, measured on that block and then remembered.
+   *
+   * A block rather than a read, because two reads that overlap have to agree about which
+   * sample was a symbol or the decoder downstream sees a different grid every frame —
+   * that is what ADR-0040 is protecting, and it is a property of the *block*, not of one
+   * fit held forever. The blocks are anchored at zero, so every read agrees on the edges
+   * however it was positioned.
+   */
+  _symbolGrid(node, block, parent = null, atRate = 0) {
+    if (!node._grids) node._grids = new Map();
+    const hit = node._grids.get(block);
+    if (hit) return hit;
+
+    // The parent by argument when there is one: this is also called from `addNode`,
+    // where the node being measured is not in the graph yet and cannot look its own
+    // parent up.
+    const p = parent || this.node(node.parent);
+    const fsIn = p.out.sampleRate;
+    // `node.out` is written after the parameters are, so on the way in from `addNode`
+    // there is nothing to read the rate off yet and it arrives as an argument instead.
+    const rate = atRate || node.out.sampleRate;
+    const sps = fsIn / rate;
+    const d = this.duration();
+    const t0 = block * SYMBOL_FIT_SECONDS;
+    const t1 = isFinite(d) ? Math.min(d, t0 + SYMBOL_FIT_SECONDS) : t0 + SYMBOL_FIT_SECONDS;
+    const n = Math.max(256, Math.round(Math.max(0, t1 - t0) * fsIn));
+    const fit = dsp.softSymbols(this._detectMono(p, t1, n), n, fsIn, rate);
+    // Absolute, not window-relative. `fit.offset` is an index into the block that was
+    // measured, and that block does not start on a symbol boundary — so the phase a read
+    // can use is the one taken against the capture's own sample zero.
+    const windowStart = Math.floor(t1 * fsIn) - n;
+    const g = {
+      phase: fit.n ? (((windowStart + fit.offset) % sps) + sps) % sps : 0,
+      center: fit.center, gain: fit.gain, eye: fit.eye, n: fit.n, t0, t1,
+    };
+    node._grids.set(block, g);
+    return g;
+  }
+
+  /**
+   * `count` soft symbols ending at `tEnd`, each one on the grid measured where it is.
    *
    * The one real-to-real operation whose output rate is not its input's, which is what
    * makes it the only one that cannot read `count` samples from its parent and be done.
    * A symbol at 4800 is ten samples at 48k, and the ten it is are decided by an absolute
-   * index rather than by where this window happens to start — otherwise two windows that
-   * overlap would disagree about which sample was a symbol, and the decoder downstream
-   * would be handed a different grid every frame.
+   * index rather than by where this window happens to start.
    *
-   * So: name the symbols by absolute index, convert that to absolute parent samples, and
-   * read exactly those. The margin either side is the matched filter's own support, and
-   * it is taken by asking for more samples rather than by moving the end — a read is
-   * positioned by `Math.floor(tEnd * sampleRate)` and moving the end by a fraction of a
-   * sample floors somewhere else, which is the bug `_readMerged` documents at length.
+   * Which grid, though, is a question the old version answered once for a whole capture,
+   * and wrongly: a phase measured on ten seconds is a measurement *of those ten seconds*.
+   * So the read is cut at the block boundaries it crosses and each part is taken on its
+   * own block's grid. A read inside one block — every display read is — is one pass and
+   * the same pass as before.
+   *
+   * A phase somebody typed is not a measurement and is not second-guessed: `manual` wins
+   * everywhere, which is also what makes `invert` usable as the escape hatch the note
+   * tells people to try.
    */
   _readSymbols(node, tEnd, count) {
     const p = this.node(node.parent);
@@ -2187,24 +2243,37 @@ export class MockEngine extends Graph {
     const rate = node.out.sampleRate;
     const sps = fsIn / rate;
     const pr = node.params;
+    const held = pr.phase.mode === 'manual'
+      ? { phase: pr.phase.value, center: pr.center.value, gain: pr.gain.value } : null;
 
     const endSym = Math.floor(tEnd * rate);
     const firstSym = endSym - count;
+    const out = new Float32Array(Math.max(0, count));
     // Half the filter plus a sample of slack for the interpolator.
     const pad = Math.ceil((SYMBOL_SPAN / 2) * sps) + 2;
-    const a = Math.floor(firstSym * sps + pr.phase.value) - pad;
-    const b = Math.ceil((endSym - 1) * sps + pr.phase.value) + pad + 1;
-    const need = Math.max(1, b - a);
-    // The parent read ends at absolute sample `b`, which is what puts `a` at index 0.
-    const x = this._detectMono(p, b / fsIn, need);
 
-    return dsp.softSymbolsAt(x, need, fsIn, rate, {
-      phase: firstSym * sps + pr.phase.value - a,
-      first: 0, symbols: count,
-      center: pr.center.value, gain: pr.gain.value,
-      invert: pr.invert.value === 'yes',
-      span: SYMBOL_SPAN,
-    });
+    for (let k = firstSym; k < endSym;) {
+      const g = held || this._symbolGrid(node, fitBlock(k / rate));
+      // To the end of this block, or the end of what was asked for.
+      const stop = held ? endSym
+        : Math.min(endSym, Math.ceil((fitBlock(k / rate) + 1) * SYMBOL_FIT_SECONDS * rate));
+      const nsym = Math.max(1, stop - k);
+      const a = Math.floor(k * sps + g.phase) - pad;
+      const b = Math.ceil((k + nsym - 1) * sps + g.phase) + pad + 1;
+      const need = Math.max(1, b - a);
+      // The parent read ends at absolute sample `b`, which is what puts `a` at index 0.
+      const x = this._detectMono(p, b / fsIn, need);
+      const part = dsp.softSymbolsAt(x, need, fsIn, rate, {
+        phase: k * sps + g.phase - a,
+        first: 0, symbols: nsym,
+        center: g.center, gain: g.gain,
+        invert: pr.invert.value === 'yes',
+        span: SYMBOL_SPAN,
+      });
+      out.set(part.subarray(0, Math.min(nsym, count - (k - firstSym))), k - firstSym);
+      k += nsym;
+    }
+    return out;
   }
 
   /**

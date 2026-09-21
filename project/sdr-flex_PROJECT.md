@@ -827,6 +827,18 @@ house rule.
 
 ## Wanted later
 
+- **Listening should not cost a node.** Every demodulator is audio already; adding a
+  `Listen` block to hear one is a round trip out to the menu and back for what is
+  really mute/unmute. Wanted: mute/unmute on the bar, on whichever demodulator is in
+  front of you, with the mixer node created behind the scenes if one is needed at all.
+  Asked for after using it: "it's extra steps clicking back and forth, when all i want
+  is mute/unmute."
+- **Decoding as it plays.** The expectation is that a decoder shows records as the
+  bursts arrive, not one blob when a run finishes. The symbol sync now fits per block
+  of capture time, which is the half of this that was in the way — a block is an
+  independently decodable unit, so the remaining work is running the adapter per block
+  as the playhead crosses it and appending records rather than replacing them.
+
 - **The CTF's remaining modulations.** The 2026 challenge list is NBFM, WBFM, USB/LSB, CW,
   FHSS, OFDM, FSK, M17, AFSK1200, APRS, ADS-B, BBC (gr-bbc), the AOL handshake, CDMA,
   FLEX/POCSAG, LoRa and TEMPEST (gr-tempest). Covered and verified: AFSK1200/APRS, ADS-B,

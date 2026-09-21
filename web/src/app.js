@@ -787,15 +787,33 @@ class App {
    */
   async buildFromIdentify(parentId, row) {
     const sel = this.defaultSelection();
+    const chain = [].concat(row.via || []);
     let parent = parentId;
-    for (const op of [].concat(row.via || [])) {
-      const d = await this.engine.addNode({ parent, op, selection: sel });
-      parent = d.id;
+    // Building the chain is several round trips and a symbol fit, which measured about
+    // three and a half seconds on a 90 s capture — long enough that a click with nothing
+    // on screen reads as a click that did nothing.
+    this.setStageBadge(`building ${row.name}${chain.length ? ` behind ${row.viaLabel}` : ''}…`);
+    let node = null;
+    try {
+      for (const op of chain) {
+        const d = await this.engine.addNode({ parent, op, selection: sel });
+        parent = d.id;
+      }
+      node = await this.engine.addNode({ parent, op: row.id, selection: sel });
+      for (const [k, v] of Object.entries(row.params || {})) {
+        if (node.params && k in node.params) await this.engine.setParam(node.id, k, v, 'manual');
+      }
+    } catch (err) {
+      // Said, not swallowed. Without this a throw partway left the demodulator on the
+      // graph and no decoder behind it, and nothing anywhere said why — which is a
+      // worse outcome than the click having failed outright.
+      this.notify(`could not build that chain: ${err.message}`, 8000);
+      this.setStageBadge('');
+      this.metrics.endOp();
+      this.refresh();
+      return;
     }
-    const node = await this.engine.addNode({ parent, op: row.id, selection: sel });
-    for (const [k, v] of Object.entries(row.params || {})) {
-      if (node.params && k in node.params) await this.engine.setParam(node.id, k, v, 'manual');
-    }
+    this.setStageBadge('');
     this.vp(node.id);
     this.setTab(node.id);
     this._tsCache = null;

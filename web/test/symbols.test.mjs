@@ -224,6 +224,29 @@ test('nothing to fit is reported as nothing rather than as a confident zero', ()
 
 // ── the node ────────────────────────────────────────────────────────────────
 
+/** Any baseband, FM-modulated and opened as a capture, with a tuner and demod on it. */
+async function modulated(bb, basebandRate, deviation = 2400) {
+  const up = Math.round(RATE / basebandRate);
+  const n = bb.length * up;
+  const buf = Buffer.allocUnsafe(n * 2);
+  let phase = 0;
+  for (let i = 0; i < n; i++) {
+    phase += (2 * Math.PI * deviation * bb[Math.floor(i / up)]) / RATE;
+    buf[i * 2] = Math.round(Math.cos(phase) * 110 + 127.5);
+    buf[i * 2 + 1] = Math.round(Math.sin(phase) * 110 + 127.5);
+  }
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  await e.openCapture(new Capture({
+    buffer: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+    format: 'cu8', sampleRate: RATE, centerHz: CENTER, label: 'm17',
+  }));
+  const t = await e.addNode({ parent: e.root.id, op: 'core.tuner',
+    selection: { f0: CENTER - 12_000, f1: CENTER + 12_000 }, at: 0.05 });
+  const fm = await e.addNode({ parent: t.id, op: 'core.fm_discriminator', at: 0.05 });
+  return { e, fm };
+}
+
 /** A capture of one 4FSK burst, FM-modulated the way the fixture's is. */
 async function engine(symbols = symbolRun(400)) {
   const basebandRate = 48_000, deviation = 2400;
@@ -265,7 +288,7 @@ test('a symbol sync comes out at the symbol rate, with its evidence', async () =
   assert.ok(eye > 0.85, `eye ${eye}`);
 });
 
-test('the fit is derived over the whole span, not the moment it was added', async () => {
+test('the fit is derived over the whole block, not the moment it was added', async () => {
   // The burst is a tenth of a second in the middle of a span that is mostly quiet, and
   // the node is added with the playhead at 0.05 s, which is in the quiet part. Derived
   // from a peek window this reported an eye of 0.475 with complete confidence.
@@ -274,6 +297,85 @@ test('the fit is derived over the whole span, not the moment it was added', asyn
   const eye = Number(/eye ([\d.]+)/.exec(n.params.phase.auto.from)[1]);
   assert.ok(eye > 0.85, `eye ${eye} — the fit found the silence, not the burst`);
 });
+
+test('the evidence names the span it was measured over', async () => {
+  // Without it the number is unfalsifiable: a phase is only a measurement of some
+  // particular seconds of signal, and "which seconds" is the part that was missing when
+  // one fit was being applied to a whole capture.
+  const { e, fm } = await engine();
+  const n = await e.addNode({ parent: fm.id, op: 'core.symbols', at: 0.05 });
+  for (const k of ['phase', 'center', 'gain']) {
+    assert.match(n.params[k].auto.from, /\d+–\d+ s/,
+                 `${k} does not say which span it was measured over: ${n.params[k].auto.from}`);
+  }
+});
+
+test('a grid is never used more than one block from where it was measured', async () => {
+  // The bug this is here for: `softSymbols` finds an instant *relative to the window it
+  // was handed*. Measured on the GRCon26 M17 slot, fitting a 4 s window ending at t=40,
+  // 50, 60, 70, 80 and 90 returned `offset` 12.323 every single time — so converting it
+  // to a capture-absolute phase only re-encoded where the window happened to start, and
+  // applying that to the rest of the capture swung the same decoder between 0 records
+  // and 95 while the eye sat at 0.63 throughout. The eye was not lying: the fits really
+  // were equally good, *locally*.
+  //
+  // Here, cheaply: a baseband whose symbol grid steps half a symbol at the 10 s mark.
+  // One held phase cannot be right on both sides of that; a per-block fit is.
+  const basebandRate = 48_000, sps = basebandRate / SYMBOL_RATE;
+  const secs = 22, n = secs * basebandRate;
+  const bb = new Float32Array(n);
+  let rng = 7;
+  const rand = () => ((rng = (rng * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const levels = [-1, -1 / 3, 1 / 3, 1];
+  for (let k = 0; (k + 1) * sps < n; k++) {
+    const shift = k / SYMBOL_RATE >= 10 ? Math.round(sps / 2) : 0;
+    const v = levels[Math.floor(rand() * 4) & 3];
+    for (let i = 0; i < sps; i++) { const at = k * sps + i + shift; if (at < n) bb[at] = v; }
+  }
+  const { e, fm } = await modulated(bb, basebandRate);
+  const sym = await e.addNode({ parent: fm.id, op: 'core.symbols', at: 1 });
+
+  // First, from outside, with no knowledge of how the grid is stored: symbols read from
+  // well *after* the shift still sit on the four levels. Read on a grid measured before
+  // the shift they land mid-transition, which is what the bug looked like to a decoder.
+  const early = e._readSymbols(sym, 8, 5 * SYMBOL_RATE);     //  3 s →  8 s, before
+  const late = e._readSymbols(sym, 20, 5 * SYMBOL_RATE);     // 15 s → 20 s, after
+  assert.ok(offGrid(early) < 0.2, `before the shift: ${offGrid(early).toFixed(3)}`);
+  assert.ok(offGrid(late) < 0.2,
+            `symbols after the shift are ${offGrid(late).toFixed(3)} of a level from one, ` +
+            `against ${offGrid(early).toFixed(3)} before it — they were read on a grid ` +
+            'measured somewhere else');
+
+  // Then the mechanism, so a regression says which half broke.
+  const before = e._symbolGrid(sym, 0);
+  const after = e._symbolGrid(sym, 1);
+  assert.equal(before.t0, 0); assert.equal(before.t1, 10);
+  assert.equal(after.t0, 10);
+  const moved = Math.abs(after.phase - before.phase);
+  assert.ok(moved > 1 && moved < sps - 1,
+            `the second block reported phase ${after.phase} against the first's ` +
+            `${before.phase} — it was not measured on itself`);
+
+  // And a read that crosses a boundary uses each side's own grid rather than one of them
+  // for both: the last symbols before 10 s match a read wholly inside block 0.
+  const across = e._readSymbols(sym, 12, 4 * SYMBOL_RATE);
+  const inside = e._readSymbols(sym, 10, 1 * SYMBOL_RATE);
+  for (let k = 0; k < inside.length; k++) {
+    assert.ok(Math.abs(across[SYMBOL_RATE + k] - inside[k]) < 1e-5,
+              `symbol ${k} either side of a block edge disagrees`);
+  }
+});
+
+/** Mean distance from the nearest of the four levels, in units of the level spacing. */
+function offGrid(sym) {
+  let sum = 0, n = 0;
+  for (const v of sym) {
+    if (!isFinite(v)) continue;
+    const d = Math.min(...[-3, -1, 1, 3].map((L) => Math.abs(v - L)));
+    sum += d; n++;
+  }
+  return n ? sum / n / 2 : 1;   // 2 is the spacing between adjacent levels
+}
 
 test('two reads that overlap agree about which sample was a symbol', async () => {
   // The property that decides whether a decoder downstream sees one signal or a new one
