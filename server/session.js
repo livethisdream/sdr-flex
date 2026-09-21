@@ -37,7 +37,7 @@ export class Session {
     // them are installed, and only the server can run one (ADR-0013).
     this.engine.adapters = adapters.list();
     this.engine.adapter = (id) => (adapters.ADAPTERS[id] ? { id, ...adapters.ADAPTERS[id] } : null);
-    this.engine.runAdapter = (n, at) => this._runAdapter(n, at);
+    this.engine.runAdapter = (n, at, span) => this._runAdapter(n, at, span);
     // The same programs, addressed by samples rather than by node. `Identify` runs
     // decoders over speculative demodulations of one span, none of which is a node and
     // none of which should become one just to be tried.
@@ -56,14 +56,18 @@ export class Session {
    * the end and exit, and a decoder given the two hundred milliseconds that happen to
    * be on screen finds nothing and says nothing about why.
    */
-  async _runAdapter(n, at) {
+  async _runAdapter(n, at, span = null) {
     const e = this.engine;
     const p = e.node(n.parent);
     if (!p) return { records: [], error: 'nothing upstream' };
     const pin = e.isPinned(p.id);
     const now = at != null ? at : e.t;
-    const t0 = pin ? pin.params.t0.value : 0;
-    const t1 = pin ? pin.params.t1.value : (isFinite(e.duration()) ? e.duration() : now);
+    // A span given explicitly is one block of a capture being decoded as it plays, and
+    // it outranks both the pin and the whole-capture default: the caller already knows
+    // which seconds it wants and why.
+    const t0 = span ? span.t0 : pin ? pin.params.t0.value : 0;
+    const t1 = span ? span.t1 : pin ? pin.params.t1.value
+      : (isFinite(e.duration()) ? e.duration() : now);
     const got = await e.readSpan(p.id, t0, t1);
     if (!got) return { records: [], error: 'nothing upstream has produced samples yet' };
 
@@ -283,6 +287,12 @@ const METHODS = {
   /** Frames and their CRC. A built-in, so it runs where the bytes are. */
   async runRecords({ nodeId, at }) {
     const r = await this.engine.runRecords(nodeId, at);
+    return r || null;
+  },
+
+  /** One block of it, for a decoder being watched while the capture plays. */
+  async runRecordsSpan({ nodeId, t0, t1 }) {
+    const r = await this.engine.runRecordsSpan(nodeId, t0, t1);
     return r || null;
   },
 

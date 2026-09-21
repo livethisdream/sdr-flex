@@ -827,11 +827,6 @@ house rule.
 
 ## Wanted later
 
-- **Decoding as it plays.** The expectation is that a decoder shows records as the
-  bursts arrive, not one blob when a run finishes. The symbol sync now fits per block
-  of capture time, which is the half of this that was in the way — a block is an
-  independently decodable unit, so the remaining work is running the adapter per block
-  as the playhead crosses it and appending records rather than replacing them.
 
 - **The CTF's remaining modulations.** The 2026 challenge list is NBFM, WBFM, USB/LSB, CW,
   FHSS, OFDM, FSK, M17, AFSK1200, APRS, ADS-B, BBC (gr-bbc), the AOL handshake, CDMA,
@@ -973,6 +968,29 @@ house rule.
   keeps declining. The likely shape: native drivers where a board has a protocol worth
   speaking (anything AD936x now is), and `rx_sdr` for everything else. Worth revisiting
   when a board turns up that `rx_sdr` handles badly.
+
+## Decoding as it plays, as built
+
+A decoder used to answer once, for the whole capture, when it finished. On a 90 s file
+that is a long wait for a packet that happened at eleven seconds. Now, while the Events
+pane is open and the clock is running, each five-second block of capture is decoded as
+the playhead finishes crossing it and its records are appended, each tagged with the
+block it came from.
+
+Blocks rather than a sliding window, and the reasons are the same ones that fixed the
+symbol grid: they are disjoint so nothing needs de-duplicating, fixed so the same seconds
+always decode the same way, and five divides the sync's ten-second fit blocks so a
+decoding block never needs a grid that is not already measured. One at a time — an
+external decoder is a process, and starting a second before the first answers is how a
+slow decoder becomes a queue of them.
+
+A whole-capture run and a streamed one do not fight: opening the pane while paused runs
+the capture, opening it while playing streams, and `Run again` clears both. The header
+says `8 of 18 blocks of 5 s`, so an empty list is readable — "nothing yet" and "nothing
+in the forty seconds looked at so far" are different claims. It also reports the slowest
+block and how far behind the playhead it is, because whether this keeps up is a real
+question: measured on the M17 slot, blocks that also pay for a grid fit took 6.8 s to
+cover 5 s, and the ones after 0.1 s.
 
 ## The speaker on the transport, as built
 

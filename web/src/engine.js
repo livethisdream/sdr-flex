@@ -1126,6 +1126,33 @@ export class MockEngine extends Graph {
   }
 
   /**
+   * One span of a decoder's output, without disturbing what the node already holds.
+   *
+   * `runRecords` answers "what is in this capture" and caches the answer on the node.
+   * This answers "what is in these seconds", which is the question a decoder being
+   * watched while the capture plays is being asked over and over — so it returns its
+   * records rather than replacing anything, and the caller decides what to keep.
+   *
+   * Blocks are what make this affordable *and* what make it correct. A decoder handed
+   * the whole capture every time the playhead moved would be quadratic; and the symbol
+   * sync in front of one now measures its grid per block of capture time, so a block is
+   * already the unit over which a decode is a decode.
+   */
+  async runRecordsSpan(nodeId, t0, t1) {
+    const n = this.node(nodeId);
+    if (!n || !(t1 > t0)) return null;
+    if (n.adapter && this.runAdapter) {
+      const out = await this.runAdapter(n, t1, { t0, t1 });
+      return { ...out, t0, t1 };
+    }
+    // Only external decoders read a span of their own. A plugin is handed the view's
+    // own samples and a framer reads bytes that are already there, so for those this
+    // is the ordinary run and saying so beats pretending otherwise.
+    const out = await this.runRecords(nodeId, t1);
+    return out ? { ...out, t0, t1 } : null;
+  }
+
+  /**
    * Try every decoder that could read this stream, and say what each one found.
    *
    * The plan comes from `identify.js` and the running happens here, because only the

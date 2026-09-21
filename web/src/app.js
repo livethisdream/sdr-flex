@@ -25,6 +25,15 @@ import * as scene from './scene.js';
 import { CRCS } from './frames.js';
 import * as resume from './resume.js';
 
+// How much capture one streamed decode covers.
+//
+// Short enough that a burst shows up while you are still looking at the place it
+// happened, long enough that the cost of starting a process is not most of the work. An
+// M17 packet is about a fifth of a second, so this is the latency between hearing one
+// and reading it — and it divides the symbol sync's ten-second fit blocks, so a block
+// of decoding never needs a grid that is not already measured.
+const STREAM_BLOCK_S = 5;
+
 const $ = (s, r = document) => r.querySelector(s);
 
 /** Safe inside an attribute as well as in text — a name is whatever somebody typed. */
@@ -2121,6 +2130,85 @@ class App {
   }
 
   /**
+   * Decode the blocks the playhead has finished crossing, and keep what they said.
+   *
+   * The expectation this exists for: "as we get the bursts, we see the decoded values."
+   * What shipped was one run over the whole capture that answered when it was done, and
+   * on a ninety-second file that is a long wait for a packet that happened at eleven
+   * seconds.
+   *
+   * A *block* rather than a sliding window, for the same reason the symbol sync in front
+   * of it now fits per block: a block is the unit over which a decode is a decode, the
+   * spans are disjoint so records never need de-duplicating, and re-reading the whole
+   * capture every frame would be quadratic in the length of the capture.
+   *
+   * One at a time. An external decoder is a process, and letting the playhead start a
+   * second before the first has answered is how a slow decoder turns into a queue of
+   * them — so a block that is not finished simply is not started, and the next tick
+   * picks it up.
+   */
+  async streamRecords() {
+    const n = this.node();
+    if (!n || n.out.kind !== 'events' || !n.adapter) return;
+    if (this._streamBusy) return;
+    // A whole-capture run already answered this, and its answer covers every block.
+    // Appending to it would double what it found; replacing it would throw away more
+    // than this can put back. Opening the pane while paused runs the capture; opening
+    // it while playing streams. `Run again` clears both and starts over.
+    if (n._records && !n._records.streamed) return;
+    const d = this.engine.duration();
+    const now = this.engine.effectiveTime(n.id);
+    // Only blocks that are wholly behind the playhead: half a block is half a burst,
+    // and a decoder handed half a burst reports nothing and looks broken.
+    const done = Math.floor(now / STREAM_BLOCK_S);
+    if (!(done > 0)) return;
+    const seen = (n._blocks = n._blocks || new Set());
+    let block = -1;
+    for (let b = 0; b < done; b++) if (!seen.has(b)) { block = b; break; }
+    if (block < 0) return;
+    const t0 = block * STREAM_BLOCK_S;
+    const t1 = Math.min(t0 + STREAM_BLOCK_S, isFinite(d) ? d : t0 + STREAM_BLOCK_S);
+    seen.add(block);
+    this._streamBusy = true;
+    let out = null;
+    const began = performance.now();
+    try {
+      out = await this.engine.runRecordsSpan(n.id, t0, t1);
+    } catch (err) {
+      // A block that failed is not a block that is done: drop it from the set so a
+      // later pass can try again rather than leaving a silent hole in the record.
+      seen.delete(block);
+      this.notify(`decoding ${t0.toFixed(0)}–${t1.toFixed(0)} s failed: ${err.message}`, 6000);
+    }
+    this._streamBusy = false;
+    // The node object may have been replaced by a snapshot while that ran (ADR-0029),
+    // so the accumulator is found by id rather than kept.
+    const live = this.engine.node(n.id);
+    if (!live || !out) return;
+    live._blocks = seen;
+    const acc = live._records && live._records.streamed
+      ? live._records : { records: [], note: '', streamed: true };
+    // Appended even when the block said nothing, because the count of blocks read is
+    // what makes an empty list readable: "nothing yet" and "nothing in the twelve
+    // seconds looked at so far" are different claims, and only one of them is true.
+    acc.records = acc.records.concat((out.records || []).map((r) => ({ ...r, at: t0 })));
+    acc.slowest = Math.max(acc.slowest || 0, (performance.now() - began) / 1000);
+
+    // Whether this is keeping up is a question about the backlog, not about any one
+    // block: the first block of a capture also pays for the symbol sync's grid fit, and
+    // calling a whole session slow because of that one would be wrong. What matters is
+    // whether the playhead is pulling away from the decoding.
+    const total = isFinite(d) ? Math.ceil(d / STREAM_BLOCK_S) : 0;
+    const behind = Math.max(0, Math.floor(now / STREAM_BLOCK_S) - seen.size);
+    acc.note = `as it plays · ${seen.size}${total ? ` of ${total}` : ''} block` +
+               `${seen.size === 1 ? '' : 's'} of ${STREAM_BLOCK_S} s` +
+               `${behind > 1 ? ` · ${behind} behind the playhead` : ''}` +
+               `${acc.slowest > STREAM_BLOCK_S ? ` · slowest ${acc.slowest.toFixed(1)} s` : ''}`;
+    live._records = acc;
+    if (this.current === live.id && this.view() === 'Events') this.renderEvents();
+  }
+
+  /**
    * The Events pane.
    *
    * It leads with the count, and that is not decoration. A decoder can return many
@@ -2140,7 +2228,11 @@ class App {
       el.innerHTML = '<div class="empty">This analyzer has nothing to report yet.</div>';
       return;
     }
-    if (!n._records || force) {
+    // A streamed decode fills in as the capture plays, so an empty one is not a decode
+    // that has not run — it is one that has not reached anything yet, and re-running the
+    // whole capture underneath it would throw away what it has.
+    const streaming = !!(n._records && n._records.streamed);
+    if ((!n._records && !this.engine.playing) || force) {
       el.innerHTML = '<div class="empty">running ' + n.label + '…</div>';
       await new Promise((r) => setTimeout(r, 0));
       await this.engine.runRecords(n.id);
@@ -2162,9 +2254,15 @@ class App {
     }
     const r = n._records || { records: [] };
     const rows = r.records.map((rec, i) => {
-      const extra = Object.entries(rec).filter(([k]) => k !== 'text')
+      // `at` is the block a streamed record came out of, and it is a fact about the
+      // capture rather than a field the decoder returned — so it is drawn as the
+      // timestamp it is rather than mixed in with the decoder's own keys.
+      const extra = Object.entries(rec).filter(([k]) => k !== 'text' && k !== 'at')
         .map(([k, v]) => `<span class="evk">${k}</span> ${v}`).join(' ');
-      return `<li><i>${i + 1}</i><span class="evt">${(rec.text ?? JSON.stringify(rec))
+      const when = rec.at != null
+        ? `<span class="evat" title="the ${STREAM_BLOCK_S} s block it came from">${
+            rec.at.toFixed(0)}s</span>` : '';
+      return `<li><i>${i + 1}</i>${when}<span class="evt">${(rec.text ?? JSON.stringify(rec))
         .replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span>${extra}</li>`;
     }).join('');
     el.innerHTML = `
@@ -2175,10 +2273,15 @@ class App {
           <button class="exgo" id="evrun">Run again</button>
         </div>
         ${r.error ? `<div class="everr">${r.error}</div>` : ''}
-        ${r.records.length ? `<ol class="evlist">${rows}</ol>` : this.renderNoDecode(r, n)}
+        ${r.records.length ? `<ol class="evlist">${rows}</ol>`
+          : streaming || (this.engine.playing && n.adapter)
+            ? '<div class="empty">listening — records appear as the playhead crosses them</div>'
+            : this.renderNoDecode(r, n)}
       </div>`;
     const btn = $('#evrun');
-    if (btn) btn.addEventListener('click', () => { n._records = null; this.renderEvents(true); });
+    if (btn) btn.addEventListener('click', () => {
+      n._records = null; n._blocks = null; this.renderEvents(true);
+    });
     const sug = $('#usesug');
     if (sug) {
       sug.addEventListener('click', async () => {
@@ -2897,6 +3000,14 @@ class App {
         const f = this.engine.frame(this.current, {});
         if (f.kind === 'bits') this.bitRaster.draw(f.groups, f.symbolUs);
       }
+    }
+
+    // Decoding as it plays. Checked a few times a second rather than every frame: the
+    // work is a process per block of capture and the check itself is a comparison, but
+    // sixty of them a second is sixty chances to start one early.
+    if (this.engine.playing && this.view() === 'Events') {
+      this._streamAcc = (this._streamAcc || 0) + dt;
+      if (this._streamAcc > 300) { this._streamAcc = 0; this.streamRecords(); }
     }
 
     // The mixer runs on the AudioContext clock; this only tops its queues up. Each

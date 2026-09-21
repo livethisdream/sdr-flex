@@ -366,6 +366,10 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   .transport .track { flex:1 0 100%; width:auto; margin-inline:.35rem; }
 }
 
+/* When a record came out of the capture, for a decode that filled in as it played. */
+.evat { font-family:var(--mono); font-size:.68rem; color:var(--dim);
+        min-width:3.2em; text-align:right; }
+
 .track {
   position:relative; height:22px; margin-inline:.5rem; padding:0;
   background:none; border:none; cursor:ew-resize; touch-action:none;

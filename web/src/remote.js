@@ -367,6 +367,14 @@ export class RemoteEngine extends Graph {
     return r;
   }
 
+  /** One block of it. The node keeps nothing: the caller is accumulating. */
+  async runRecordsSpan(nodeId, t0, t1) {
+    const n = this.node(nodeId);
+    if (!n || !(t1 > t0)) return null;
+    if (n.plugin) return this.runPlugin(nodeId);
+    return await this.call('runRecordsSpan', { nodeId, t0, t1 });
+  }
+
   /** The decoder runs here; only its input crosses the wire, and that is kilobytes. */
   async runPlugin(nodeId) {
     const n = this.node(nodeId);
