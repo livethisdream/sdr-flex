@@ -1850,10 +1850,42 @@ export class MockEngine extends Graph {
       // rest — which is the analytic signal, arrived at without a Hilbert transformer.
       // Half the amplitude, because a real cosine is two phasors and only one survives.
       const onReal = p.out.kind === 'real';
-      const src = onReal ? interleave(this._detectMono(p, tEnd, need), need)
-                         : this._readIQ(p, tEnd, need);
       const offset = onReal ? node.params.centerHz.value
                             : node.params.centerHz.value - p.out.centerHz;
+
+      // **Which input samples become output samples is a property of the capture, not of
+      // the read.** `xlateFilterDecimate` takes every `decim`-th sample counting from the
+      // start of what it is handed, so the answer used to depend on where that started —
+      // and that was `Math.floor(tEnd * parentRate) - need`, whose remainder modulo
+      // `decim` moves with `tEnd`. Two reads ending at different moments therefore landed
+      // on different input samples, which is a sub-sample time shift in the output.
+      //
+      // It hid for a long time because it is harmless until something cares about a
+      // fraction of a sample. Measured on the GRCon26 M17 slot: a 9 kHz selection
+      // decimates by 42, so the shift reaches 41/42 of an output sample — 0.39 of a
+      // symbol at 2.48 samples per symbol, and the symbols came back a fifth of full
+      // scale away from the ones a direct fit produced (mean |difference| 0.56 on
+      // symbols that run ±3; 10 records against 0). The same signal at a 24 kHz
+      // selection decimates by 16 into 6.5 samples a symbol, where the worst case is
+      // 0.14 of a symbol: there the two paths agreed to the bit.
+      //
+      // So the output grid is anchored to the capture: absolute output sample `k` is
+      // always made from the input samples starting at `k * decim`, whatever window
+      // happens to be asking.
+      // The one term that was `Math.floor(tEnd * parentRate)` and is now `endOut * decim`.
+      // Everything else about the window — including the tuner being late by half its
+      // filter, which `delay.js` accounts for and a test pins — is unchanged, because
+      // the two differ by less than one output sample and only in the part that was
+      // making the grid depend on the read.
+      const endOut = Math.floor(tEnd * node.out.sampleRate);
+      const startAt = endOut * decim - need;
+      // Positioned by sample index rather than by a moment: the half-sample keeps the
+      // division and its floor from landing one sample early, which is the rounding
+      // `_readMerged` documents at length.
+      const tRead = (endOut * decim + 0.5) / p.out.sampleRate;
+      const src = onReal ? interleave(this._detectMono(p, tRead, need), need)
+                         : this._readIQ(p, tRead, need);
+
       // The mixer's phase is referenced to the **first sample of the window**, not to its
       // end — which is a different number for every window length, because `need` depends
       // on how many samples were asked for.
@@ -1864,7 +1896,6 @@ export class MockEngine extends Graph {
       // everything downstream looked at magnitudes — a spectrum, a waterfall, an
       // envelope — and it makes a tuner unusable for anything coherent, which is to say
       // for everything ADR-0038 exists for.
-      const startAt = Math.floor(tEnd * p.out.sampleRate) - need;
       const startPhase = (-2 * Math.PI * offset * (startAt / p.out.sampleRate)) % (2 * Math.PI);
       return dsp.xlateFilterDecimate(src, taps, offset, p.out.sampleRate, decim, count, startPhase).samples;
     }

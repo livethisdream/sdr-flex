@@ -969,6 +969,41 @@ house rule.
   speaking (anything AD936x now is), and `rx_sdr` for everything else. Worth revisiting
   when a board turns up that `rx_sdr` handles badly.
 
+## The tuner's output grid, as fixed
+
+The root cause under the symbol-grid bug, found by chasing the last of it: the tuner's
+output samples were anchored to the read rather than to the capture.
+`xlateFilterDecimate` takes every `decim`-th sample counting from the start of what it is
+handed, and that start was `Math.floor(tEnd * parentRate) - need` — whose remainder
+modulo `decim` moves with `tEnd`. A read ending between two output samples therefore came
+back on a different grid, shifted by up to `(decim - 1) / decim` of an output sample.
+
+It is invisible until something cares about a fraction of a sample, which is why it
+survived this long. On the M17 slot a 9 kHz selection decimates by 42 into 2.48 samples
+per symbol: worst case 0.39 of a symbol, and the symbols a `core.symbols` node handed
+over were a fifth of full scale from the ones a direct fit gave for the same seconds —
+0 records against 10. The same signal at 24 kHz decimates by 16 into 6.5 samples a
+symbol, worst case 0.14, and the two paths agreed to the bit.
+
+Fixed by anchoring output sample `k` to input sample `k * decim` whatever window is
+asking. Everything else about the window is unchanged, including the tuner being late by
+half its filter. After: every fit window over the slot decodes 95 records where it used
+to give 0–96 depending on where the fit landed, and the phases cluster at 2.39–2.48
+instead of scattering across 1.46–2.31.
+
+**This is also why the per-block symbol fit now looks like belt and braces.** With the
+tuner fixed, one grid for a whole capture would probably have worked on this capture.
+Keeping the blocks anyway: a real signal can drift where a synthesized one does not, and
+a block is the unit the streamed decode is built on. It costs a fit per ten seconds.
+
+**A reasoning error worth keeping.** The float round trip in `_readSymbols`' sample index
+was dismissed earlier on the grounds that 31250 S/s — which worked — had *more* of those
+errors than 11904.76, which failed. That compared how often the error happened instead of
+what it cost, and one sample is 0.15 of a symbol at sps 6.51 against 0.40 at sps 2.48.
+The conclusion happened to be right (the round trip is exact at both rates, measured),
+but the argument was not, and the same "it cannot be that, the working case has more of
+it" shape is what nearly hid the real bug.
+
 ## Decoding as it plays, as built
 
 A decoder used to answer once, for the whole capture, when it finished. On a 90 s file
