@@ -1102,6 +1102,33 @@ through the real binary and the real model at build time and fails the image unl
 WAV on stdin via `-f -`, the model path, JSON on stdout via `-of -`) cannot ship broken.
 `conformance.test.mjs` lists it under `NO_FIXTURE` with that reason.
 
+## The dB range, as fixed
+
+**The control closed itself when you used it.** The strip re-renders on every parameter
+change, which rebuilds its pills, so an open popover has to be re-anchored afterwards —
+and that looked up the pill belonging to the control. A *folded* control has no pill; it
+lives behind its group's `more` chip. So the lookup found nothing and closed the popover.
+`min` and `max` fold at every width anybody uses, so adjusting either one closed the
+control doing the adjusting: the slider vanished the moment it moved.
+
+Re-anchoring now falls back to the group chip. It deliberately does **not** rebuild the
+popover: re-running `openPop` would replace the range input under the pointer, and a
+native drag does not survive its element being swapped — the popover would stay on screen
+and stop following the mouse, which looks like the control working and is worse. Four
+tests drive the method against stub elements; two of them fail against the old version.
+
+**Autoscale was there and unreachable.** `dbAuto` has existed since the beginning, on the
+`min` and `max` controls — behind the fold chip, then a control, then a button inside it.
+Double-clicking the colorbar now does it, which is the thing you have just dragged the
+range out of shape with, and the bar's tooltip says so. Snapped rather than eased: easing
+is right when the range is following a signal that is changing, and wrong as the answer
+to somebody asking for it now.
+
+**Inferno is the default colormap.** Both it and Viridis are perceptually uniform and
+colorblind-safe, so either is defensible; Inferno's dark end is nearly black, so an empty
+waterfall reads as empty and a weak carrier is the first thing that is not. Viridis starts
+at a purple floor a faint signal has to out-shout.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the

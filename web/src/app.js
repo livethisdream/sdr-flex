@@ -76,7 +76,11 @@ const VIEWS = {
 
 const defaultViewParams = () => ({
   bins: 1024, window: 'Hann', avg: 4,
-  dbMin: -74, dbMax: -18, dbAuto: true, colormap: 'Viridis', speed: 60,
+  // Inferno rather than Viridis. Both are perceptually uniform and colorblind-safe,
+  // which is why either is defensible; Inferno's dark end is nearly black, so an empty
+  // waterfall reads as empty and a weak carrier is the first thing that is not. Viridis
+  // starts at a distinctly purple floor that a faint signal has to out-shout.
+  dbMin: -74, dbMax: -18, dbAuto: true, colormap: 'Inferno', speed: 60,
   trigger: 'auto', spanS: 0.12,
   domain: 'time', channel: 'sum',
   zoomLo: 0, zoomHi: 1,
@@ -1477,6 +1481,31 @@ class App {
     return { lo, hi };
   }
 
+  /**
+   * Hand the dB range back to the measurement.
+   *
+   * `dbAuto` has been here since the beginning and nobody could find it: it lives on the
+   * `min` and `max` controls, which fold away at every width anybody uses, so reaching
+   * it was the fold chip, then a control, then a button inside it. Now a double-click on
+   * the colorbar — the thing you have just dragged the range out of shape with — does
+   * it, and the bar says so.
+   *
+   * Snapped rather than eased. Easing is right when the range is following a signal that
+   * is changing; it is wrong as the answer to somebody asking for it now, where a range
+   * that creeps toward the right answer over two seconds reads as a control that did not
+   * work. The snap is armed even when there is no spectrum in hand yet, so opening a
+   * capture and asking for auto before the first frame still does the right thing.
+   */
+  autoRange() {
+    const p = this.vp(this.current);
+    p.dbAuto = true;
+    this._autoSnap = true;
+    this._autoAcc = 0;
+    if (this._specData) this.applyAutoRange(this._specData, true);
+    this.renderCbarLabels();
+    this.renderStrip();
+  }
+
   applyAutoRange(data, snap) {
     const p = this.vp(this.current);
     if (!p.dbAuto || !data) return;
@@ -2735,6 +2764,16 @@ class App {
       const up = () => { cb.removeEventListener('pointermove', move); cb.removeEventListener('pointerup', up); };
       cb.addEventListener('pointermove', move);
       cb.addEventListener('pointerup', up);
+    });
+    // Dragging the bar sets the range by hand, so double-clicking it is the obvious way
+    // to give the range back to the measurement — right where somebody has just made a
+    // mess of it, rather than three levels down behind the fold. Auto has always been
+    // there; it was not anywhere you would find it.
+    cb.title = 'drag to set the range \u00b7 double-click for auto';
+    cb.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      this.autoRange();
+      this.metrics.interaction();
     });
 
     const MODES = ['auto', 'light', 'dark'];

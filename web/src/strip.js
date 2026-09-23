@@ -174,16 +174,50 @@ export class Strip {
         b.addEventListener('click', () => this.openPop(gk, b.dataset.k, anchor));
       }
     }
+    this._place(anchor);
+  }
+
+  /**
+   * Keep an open popover open across a re-render of the strip.
+   *
+   * Two things were wrong here and they compounded.
+   *
+   * **A folded control has no pill**, so looking one up by key found nothing and this
+   * closed the popover. `min` and `max` fold at every width anybody actually uses, so
+   * adjusting either one closed the control that was adjusting it — which is what the
+   * bug looked like from outside: the slider vanishes the moment you move it. The
+   * anchor for a folded control is its group's `more` chip, which is where it was
+   * opened from.
+   *
+   * **And the contents must not be rebuilt.** Re-running `openPop` replaces the range
+   * input the pointer is currently dragging, and a native drag does not survive its
+   * element being swapped: the popover would stay on screen and stop following the
+   * mouse, which is a worse bug than the one being fixed because it looks like the
+   * control working. So this re-anchors and repositions, and nothing else — `commit`
+   * already keeps the readout current, and the only other thing that can change
+   * underneath is the auto button, which is set here directly.
+   */
+  _reopen(k) {
+    const anchor = this.el.querySelector(`.pill[data-g="${k.g}"][data-k="${k.k}"]`)
+                || this.el.querySelector(`.pill.more[data-g="${k.g}"]`);
+    if (!anchor) { this.closePop(); return; }
+    if (this._openPill) this._openPill.classList.remove('open');
+    this._openPill = anchor;
+    anchor.classList.add('open');
+    const spec = this._find(k.g, k.k);
+    const ab = this.pop.querySelector('[data-act=auto]');
+    if (ab && spec) ab.classList.toggle('on', this._mode(spec) === 'auto');
+    const note = this.pop.querySelector('.popnote');
+    if (note && spec && spec.autoNote) note.hidden = this._mode(spec) === 'manual';
+    this._place(anchor);
+  }
+
+  /** Above the thing it belongs to, and on screen. */
+  _place(anchor) {
     const r = anchor.getBoundingClientRect();
     const pr = this.pop.getBoundingClientRect();
     this.pop.style.left = Math.max(8, Math.min(r.left, innerWidth - pr.width - 8)) + 'px';
     this.pop.style.top = Math.max(8, r.top - pr.height - 8) + 'px';
-  }
-
-  _reopen(k) {
-    const pill = this.el.querySelector(`.pill[data-g="${k.g}"][data-k="${k.k}"]`);
-    if (pill) this.openPop(k.g, k.k, pill, true);
-    else this.closePop();
   }
 
   openPop(gk, key, pill, keepPosition) {
@@ -301,13 +335,7 @@ export class Strip {
       });
     }
 
-    if (!keepPosition) {
-      const r = pill.getBoundingClientRect();
-      const pr = this.pop.getBoundingClientRect();
-      const left = Math.max(8, Math.min(r.left, innerWidth - pr.width - 8));
-      this.pop.style.left = left + 'px';
-      this.pop.style.top = Math.max(8, r.top - pr.height - 8) + 'px';
-    }
+    if (!keepPosition) this._place(pill);
   }
 }
 
