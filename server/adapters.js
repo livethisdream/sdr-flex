@@ -1034,6 +1034,20 @@ export function list() {
  * given 2 MS/s does not fail, it just decodes worse, and "why does rtl_433 find nothing
  * here but everything in the same signal saved to a file" is a bad afternoon.
  */
+/**
+ * The sample formats an adapter may ask for — which is to say, the ones `convert` below
+ * can actually produce.
+ *
+ * Exported because `adapterdir.js` validates operator-supplied packs against it, and it
+ * had its own copy of this list. The two drifted in both directions and each way was a
+ * different bug: `f32` was convertible but rejected, so nobody could write a pack that
+ * reads one float per symbol — which is what the M17 packet decoder that ships here
+ * does. And `cs8` was accepted but had no branch, so such a pack loaded cleanly at
+ * startup and threw `no conversion to cs8` at the first click, which is the exact
+ * failure validating a pack at startup exists to prevent.
+ */
+export const FORMATS = ['cu8', 'cs8', 'cs16', 'cf32', 'f32', 's16'];
+
 export function convert(data, kind, fromRate, want) {
   const note = [];
   let out = data;
@@ -1064,6 +1078,11 @@ export function convert(data, kind, fromRate, want) {
     bytes = Buffer.allocUnsafe(out.length * 2);
     for (let i = 0; i < out.length; i++) {
       bytes.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(out[i] * 32767))), i * 2);
+    }
+  } else if (want.format === 'cs8') {
+    bytes = Buffer.allocUnsafe(out.length);
+    for (let i = 0; i < out.length; i++) {
+      bytes.writeInt8(Math.max(-128, Math.min(127, Math.round(out[i] * 127))), i);
     }
   } else if (want.format === 'cs16') {
     bytes = Buffer.allocUnsafe(out.length * 2);

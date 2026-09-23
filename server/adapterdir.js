@@ -35,10 +35,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import * as adapters from './adapters.js';
 
 /** Stream types the graph knows about (ADR-0006). */
 const KINDS = ['iq', 'real', 'bits', 'bytes', 'events'];
-const FORMATS = ['cu8', 'cs8', 'cs16', 'cf32', 's16'];
+// Not a list of its own. It had one, and it drifted from what `convert` can actually do
+// in both directions at once — see the note on FORMATS there.
+const FORMATS = adapters.FORMATS;
 
 export class AdapterDir {
   constructor(root) { this.root = root; }

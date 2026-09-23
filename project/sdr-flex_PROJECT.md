@@ -1129,6 +1129,33 @@ colorblind-safe, so either is defensible; Inferno's dark end is nearly black, so
 waterfall reads as empty and a weak carrier is the first thing that is not. Viridis starts
 at a purple floor a faint signal has to out-shout.
 
+## Operator flowgraphs: built, and two holes closed
+
+Asked whether GNU Radio plugin capability still needed building. It does not — ADR-0032
+made a flowgraph an adapter and ADR-0026's packs let an operator supply one
+(`SDRFLEX_ADAPTERS`, a directory with `adapter.json` and a `.py` beside it). What was
+missing was that nobody had ever *run* one: the tests checked that a manifest compiles
+and that its flowgraph path resolves, and both holes below lived in the seam between the
+validator and `convert`, where a compile-time check cannot see them.
+
+- **`f32` was convertible and rejected.** So an operator could not write a pack that
+  reads one float per symbol — which is exactly what the M17 packet decoder that ships
+  here does. A pack for it would have been refused with "not one of cu8, cs8, cs16,
+  cf32, s16".
+- **`cs8` was accepted and unimplemented.** Such a pack passed validation at startup and
+  threw `no conversion to cs8` at the first click. Validating a pack at startup exists to
+  stop exactly that, so this was the worse of the two. `cs8` is now implemented rather
+  than dropped, since it is a real format a real radio produces.
+
+Both came from `adapterdir.js` keeping its own copy of the format list. There is now one
+exported list and a test asserting every entry can actually be produced and that every
+shipped adapter asks for one of them.
+
+The end-to-end test needs no GNU Radio, which is the point of ADR-0032: a flowgraph is a
+program that reads samples and prints JSON, and a short Python script satisfies that
+contract exactly. So the operator-facing path is now exercised on any machine with a
+python3 rather than only on one with a full GNU Radio install.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the
