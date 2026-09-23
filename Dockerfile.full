@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       gnuradio-dev pybind11-dev python3-dev libspdlog-dev \
       libcodec2-dev libboost-program-options-dev \
       meson ninja-build libsndfile1-dev libliquid-dev nlohmann-json3-dev \
+      curl \
  && rm -rf /var/lib/apt/lists/*
 
 # Pinned, because "whatever HEAD was that day" is not a build you can repeat. These are
@@ -57,6 +58,13 @@ ARG M17_REF=9b8cec24d3f8d5e9f7f6e9c23661439e32343d6b
 ARG LIBM17_REF=07926d08ade8509f1ce55d0289f229ab44cbcf51
 ARG M17_IMPL_REF=f80793f169751b1fd2de6aaf8de52f862360142c
 ARG REDSEA_REF=v1.3.1
+ARG WHISPER_REF=v1.9.4
+# Which speech model. `base.en` is 142 MB and is the smallest that is worth listening
+# to; `tiny.en` (75 MB) drops words out of anything noisy and `small.en` (466 MB) is
+# better and triples this layer. English-only because the `.en` models are measurably
+# better at English than the multilingual ones of the same size, and a voice channel
+# somebody is transcribing is usually one they already know the language of.
+ARG WHISPER_MODEL=ggml-base.en.bin
 
 # Staged under its own prefix, so what gets copied into the runtime image is exactly the
 # two things built here and nothing the build stage happened to leave lying about.
@@ -114,6 +122,32 @@ RUN git clone --recursive https://github.com/M17-Project/M17_Implementations /tm
  && install -m 0755 /tmp/m17impl/SP5WWP/m17-packet/m17-packet-decode "$OOT/bin/" \
  && install -m 0755 /tmp/m17impl/SP5WWP/m17-packet/m17-packet-encode "$OOT/bin/" \
  && rm -rf /tmp/m17impl
+
+# Speech to text. CPU only: this image has no GPU to find, and whisper's CPU path is
+# perfectly usable on the length of audio a radio channel produces — seconds at a time,
+# not hours. The shared libraries go to $OOT with everything else and `ldconfig` in the
+# runtime stage finds them.
+RUN git clone https://github.com/ggml-org/whisper.cpp /tmp/whisper \
+ && git -C /tmp/whisper checkout --quiet "$WHISPER_REF" \
+ && cmake -S /tmp/whisper -B /tmp/whisper/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX="$OOT" \
+      -DWHISPER_BUILD_TESTS=OFF \
+      -DWHISPER_BUILD_SERVER=OFF \
+      -DGGML_NATIVE=OFF \
+ && cmake --build /tmp/whisper/build -j"$(nproc)" \
+ && cmake --install /tmp/whisper/build \
+ && install -d "$OOT/bin" \
+ && install -m 0755 /tmp/whisper/build/bin/whisper-cli "$OOT/bin/" \
+ && rm -rf /tmp/whisper
+
+# The weights, which are the one thing here that is downloaded rather than built. Kept
+# in its own layer so changing the model does not rebuild whisper, and named `model.bin`
+# so the adapter has one path to look at whichever model was chosen.
+RUN install -d "$OOT/share/whisper" \
+ && curl -fsSL -o "$OOT/share/whisper/model.bin" \
+      "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$WHISPER_MODEL" \
+ && test -s "$OOT/share/whisper/model.bin"
 
 # RDS. Meson rather than cmake, and no distribution packages it — which is the only
 # reason it is here rather than in Dockerfile.decoders with the other five.
@@ -213,6 +247,30 @@ RUN node --version \
  && redsea --version > /dev/null && echo 'redsea ok' \
  && command -v rx_sdr > /dev/null && echo 'rx_sdr ok'
 
+# Speech gets a harder check than the others: it *runs a decode*.
+#
+# The rest of this file proves a program exists and can be started. That was not enough
+# for the M17 line above, and it would be less than enough here — the thing most likely
+# to break about whisper is not the binary, it is the three-part arrangement the adapter
+# depends on: a WAV arriving on stdin as `-f -`, the model loading from a fixed path,
+# and full JSON coming back on **stdout** rather than a file because of `-of -`. Any one
+# of those silently changing turns the decoder into one that always reports silence.
+#
+# So: half a second of synthesized tone through the real binary and the real model, and
+# the JSON has to come back with a `transcription` array in it. What it transcribes is
+# not the point and is expected to be nothing — a tone is not speech, and a model that
+# says so is the model behaving. What is being tested is the plumbing.
+RUN python3 -c "import struct, math, sys; \
+n=8000; d=b''.join(struct.pack('<h', int(8000*math.sin(i*2*math.pi*440/16000))) for i in range(n)); \
+sys.stdout.buffer.write(b'RIFF'+struct.pack('<I',36+len(d))+b'WAVEfmt '+struct.pack('<IHHIIHH',16,1,1,16000,32000,2,16)+b'data'+struct.pack('<I',len(d))+d)" \
+    > /tmp/probe.wav \
+ && whisper-cli -m /usr/local/share/whisper/model.bin -f - -ojf -of - -l en -tp 0 \
+      < /tmp/probe.wav 2>/tmp/probe.err | tee /tmp/probe.json | grep -q '"transcription"' \
+ && python3 -c "import json; json.load(open('/tmp/probe.json'))" \
+ && echo 'whisper ok' \
+ || (echo 'whisper FAILED — stderr follows'; cat /tmp/probe.err; exit 1)
+RUN rm -f /tmp/probe.wav /tmp/probe.json /tmp/probe.err
+
 RUN useradd --system --create-home --shell /usr/sbin/nologin sdrflex
 WORKDIR /app
 
@@ -222,6 +280,9 @@ COPY fixtures ./fixtures
 COPY seed-captures.mjs ./
 
 VOLUME /captures
+# One path the adapter looks at, whichever model the image was built with.
+ENV SDRFLEX_WHISPER_MODEL=/usr/local/share/whisper/model.bin
+
 ENV SDRFLEX_CAPTURES=/captures \
     SDRFLEX_PORT=8722 \
     SDRFLEX_BIND=0.0.0.0 \

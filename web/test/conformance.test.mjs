@@ -130,6 +130,18 @@ const NO_FIXTURE = {
   // end, which is what a conformance fixture is for.
   'ext.multimon': 'covered by adapters.test.mjs and identify.test.mjs, but not pinned as a chain',
   'ext.minimodem': 'covered by adapters.test.mjs only',
+  // The only entry here whose reason is not "nobody got round to it".
+  //
+  // A golden capture pins what a decoder returns for a known input, and this one cannot
+  // be written yet: whisper's weights live on huggingface.co, which the environment this
+  // was built in denies by policy, so the decode has never been run here. Its parsing,
+  // its confidence rules and its command line are covered by speech.test.mjs against the
+  // JSON shape read out of whisper.cpp's own `output_json`; what is *not* covered is a
+  // real decode. `Dockerfile.full` closes that gap where it can be closed — it pipes a
+  // synthesized WAV through the real binary and the real model at build time and fails
+  // the image if no `transcription` comes back — so a broken integration cannot ship
+  // quietly. Replace this line with a fixture on a machine that can fetch the model.
+  'ext.whisper': 'parse and flags covered by speech.test.mjs; a real decode needs a model this environment cannot download',
 };
 
 test('every external decoder has a golden capture, or is listed as not having one', () => {

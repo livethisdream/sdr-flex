@@ -1068,31 +1068,39 @@ buttons and one elastic track, so an icon costs the track about 36px on a phone.
 third row and the pill went from 64px tall to 94px at 360 wide; it is 65px at every
 narrow width now.
 
-## Speech recognition: what stopped it
+## Speech recognition, as built (decode unexercised here)
 
-Wanted, and the integration is obvious — an adapter taking `real` audio to `events`, whose
-records would ride the streamed decode and appear as the capture plays. The engine is
-what stopped it, and both halves were measured rather than assumed:
+`ext.whisper`: `real` audio in, `events` out, so a transcript rides the streamed decode
+and appears as the capture plays. whisper.cpp, CPU only, built in `Dockerfile.full` with
+`ggml-base.en.bin`.
 
-- **PocketSphinx is not good enough.** It is in the Ubuntu archive *with* its US English
-  model, so it needs no blocked host and installs in one apt line — which made it worth
-  trying first. On real broadcast speech it returned `have a hand fed is you too soon to
-  use it to the punches`, and on synthesized speech it turned "control this is dispatch
-  requesting your position over" into `to truly is the new trick where the a as the shoot
-  old law`. A general language model will always emit fluent English word salad, and a
-  transcript of noise that reads like a sentence is the worst thing this tool could
-  produce — ADR-0031 exists for exactly that.
-- **whisper.cpp is the right engine and its weights are unreachable from here.** It
-  builds clean, and reading its source settled the two things worth knowing: `-` is
-  accepted as the input filename (so it reads a WAV on stdin, no temp file needed), and
-  `-ojf -of -` writes full JSON — per-segment timestamps and per-token probabilities — to
-  stdout. `whisper-cli -m /nonexistent -f - -ojf -of - -nt` was run here and fails only on
-  the missing model, so the flags are real, which is the check the M17 `-h` line taught.
-  The models live on huggingface.co, which this environment's proxy denies by policy.
+**Its failure mode is being convincing, and that is the whole design problem.** Every
+other program in the table either decodes a frame or does not — a CRC agrees or it does
+not. Whisper always produces fluent, well-punctuated English, including from silence,
+where "Thank you." and "Thanks for watching!" are its two famous inventions. So three of
+its own gates are raised from their defaults (`-nth 0.3`, `-lpt -0.7`, `-sns`), the
+temperature is pinned at 0 so the same samples answer the same way, the per-token
+probabilities come back as the evidence for each record, and anything under the
+confidence floor is marked `suspect` the way a failed CRC is — shown, not withheld, and
+not allowed to be the headline.
 
-So the adapter is not written. Writing one whose decode path cannot be run once is how
-`Dockerfile.full` shipped broken. What is needed first: whether huggingface.co is
-reachable from the box that builds the image.
+**PocketSphinx was measured first and rejected.** It is in the Ubuntu archive *with* its
+model, so it needed no download at all. On real broadcast speech it returned `have a hand
+fed is you too soon to use it to the punches`; on synthesized speech it turned "control
+this is dispatch requesting your position over" into `to truly is the new trick where the
+a as the shoot old law`. A general language model emits fluent word salad; the only
+question is whether it is fluent enough to fool you.
+
+**What is not verified.** The weights live on huggingface.co, which this environment's
+proxy denies by policy, so the decode has never been run here. What *is* verified: the
+flags are real (`whisper-cli -m /nonexistent -f - -ojf -of - -nt` was run and fails only
+on the missing model), the JSON shape is read out of whisper.cpp's own `output_json`
+rather than guessed, and nine tests cover the parse, the confidence rules and the command
+line. The gap is closed where it can be: `Dockerfile.full` pipes a synthesized WAV
+through the real binary and the real model at build time and fails the image unless a
+`transcription` array comes back — so the three things most likely to break silently (a
+WAV on stdin via `-f -`, the model path, JSON on stdout via `-of -`) cannot ship broken.
+`conformance.test.mjs` lists it under `NO_FIXTURE` with that reason.
 
 ## Open, needs a decision
 

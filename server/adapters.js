@@ -549,6 +549,127 @@ export const ADAPTERS = {
   // it you can hear. That is why the chain in front of it is a wide tuner and an FM demod
   // and nothing else — a channel narrow enough to listen to has already filtered away the
   // thing being decoded, silently, and the decode then fails by finding nothing.
+  // Speech, which is the one decoder here whose failure mode is being *convincing*.
+  //
+  // Every other program in this table either decodes a frame or does not: a CRC agrees
+  // or it does not, a syncword correlates or it does not. Whisper always produces
+  // fluent, well-punctuated English. Given silence it produces fluent, well-punctuated
+  // English — "Thank you." and "Thanks for watching!" are its two most famous
+  // hallucinations, and on a quiet channel it will write them with every appearance of
+  // confidence. A transcript of static that reads like a sentence is the worst thing
+  // this tool could hand anybody, and it is exactly what ADR-0031 is about.
+  //
+  // So three of whisper's own gates are turned up from their defaults rather than left
+  // where a podcast transcriber would want them, the per-token probabilities come back
+  // with every record as the evidence for it (ADR-0017), and anything under the
+  // confidence floor is marked `suspect` the way a failed CRC is. Nothing is hidden —
+  // a suspect record still appears, it just does not get to be the headline.
+  //
+  // PocketSphinx was measured first, because it is in the Ubuntu archive *with* its
+  // model and would have needed no download at all. On real broadcast speech it
+  // returned "have a hand fed is you too soon to use it to the punches". A general
+  // language model will always emit fluent word salad; the difference is only whether
+  // it is fluent enough to fool you.
+  'ext.whisper': {
+    name: 'Speech', group: 'Decode', in: 'real', out: 'events',
+    command: ['whisper-cli'],
+    blurb: 'Speech to text — voice traffic, transcribed',
+    // Whisper's own rate. It resamples anything else internally, so converting here
+    // instead is one resample rather than two and the note says which one happened.
+    // WAV rather than raw: it reads through miniaudio, which wants a container.
+    wants: { format: 's16', rate: 16_000, container: 'wav' },
+    // Voice is not a narrow channel and a decoder handed 3 kHz of a 12 kHz FM channel
+    // has been given the part somebody can hear rather than the part that was sent.
+    // Below about this there is not enough of a voice left to be worth the CPU.
+    minRate: 6_000,
+    params: [
+      { id: 'model', type: 'text', default: '', label: 'model',
+        placeholder: 'leave empty for the installed one',
+        hint: 'path to a ggml model file; the image installs one and SDRFLEX_WHISPER_MODEL points at it' },
+      { id: 'language', type: 'text', default: 'en', label: 'language',
+        placeholder: 'en, de, auto',
+        hint: "a two-letter code, or `auto` to let it guess — guessing costs a pass and is wrong more often on short, noisy audio" },
+      // The floor under which a segment is called a guess rather than a decode. 0.6 is
+      // a judgment: whisper's token probabilities on clean speech sit well above it and
+      // on invented text sit below, but the two distributions overlap and no single
+      // number separates them cleanly. It is a parameter because it is a judgment.
+      { id: 'confidence', type: 'number', default: 0.6, min: 0, max: 1, step: 0.05,
+        label: 'confidence floor',
+        hint: 'segments whose mean token probability is under this are marked as guesses, not dropped' },
+      { id: 'quiet', type: 'enum', default: 'strict', values: ['strict', 'default'],
+        label: 'silence handling',
+        hint: 'strict raises whisper’s own no-speech and log-probability gates, which is what stops a quiet channel being transcribed as speech' },
+    ],
+    args: ({ params }) => [
+      '-m', String(params.model || process.env.SDRFLEX_WHISPER_MODEL
+                   || '/usr/local/share/whisper/model.bin'),
+      // `-` is a filename it understands: it reads the WAV off stdin, so nothing is
+      // written to disk for a decode and two decodes cannot read each other's audio.
+      '-f', '-',
+      // Full JSON to stdout. `-of -` also turns off the segment callback and the
+      // progress printing, so stdout carries the JSON and nothing else.
+      '-ojf', '-of', '-',
+      '-l', String(params.language || 'en').trim() || 'en',
+      // Deterministic. A decoder that answers differently on the same samples is not
+      // something anybody can debug, and temperature fallback is where whisper does
+      // most of its inventing.
+      '-tp', '0',
+      ...(params.quiet === 'default' ? [] : [
+        // Its own gates, turned up. `-nth` is how sure it must be that there *is* no
+        // speech before it gives up on a window; `-lpt` is the average log probability
+        // under which it rejects a decode outright. Both default to values chosen for
+        // podcasts, where the audio is known to contain speech. Here it very often
+        // does not.
+        '-nth', '0.3',
+        '-lpt', '-0.7',
+        // Suppress the non-speech tokens whisper otherwise spends its confidence on:
+        // music notes, bracketed sound effects, and the subtitle furniture it learned
+        // from its training data.
+        '-sns',
+      ]),
+    ],
+    // The JSON goes to stdout; the model banner and timings go to stderr.
+    parse: (stdout, stderr, spec_, meta) => {
+      const params = (meta && meta.params) || {};
+      let doc = null;
+      try { doc = JSON.parse(String(stdout)); } catch { doc = null; }
+      if (!doc || !Array.isArray(doc.transcription)) {
+        // A model that would not load is the likely cause and it says so on stderr,
+        // which is a far more useful thing to report than "nothing decoded".
+        const why = /error: (.+)|failed to (.+)/i.exec(String(stderr));
+        return { records: [], note: why ? why[0].trim()
+          : 'no transcription came back — whisper writes JSON to stdout with `-ojf -of -`, ' +
+            'so this usually means the model did not load' };
+      }
+      const floor = Number(params.confidence ?? 0.6);
+      const out = [];
+      for (const seg of doc.transcription) {
+        const text = String(seg.text || '').trim();
+        if (!text) continue;
+        // Mean probability over the real tokens. The specials — `[_BEG_]` and the
+        // timestamp tokens — are whisper's own punctuation and carry a probability
+        // that says nothing about whether the words are right.
+        const toks = (seg.tokens || []).filter((t) => t && typeof t.p === 'number' &&
+                                                      !/^\[_.*_\]$/.test(String(t.text || '')));
+        const p = toks.length ? toks.reduce((a, t) => a + t.p, 0) / toks.length : null;
+        const at = seg.offsets && typeof seg.offsets.from === 'number' ? seg.offsets.from / 1000 : null;
+        const rec = { text };
+        if (at != null) rec.fromS = +at.toFixed(2);
+        if (p != null) rec.confidence = +p.toFixed(3);
+        // Said rather than dropped, which is the same rule the CRCs get: a decoder that
+        // reports a guess as a decode is the thing ADR-0031 exists to prevent, and one
+        // that silently withholds what it found is no better.
+        if (p != null && p < floor) rec.suspect = `mean token probability ${p.toFixed(2)}, under ${floor}`;
+        out.push(rec);
+      }
+      if (out.length) return out;
+      return { records: [], note: 'no speech in this span — ' +
+        (params.quiet === 'default'
+          ? 'its own gates are at their defaults here, which are set for audio known to contain speech'
+          : 'the no-speech and log-probability gates are raised, which is what keeps a quiet channel from being transcribed') };
+    },
+    title: ['text'],
+  },
   'ext.redsea': {
     name: 'redsea', group: 'Decode', in: 'real', out: 'events',
     command: ['redsea'],
@@ -1129,7 +1250,11 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
       // there" from "something in front of this changed what it was looking at" — the
       // difference between a signal that is absent and one that was resampled away.
       const { records, note: parseNote } =
-        readRecords(a, stdout, stderr, { outBytes, inputNote: input.note });
+        // `params` as well, because a parser can have a judgment of its own to apply and
+        // the setting for it belongs to the node rather than to the program's flags —
+        // whisper's confidence floor decides which segments are called guesses, and that
+        // is a decision about the report rather than about the decode.
+        readRecords(a, stdout, stderr, { outBytes, inputNote: input.note, params });
 
       // Nothing recognized is a result, not a failure — but a result with no account of
       // itself is a dead end, and "I ran a decoder and it said nothing" is the least
