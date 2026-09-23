@@ -47,6 +47,15 @@ export class Graph {
     // all. A whole capture stopping dead at its end was the odd one out, and on a
     // fixture two thirds of a second long it is the only thing you ever see.
     this.loop = true;
+    // How fast the clock runs against the wall.
+    //
+    // Slowing a recording down is the oldest trick in listening to radio: a weak voice
+    // through noise, or fast Morse, is legible at half speed when it is not at full.
+    // It belongs on the *clock* rather than on the speaker, because everything here
+    // follows the clock — the waterfall, the playhead, the decoders reading blocks as
+    // it plays — and audio that slowed down on its own would simply drift away from
+    // the picture of it.
+    this.speed = 1;
     this.capture = null;   // null means the synthetic scene
     this._last = performance.now();
   }
@@ -250,7 +259,10 @@ export class Graph {
     const now = performance.now();
     const dt = (now - this._last) / 1000;
     this._last = now;
-    const step = Math.min(dt, 0.1);
+    // Clamped against the wall rather than against the capture: a tab that was in the
+    // background for a minute should not fast-forward a minute when it comes back, and
+    // that is true whatever speed it is playing at.
+    const step = Math.min(dt, 0.1) * (this.speed || 1);
     if (this.playing) {
       this.t += step;
       const d = this.duration();

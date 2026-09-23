@@ -1045,6 +1045,55 @@ puts it at 326px at phone width, better than the 77px it had before the speaker 
 The pill is 64px tall there instead of 40px; that is the trade, and a usable scrubber is
 worth 24px.
 
+## Slowing the audio down, as built
+
+`0.5×` and `0.25×` on the transport, beside the clock. Slowing a recording down is the
+oldest trick in listening to radio — a weak voice through noise, or fast Morse, is
+legible at half speed when it is not at full — and halving is the step the ear hears,
+because each one is an octave down.
+
+It is on the **clock**, not on the speaker. Everything here follows the clock: the
+waterfall, the playhead, the decoders reading blocks as the capture plays. Audio that
+slowed down on its own would drift away from the picture of it and then fight the
+mixer's own drift resynchronizer. So `Graph.speed` scales the tick and the mixer sets
+`playbackRate` on each chunk to match — `playbackRate` rather than a lower buffer sample
+rate, because a browser refuses a buffer below 3 kHz and a quarter-speed 8 kHz channel is
+under that. The pitch comes down with the speed, which is the point rather than a side
+effect: a pitch-preserving stretch would throw away the thing being listened for.
+
+Measured in a browser: 60 ms of wall clock advances the playhead 60.0 / 30.0 / 15.0 ms.
+The control is a readout you click rather than another icon — the transport is fixed-size
+buttons and one elastic track, so an icon costs the track about 36px on a phone. Below
+400px the gaps tighten, because with the speaker *and* the speed the buttons wrapped to a
+third row and the pill went from 64px tall to 94px at 360 wide; it is 65px at every
+narrow width now.
+
+## Speech recognition: what stopped it
+
+Wanted, and the integration is obvious — an adapter taking `real` audio to `events`, whose
+records would ride the streamed decode and appear as the capture plays. The engine is
+what stopped it, and both halves were measured rather than assumed:
+
+- **PocketSphinx is not good enough.** It is in the Ubuntu archive *with* its US English
+  model, so it needs no blocked host and installs in one apt line — which made it worth
+  trying first. On real broadcast speech it returned `have a hand fed is you too soon to
+  use it to the punches`, and on synthesized speech it turned "control this is dispatch
+  requesting your position over" into `to truly is the new trick where the a as the shoot
+  old law`. A general language model will always emit fluent English word salad, and a
+  transcript of noise that reads like a sentence is the worst thing this tool could
+  produce — ADR-0031 exists for exactly that.
+- **whisper.cpp is the right engine and its weights are unreachable from here.** It
+  builds clean, and reading its source settled the two things worth knowing: `-` is
+  accepted as the input filename (so it reads a WAV on stdin, no temp file needed), and
+  `-ojf -of -` writes full JSON — per-segment timestamps and per-token probabilities — to
+  stdout. `whisper-cli -m /nonexistent -f - -ojf -of - -nt` was run here and fails only on
+  the missing model, so the flags are real, which is the check the M17 `-h` line taught.
+  The models live on huggingface.co, which this environment's proxy denies by policy.
+
+So the adapter is not written. Writing one whose decode path cannot be run once is how
+`Dockerfile.full` shipped broken. What is needed first: whether huggingface.co is
+reachable from the box that builds the image.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the

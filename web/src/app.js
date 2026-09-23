@@ -34,6 +34,14 @@ import * as resume from './resume.js';
 // of decoding never needs a grid that is not already measured.
 const STREAM_BLOCK_S = 5;
 
+// The speeds the transport cycles through.
+//
+// Halving each time, because halving is what the ear hears as a step and each one is an
+// octave down: a voice at a quarter speed is two octaves below where it was said, which
+// is about as far as speech stays speech. Nothing faster than real time — this exists
+// for hearing something, and a recording played faster is not easier to hear.
+const SPEEDS = [1, 0.5, 0.25];
+
 const $ = (s, r = document) => r.querySelector(s);
 
 /** Safe inside an attribute as well as in text — a name is whatever somebody typed. */
@@ -129,6 +137,9 @@ class App {
     let want = true;
     try { want = localStorage.getItem('sdrflex.loop') !== '0'; } catch { /* no store */ }
     this.setLoop(want);
+    let speed = 1;
+    try { speed = Number(localStorage.getItem('sdrflex.speed')) || 1; } catch { /* no store */ }
+    this.setSpeed(speed);
     const root = await this.engine.createSession();
     this.channel = root.id;        // where the breadcrumb is
     this.current = root.id;        // whose result is on screen
@@ -1598,6 +1609,32 @@ class App {
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
 
+  /**
+   * How fast the clock runs, and the one control that says so.
+   *
+   * Cycles rather than opening a menu: there are three of them, the order is obvious,
+   * and a menu for three values is two more clicks than the values are worth. Slower
+   * only — this is for hearing something, and a recording played faster than it
+   * happened is not easier to hear.
+   *
+   * Remembered, like the loop flag, because somebody who wants half speed for a weak
+   * voice wants it for the next weak voice too.
+   */
+  setSpeed(v) {
+    const speed = SPEEDS.includes(v) ? v : 1;
+    this.engine.speed = speed;
+    const b = $('#speed');
+    if (b) {
+      b.textContent = speed === 1 ? '1\u00d7' : `${speed}\u00d7`;
+      b.classList.toggle('slow', speed !== 1);
+      b.title = speed === 1
+        ? 'full speed — click to slow it down'
+        : `${speed}\u00d7 speed, ${(1 / speed).toFixed(0)} octave${speed === 0.5 ? '' : 's'} down` +
+          ' — click again to cycle';
+    }
+    try { localStorage.setItem('sdrflex.speed', String(speed)); } catch { /* no store */ }
+  }
+
   setPlaying(on) {
     this.engine.playing = on;
     this._wasPlaying = on;
@@ -2810,6 +2847,12 @@ class App {
     if (lb) lb.addEventListener('click', () => { this.setLoop(!this.engine.loop); this.metrics.interaction(); });
     const sb = $('#listen');
     if (sb) sb.addEventListener('click', () => { this.toggleListen(); this.metrics.interaction(); });
+    const sp = $('#speed');
+    if (sp) sp.addEventListener('click', () => {
+      const i = SPEEDS.indexOf(this.engine.speed || 1);
+      this.setSpeed(SPEEDS[(i + 1) % SPEEDS.length]);
+      this.metrics.interaction();
+    });
     $('#play').addEventListener('click', () => {
       // pressing play at the end of a file means "again", not "stay stopped"
       if (this.engine.ended && !this.engine.playing) {

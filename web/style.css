@@ -366,6 +366,25 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   .transport .track { flex:1 0 100%; width:auto; margin-inline:.35rem; }
 }
 
+/* Below this the buttons stop fitting on one row and wrap to a third — measured at 360
+ * wide, where the pill went from 64px tall to 94px. Tightening the gaps buys the ~15px
+ * that costs, which is cheaper than losing a row of the screen to chrome on the
+ * smallest phone this is ever opened on. */
+@media (max-width: 400px) {
+  .transport { gap:.2rem; padding-inline:.3rem; }
+  .transport .tbtn { padding-inline:.3rem; }
+  .transport .clock { font-size:.68rem; }
+}
+
+/* Playback speed, as a readout you can click rather than another icon.
+ *
+ * The transport is already a row of fixed-size buttons and one elastic scrub track, so
+ * every icon added comes out of the track — measured at 36px a button on a phone. This
+ * is the width of its own text instead, and at 1x it reads as a label rather than a
+ * control, which is right: full speed is not a mode anybody needs reminding of. */
+.tbtn.spd { min-width:2.6em; font-family:var(--mono); font-size:.72rem; padding-inline:.35rem; }
+.tbtn.spd.slow { color:var(--accent); background:var(--raised); }
+
 /* When a record came out of the capture, for a decode that filled in as it played. */
 .evat { font-family:var(--mono); font-size:.68rem; color:var(--dim);
         min-width:3.2em; text-align:right; }

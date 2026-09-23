@@ -12,6 +12,7 @@ function at(t, ms, opts = {}) {
   g.capture = { durationS: 0.68, ...opts.capture };
   g.playing = true;
   if (opts.loop != null) g.loop = opts.loop;
+  if (opts.speed != null) g.speed = opts.speed;
   g.t = t;
   g._last = performance.now() - ms;
   g.tick();
@@ -92,4 +93,58 @@ test('a pinned clip still loops within its own box', () => {
   g._last = performance.now() - 50;
   g.tick();
   assert.ok(clip._t >= 2.0 && clip._t <= 2.1, `clip wrapped inside its box: ${clip._t}`);
+});
+
+// ── playback speed ──────────────────────────────────────────────────────────
+
+// `at()` sets `_last` and `tick()` reads the clock again, so the delta is the asked-for
+// milliseconds plus however long that took. A wall clock is not exact and pretending it
+// is makes a test that fails on a busy machine; a millisecond of slack is far tighter
+// than the factors of two being checked.
+const SLACK = 0.002;
+
+test('full speed is a second of capture per second of wall clock', () => {
+  assert.equal(new Graph().speed, 1);
+  const g = at(0.1, 50);
+  assert.ok(Math.abs((g.t - 0.1) - 0.050) < SLACK, `advanced ${((g.t - 0.1) * 1000).toFixed(2)} ms`);
+});
+
+test('half speed advances the clock at half the rate', () => {
+  // Slowing a recording down is the oldest trick in listening to radio, and it belongs
+  // on the clock rather than on the speaker: the waterfall, the playhead and the
+  // decoders reading blocks as it plays all follow the clock, so audio that slowed down
+  // by itself would drift away from the picture of it.
+  for (const [speed, want] of [[1, 0.050], [0.5, 0.025], [0.25, 0.0125]]) {
+    const g = at(0.1, 50, { speed });
+    const got = g.t - 0.1;
+    assert.ok(Math.abs(got - want) < SLACK,
+              `${speed}x advanced ${(got * 1000).toFixed(2)} ms, wanted ${want * 1000}`);
+    // And the ratio, which no amount of timer jitter can move: each step is half the one
+    // before it, which is what makes the cycle an octave at a time by ear.
+    assert.ok(Math.abs(got / speed - 0.050) < SLACK / speed,
+              `${speed}x does not scale: ${(got / speed * 1000).toFixed(2)} ms at full speed`);
+  }
+});
+
+test('a speed of nothing is full speed rather than a stopped clock', () => {
+  // `speed` is read on the hot path and an engine restored from an older stored session,
+  // or a Graph somebody built by hand, will not have one. Zero would look exactly like
+  // a hang, which is the worst way for a missing field to present.
+  for (const bad of [undefined, null, 0, NaN]) {
+    const g = new Graph();
+    g.capture = { durationS: 0.68 };
+    g.playing = true;
+    g.speed = bad;
+    g.t = 0.1;
+    g._last = performance.now() - 50;
+    g.tick();
+    assert.ok(g.t > 0.1, `speed ${String(bad)} stopped the clock at ${g.t}`);
+  }
+});
+
+test('slowing down does not let a background tab fast-forward', () => {
+  // The clamp is against the wall, not the capture: a tab that was hidden for a minute
+  // steps 0.1 s whatever speed it is playing at, and at a quarter speed that is 25 ms.
+  const g = at(0.1, 60_000, { speed: 0.25 });
+  assert.ok(Math.abs((g.t - 0.1) - 0.025) < SLACK, `advanced ${((g.t - 0.1) * 1000).toFixed(1)} ms`);
 });
