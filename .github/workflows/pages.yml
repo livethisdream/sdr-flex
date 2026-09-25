@@ -8,22 +8,26 @@
 # run. Everything else — the DSP, the flowgraph, the views, the synthetic scene, a
 # capture you drop on the window — is the same code the server serves.
 #
-# Only needed if Pages is set to Settings → Pages → Source → **GitHub Actions**, in
-# which case web/ is published as the site root and no redirect is involved.
+# Pages is set to Settings → Pages → Source → **GitHub Actions**, so this is the deploy:
+# `web/` is published as the site root and the repository's root index.html — which
+# redirects to /web/ for the other mode — is not published at all. The app is therefore
+# at the site root rather than at /web/, and an old bookmark to /web/ will 404.
 #
-# If Pages is instead set to **Deploy from a branch**, this workflow is not used at all:
-# GitHub serves the whole repo, the app lives at /web/, and the root index.html redirects
-# there. Either way the branch has to be `main`, which is what the one below now says —
-# it named `claude/sdr-flex-toolkit-planning-c4ghl1`, the branch that was trunk by
-# accident until `main` took over, and which has not moved since. A deploy trigger
-# pointing at a frozen branch is a site that silently stops updating.
+# Everything under web/ refers to itself relatively and nothing there starts with an
+# underscore, so it survives being rooted anywhere. The websocket it looks for resolves
+# to wss://<host>/ws, which on Pages closes without opening; the client treats that as
+# "no engine here" and falls back to the in-tab one in well under a second rather than
+# waiting out a timeout.
+#
+# The push trigger is on, which is the point of moving to Actions: the site cannot drift
+# behind `main` the way it did while the trigger named a branch that had stopped moving.
 name: Deploy toy model
 
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  #   paths: ['web/**', '.github/workflows/pages.yml']
+  push:
+    branches: [main]
+    paths: ['web/**', '.github/workflows/pages.yml']
 
 permissions:
   contents: read

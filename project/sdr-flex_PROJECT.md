@@ -1181,11 +1181,18 @@ What it cannot have is anything that runs as a process — the external decoders
 the capture library, and the streamed decode that drives them. That is not a gap to close;
 it is what the two deployments are for.
 
-**The one thing that was wrong**: `pages.yml`'s deploy trigger named
-`claude/sdr-flex-toolkit-planning-c4ghl1`, the branch that was trunk by accident until
-`main` took over and which has not moved since. Now `main`. If Pages is set to *Deploy
-from a branch* rather than *GitHub Actions*, the same correction has to be made in
-Settings → Pages, and that is a setting no file in this repository can see.
+**Deployed by Actions, on every push to `main` that touches `web/`.** The trigger used
+to name `claude/sdr-flex-toolkit-planning-c4ghl1` — trunk by accident until `main` took
+over, and unmoved since — which is a site that silently stops updating, the same shape as
+the container that ran for 37 hours.
+
+`web/` is the site root in this mode, so the app is at `/sdr-flex/` and **an old bookmark
+to `/sdr-flex/web/` will 404**; the repository's root `index.html`, which redirects there
+for the branch-serving mode, is not published at all. Checked before switching: everything
+under `web/` refers to itself relatively, nothing there starts with an underscore, and the
+websocket resolves to `wss://<host>/ws`, which closes without opening — the client reads
+that as no engine and falls back to the in-tab one in about half a second rather than
+waiting out a timeout.
 
 ## Open, needs a decision
 
