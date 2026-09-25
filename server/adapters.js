@@ -549,6 +549,105 @@ export const ADAPTERS = {
   // it you can hear. That is why the chain in front of it is a wide tuner and an FM demod
   // and nothing else — a channel narrow enough to listen to has already filtered away the
   // thing being decoded, silently, and the decode then fails by finding nothing.
+  // HD Radio. The digital sidebands either side of an FM broadcast carrier.
+  //
+  // What makes this worth a row rather than a curiosity: an NRSC-5 station carries a
+  // station name, the title and artist of what is playing, and — through its Advanced
+  // Application Services — *files*. Album art arrives as a LOT file over the air, which
+  // is a whole channel of content that no amount of listening to the audio reveals.
+  //
+  // It reports its own link quality, which is the honest kind of evidence: MER in dB
+  // for each sideband and a bit error rate. A decode with a stated MER can be argued
+  // with, which is what every derived number here owes the person reading it
+  // (ADR-0017). A station that is merely synchronized and carrying nothing is a
+  // different answer from silence, so that is a record too.
+  'ext.nrsc5': {
+    name: 'HD Radio', group: 'Decode', in: 'iq', out: 'events',
+    command: ['nrsc5'],
+    blurb: 'NRSC-5 — station name, song, and the files a station sends',
+    // Its own native rate. The program accepts `cu8` at twice this and decimates, which
+    // is the same bytes either way; handing it cs16 at the rate it actually works in
+    // means one conversion here rather than one here and one there.
+    wants: { format: 'cs16', rate: 744_188 },
+    // The digital sidebands sit either side of the analog carrier, out to about
+    // ±200 kHz, so the whole signal is roughly 400 kHz across. A channel narrower than
+    // that has the sidebands filtered off, and the decoder then finds nothing in a
+    // signal that was there — the failure ADR-0031 is about, and the reason redsea
+    // carries the same floor for a different subcarrier.
+    minRate: 400_000,
+    params: [
+      { id: 'program', type: 'num', default: 0, min: 0, max: 7, step: 1, integer: true,
+        label: 'program',
+        hint: 'a station carries several — HD1 is 0, and the extra channels are 1 and up' },
+    ],
+    // One positional argument when the input is a file, not two: with `-r` set it wants
+    // the program number alone, and the frequency it would otherwise need is a property
+    // of the tuner rather than of the samples. Read out of its own argument handling
+    // rather than guessed — `main.c` counts `optind + (!input_name + 1)`.
+    args: ({ params }) => [
+      '--iq-input-format', 'cs16',
+      // `-` is stdin: `fp = strcmp(input_name, "-") == 0 ? stdin : fopen(...)`.
+      '-r', '-',
+      // The audio is not what this is for. A decoder that also wanted to be a speaker
+      // would be two blocks pretending to be one, and there is already a Listen sink.
+      '-o', '/dev/null',
+      String(Math.max(0, Math.min(7, Math.round(Number(params.program) || 0)))),
+    ],
+    // Everything it says goes to stderr, timestamped `HH:MM:SS ` — its logger writes
+    // there unconditionally and nothing else is on stdout but audio.
+    recordsOn: 'stderr',
+    parse: (stdout, stderr) => {
+      const out = [];
+      let mer = null, ber = null, synced = false, name = null;
+      for (const raw of String(stderr).split('\n')) {
+        // The logger's own timestamp, which is wall clock at decode time and says
+        // nothing about the capture — so it comes off rather than being reported as if
+        // it were a time in the signal.
+        const line = raw.replace(/^\d{2}:\d{2}:\d{2}\s+/, '').trim();
+        if (!line) continue;
+
+        const m = /^MER:\s*([-\d.]+)\s*dB \(lower\),\s*([-\d.]+)\s*dB \(upper\)/.exec(line);
+        if (m) { mer = { lower: Number(m[1]), upper: Number(m[2]) }; continue; }
+        const b = /^BER:\s*([\d.]+)/.exec(line);
+        if (b) { ber = Number(b[1]); continue; }
+        if (/^Synchronized/.test(line)) { synced = true; continue; }
+
+        const kv = /^(Station name|Title|Artist|Album|Genre|Slogan|Message):\s*(.+)$/.exec(line);
+        if (kv) {
+          if (kv[1] === 'Station name') name = kv[2].trim();
+          out.push({ kind: kv[1].toLowerCase(), text: `${kv[1]}: ${kv[2].trim()}` });
+          continue;
+        }
+        const c = /^Country:\s*(\S+),\s*FCC facility ID:\s*(\d+)/.exec(line);
+        if (c) { out.push({ kind: 'station', text: `${c[1]}, FCC facility ${c[2]}` }); continue; }
+        // A file sent over the air. Named rather than summarized, because the name and
+        // the type are how somebody decides whether they want it — and `--dump-aas-files`
+        // is how they get it, which the note says.
+        const lot = /^LOT file: .*\blot=(\d+)\s+name=(\S+)\s+size=(\d+)/.exec(line);
+        if (lot) {
+          out.push({ kind: 'file', text: `${lot[2]} (${lot[3]} bytes)`, lot: Number(lot[1]) });
+          continue;
+        }
+      }
+      // The evidence for all of it, attached to every record rather than reported once
+      // and scrolled away.
+      const quality = {};
+      if (mer) quality.merDb = `${mer.lower.toFixed(1)} / ${mer.upper.toFixed(1)}`;
+      if (ber != null) quality.ber = ber.toFixed(4);
+      for (const r of out) Object.assign(r, quality);
+
+      if (out.length) return out;
+      if (synced) {
+        return { records: [], note: 'locked onto an HD Radio signal but it sent no metadata in ' +
+          `this span${mer ? ` (MER ${quality.merDb} dB)` : ''} — a longer span usually carries one` };
+      }
+      return { records: [], note: 'never synchronized — HD sidebands sit out to about ±200 kHz ' +
+        'either side of the carrier, so a channel narrower than 400 kHz has already filtered ' +
+        'them off' };
+    },
+    title: ['text'],
+  },
+
   // Speech, which is the one decoder here whose failure mode is being *convincing*.
   //
   // Every other program in this table either decodes a frame or does not: a CRC agrees

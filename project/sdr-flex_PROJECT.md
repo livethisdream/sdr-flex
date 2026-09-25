@@ -1224,6 +1224,37 @@ was chosen.
 **The trap worth knowing**: in a container `127.0.0.1` is the container, and nothing on
 your machine is listening there. `server/README.md` says so.
 
+## HD Radio, as built (decode unexercised here)
+
+`ext.nrsc5`: IQ in, events out. An NRSC-5 station carries more than audio — a station
+name, the title and artist of what is playing, and through Advanced Application Services
+*files*, which is a whole channel of content no amount of listening reveals. It reports
+its own MER per sideband and a bit error rate, which ride every record as the evidence
+for it (ADR-0017).
+
+Its own receiver rather than gr-nrsc5: what this needs is the receiving half, and that is
+a self-contained C program. gr-nrsc5 is the transmitter side and drags in a patched
+fdk-aac to encode audio nothing here encodes.
+
+**Read out of its source rather than guessed**, which is what the M17 `-h` line taught.
+`-r -` reads stdin (`main.c:1060`). With `-r` set it wants the program number as its
+*only* positional argument, not a frequency as well (`main.c:926` counts
+`optind + (!input_name + 1)`) — passing both is a usage error and no decode at all. Its
+logger writes to stderr with a wall-clock `HH:MM:SS` prefix, which is when the decode ran
+rather than a time in the signal, so it comes off.
+
+**What is verified**: eight tests over the parse, and the adapter run end to end against
+the real binary — converting to cs16 at 744.2 kS/s, feeding stdin, coming back in 0.4 s
+with the honest "never synchronized" note. **What is not**: a successful decode.
+Synthesizing NRSC-5 needs gr-nrsc5 and argilo's patched fdk-aac, and building a
+transmitter to test a receiver is a bigger dependency than the fixture is worth here.
+`NO_FIXTURE` says so.
+
+One thing the image would have shipped broken: nrsc5 links `libao` and `libfftw3f`, and a
+binary copied out of the build stage does not bring its shared libraries. The runtime
+stage now installs both, and the verification line runs noise through the real binary on
+stdin so a rejected argument list fails the build rather than the first click.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the

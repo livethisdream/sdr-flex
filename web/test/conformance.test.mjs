@@ -142,6 +142,13 @@ const NO_FIXTURE = {
   // the image if no `transcription` comes back — so a broken integration cannot ship
   // quietly. Replace this line with a fixture on a machine that can fetch the model.
   'ext.whisper': 'parse and flags covered by speech.test.mjs; a real decode needs a model this environment cannot download',
+  // Its plumbing *is* exercised — nrsc5.test.mjs covers the parse against the log lines
+  // read out of its own `main.c`, and the adapter has been run end to end against the
+  // real binary, converting, feeding stdin and coming back with the honest "never
+  // synchronized" note. What is missing is a signal to succeed on: synthesizing NRSC-5
+  // needs gr-nrsc5 and argilo's patched fdk-aac, which is a transmitter, and building
+  // one to test a receiver is a bigger dependency than the fixture is worth here.
+  'ext.nrsc5': 'parse and run covered by nrsc5.test.mjs; a successful decode needs an HD Radio transmitter to synthesize one',
 };
 
 test('every external decoder has a golden capture, or is listed as not having one', () => {

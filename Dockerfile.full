@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       gnuradio-dev pybind11-dev python3-dev libspdlog-dev \
       libcodec2-dev libboost-program-options-dev \
       meson ninja-build libsndfile1-dev libliquid-dev nlohmann-json3-dev \
-      curl \
+      curl libao-dev libfftw3-dev libusb-1.0-0-dev \
  && rm -rf /var/lib/apt/lists/*
 
 # Pinned, because "whatever HEAD was that day" is not a build you can repeat. These are
@@ -58,6 +58,7 @@ ARG M17_REF=9b8cec24d3f8d5e9f7f6e9c23661439e32343d6b
 ARG LIBM17_REF=07926d08ade8509f1ce55d0289f229ab44cbcf51
 ARG M17_IMPL_REF=f80793f169751b1fd2de6aaf8de52f862360142c
 ARG REDSEA_REF=v1.3.1
+ARG NRSC5_REF=v3.1.0
 ARG WHISPER_REF=v1.9.4
 # Which speech model. `base.en` is 142 MB and is the smallest that is worth listening
 # to; `tiny.en` (75 MB) drops words out of anything noisy and `small.en` (466 MB) is
@@ -123,6 +124,20 @@ RUN git clone --recursive https://github.com/M17-Project/M17_Implementations /tm
  && install -m 0755 /tmp/m17impl/SP5WWP/m17-packet/m17-packet-encode "$OOT/bin/" \
  && rm -rf /tmp/m17impl
 
+# HD Radio. Its own receiver rather than gr-nrsc5, because what this needs is the
+# receiving half and that is a self-contained C program: samples on stdin, station name,
+# song and file announcements on stderr. gr-nrsc5 is the transmitter side and would drag
+# in a patched fdk-aac to encode audio nothing here is encoding.
+RUN git clone https://github.com/theori-io/nrsc5 /tmp/nrsc5 \
+ && git -C /tmp/nrsc5 checkout --quiet "$NRSC5_REF" \
+ && cmake -S /tmp/nrsc5 -B /tmp/nrsc5/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX="$OOT" \
+      -DUSE_COLOR=OFF \
+ && cmake --build /tmp/nrsc5/build -j"$(nproc)" \
+ && cmake --install /tmp/nrsc5/build \
+ && rm -rf /tmp/nrsc5
+
 # Speech to text. CPU only: this image has no GPU to find, and whisper's CPU path is
 # perfectly usable on the length of audio a radio channel produces — seconds at a time,
 # not hours. The shared libraries go to $OOT with everything else and `ldconfig` in the
@@ -185,12 +200,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # The vendor capture programs, one per driver in server/radio.js. The Pluto needs none
 # of them — it is a network device, and the protocol is spoken directly (ADR-0030).
+# `libao4` and `libfftw3-single3` are nrsc5's, not the radios'. It is copied in as a
+# binary from the build stage and a binary does not bring its shared libraries with it —
+# `rtl-sdr` below already supplies librtlsdr, libusb and libudev, and `ldd` lists these
+# two as the rest. Without them the binary is present and will not start, which the
+# verification line further down turns into a failed build rather than a dead menu entry.
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libiio-utils \
       rtl-sdr \
       soapysdr-tools soapysdr-module-rtlsdr \
       uhd-host \
       ca-certificates \
+      libao4 libfftw3-single3 \
  && rm -rf /var/lib/apt/lists/*
 
 # The decoders that come packaged, one per adapter in server/adapters.js. An adapter
@@ -245,6 +267,7 @@ RUN node --version \
  && m17-demod --help > /dev/null && m17-mod --help > /dev/null && echo 'm17 ok' \
  && m17-packet-decode -h 2>&1 | grep -q 'decode callsigns' && echo 'm17 packet ok' \
  && redsea --version > /dev/null && echo 'redsea ok' \
+ && nrsc5 -h 2>&1 | grep -q 'iq-input-format' && echo 'nrsc5 ok' \
  && command -v rx_sdr > /dev/null && echo 'rx_sdr ok'
 
 # Speech gets a harder check than the others: it *runs a decode*.
@@ -269,7 +292,16 @@ sys.stdout.buffer.write(b'RIFF'+struct.pack('<I',36+len(d))+b'WAVEfmt '+struct.p
  && python3 -c "import json; json.load(open('/tmp/probe.json'))" \
  && echo 'whisper ok' \
  || (echo 'whisper FAILED — stderr follows'; cat /tmp/probe.err; exit 1)
-RUN rm -f /tmp/probe.wav /tmp/probe.json /tmp/probe.err
+# The same treatment for the HD Radio receiver: noise through the real binary on stdin,
+# which must come back "never synchronized" rather than a usage error. That tests the two
+# things the adapter depends on and the help text does not — that `-r -` reads stdin, and
+# that with `-r` set it wants the program number as its only positional argument.
+RUN head -c 4000000 /dev/urandom \
+    | nrsc5 --iq-input-format cs16 -r - -o /dev/null 0 2>/tmp/n5.err; \
+    grep -qv 'Usage:' /tmp/n5.err && echo 'nrsc5 reads stdin ok' \
+ || (echo 'nrsc5 FAILED — it rejected the arguments the adapter passes'; cat /tmp/n5.err; exit 1)
+
+RUN rm -f /tmp/probe.wav /tmp/probe.json /tmp/probe.err /tmp/n5.err
 
 RUN useradd --system --create-home --shell /usr/sbin/nologin sdrflex
 WORKDIR /app
