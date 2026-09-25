@@ -18,13 +18,27 @@ import dgram from 'node:dgram';
 import { StreamOut } from '../../server/streamout.js';
 import * as adapters from '../../server/adapters.js';
 
-/** A listener on an ephemeral port, collecting datagrams. */
-async function listener() {
+/**
+ * A listener on an ephemeral port, collecting datagrams.
+ *
+ * `unref` and a `t.after` are not belt and braces here, they are the fix for a real
+ * flake. Node's test runner waits for a file's process to exit, and an open socket keeps
+ * an event loop alive — so a listener still holding one when a test ends does not fail
+ * the run, it *hangs* it, and only sometimes: alone this file finishes in under a
+ * second, and in parallel with thirty-nine others on four cores it wedged the whole
+ * suite twice and then passed in thirty-one seconds. Unreffed, the handle can never be
+ * the last thing holding the loop open; closed from `t.after`, it is released even when
+ * an assertion throws first.
+ */
+async function listener(t) {
   const sock = dgram.createSocket('udp4');
   const got = [];
   sock.on('message', (m) => got.push(Buffer.from(m)));
   await new Promise((r) => sock.bind(0, '127.0.0.1', r));
-  return { port: sock.address().port, got, close: () => sock.close(),
+  sock.unref();
+  const close = () => { try { sock.close(); } catch { /* already closed */ } };
+  if (t) t.after(close);
+  return { port: sock.address().port, got, close,
            // UDP is not ordered and not instant even on loopback, so a test that reads
            // immediately reads nothing. This waits for a count rather than a duration.
            until: async (n, ms = 2000) => {
@@ -39,9 +53,10 @@ async function listener() {
 // headroom test at the bottom.
 const CHUNK_S = 0.25;
 
-test('what goes out is what a decoder would have been handed', async () => {
-  const L = await listener();
+test('what goes out is what a decoder would have been handed', async (t) => {
+  const L = await listener(t);
   const sink = new StreamOut({ host: '127.0.0.1', port: L.port });
+  t.after(() => sink.close());
   // One chunk of tone, converted exactly the way an adapter's input is.
   const n = Math.round(48_000 * CHUNK_S);
   const x = new Float32Array(n);
@@ -61,10 +76,11 @@ test('what goes out is what a decoder would have been handed', async () => {
   assert.ok(peak > 14_000 && peak <= 32_767, `peak sample ${peak}`);
 });
 
-test('a datagram is small enough for the network to carry whole', async () => {
+test('a datagram is small enough for the network to carry whole', async (t) => {
   // Larger than the path MTU and IP fragments it; one lost fragment loses all of it.
-  const L = await listener();
+  const L = await listener(t);
   const sink = new StreamOut({ host: '127.0.0.1', port: L.port });
+  t.after(() => sink.close());
   const count = sink.write(Buffer.alloc(10_000, 7));
   await L.until(count);
   const sizes = new Set(L.got.map((b) => b.length));
@@ -73,11 +89,12 @@ test('a datagram is small enough for the network to carry whole', async () => {
   assert.equal(L.got.reduce((a, b) => a + b.length, 0), 10_000, 'bytes went missing');
 });
 
-test('it counts what left, because UDP never answers', async () => {
+test('it counts what left, because UDP never answers', async (t) => {
   // The only honest evidence a sink is working. A number that climbs while the far end
   // says nothing means the far end — which is a different problem from this one.
-  const L = await listener();
+  const L = await listener(t);
   const sink = new StreamOut({ host: '127.0.0.1', port: L.port });
+  t.after(() => sink.close());
   sink.write(Buffer.alloc(2048));
   await L.until(2);
   const st = sink.status();
@@ -87,11 +104,12 @@ test('it counts what left, because UDP never answers', async () => {
   assert.equal(st.error, null);
 });
 
-test('a socket error is recorded rather than thrown at the process', async () => {
+test('a socket error is recorded rather than thrown at the process', async (t) => {
   // A UDP socket reports asynchronously, and an unhandled `error` on an EventEmitter
   // takes the process down — a typo in a hostname would kill the engine for everybody
   // sharing it.
   const sink = new StreamOut({ host: '203.0.113.0', port: 9 });
+  t.after(() => sink.close());
   sink.sock.emit('error', new Error('EHOSTUNREACH'));
   assert.match(sink.status().error, /EHOSTUNREACH/);
   // And once it is in that state it stops trying rather than piling up callbacks.
@@ -107,7 +125,7 @@ test('closing twice is not an error', () => {
   assert.doesNotThrow(() => sink.close());
 });
 
-test('one chunk fits inside what a socket will carry in a burst', async () => {
+test('one chunk fits inside what a socket will carry in a burst', async (t) => {
   // The reason the application feeds this a quarter second at a time rather than a span
   // at a time. Nothing here paces datagrams — `send` queues and returns, deliberately,
   // so that a sink cannot stall the read loop for something that may not even be
@@ -121,8 +139,9 @@ test('one chunk fits inside what a socket will carry in a burst', async () => {
   const chunkBytes = 48_000 * 2 * CHUNK_S;
   assert.equal(chunkBytes, 24_000);
 
-  const L = await listener();
+  const L = await listener(t);
   const sink = new StreamOut({ host: '127.0.0.1', port: L.port });
+  t.after(() => sink.close());
   const count = sink.write(Buffer.alloc(chunkBytes, 3));
   const arrived = await L.until(count, 5000);
   sink.close(); L.close();

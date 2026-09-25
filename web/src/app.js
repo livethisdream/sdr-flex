@@ -396,8 +396,35 @@ class App {
     // — trace over waterfall, one shared axis (ADR-0020). It is the same picture of a
     // different signal, so it is the same view rather than a second one that would
     // have to grow its own zoom, its own dB range and its own colormap.
-    if (n.out.kind === 'real' && this.vp(k).domain === 'frequency') return 'Spectrum';
+    if (n.out.kind === 'real') {
+      // ADR-0036 made which axis a view parameter rather than a node or a second tab,
+      // and ruled out three ways not to do it. Showing both at once was not one of
+      // them: it is still one node, one tab and one set of samples — drawn against two
+      // independent variables instead of one, which is what its own closing line says.
+      //
+      // It earns the room on a demodulator, where the two answer different questions.
+      // Is there a burst here, and where does it start, is a waveform. Whether a station
+      // is in stereo, or carries RDS at all, is a question about *which subcarriers
+      // exist* and a scope cannot answer it.
+      const d = this.vp(k).domain;
+      if (d === 'frequency') return 'Spectrum';
+      if (d === 'both') return 'Both';
+    }
     return VIEWS[n.out.kind][0];
+  }
+
+  /**
+   * Is the spectrum stage on screen?
+   *
+   * `Both` draws it beside the scope, so every question that used to be "is the view
+   * Spectrum" is really this one: the stage exists, it can be dragged on, zoomed and
+   * double-clicked, and its controls belong in the bar. Asking the old way meant the
+   * selection gesture, both zooms and the whole view group quietly stopped working the
+   * moment a second plot appeared next to them — which is how this was found.
+   */
+  hasSpectrum() {
+    const v = this.view();
+    return v === 'Spectrum' || v === 'Both';
   }
 
   /**
@@ -864,8 +891,14 @@ class App {
 
   renderStage() {
     const v = this.view();
-    $('#pane-spectrum').hidden = v !== 'Spectrum';
-    $('#pane-time').hidden = v !== 'Time';
+    // `Both` is the two panes at once rather than a third pane duplicating either, so
+    // nothing here has a second copy of a waterfall or a scope to keep in step. The
+    // panes stack or sit side by side — `.panes.split` decides which, on width — and
+    // everything inside them is what it already was.
+    const both = v === 'Both';
+    $('#panes').classList.toggle('split', both);
+    $('#pane-spectrum').hidden = v !== 'Spectrum' && !both;
+    $('#pane-time').hidden = v !== 'Time' && !both;
     $('#pane-bits').hidden = v !== 'Bits';
     $('#pane-flow').hidden = v !== 'Flow';
     $('#pane-events').hidden = v !== 'Events';
@@ -874,7 +907,7 @@ class App {
     $('#pane-stream').hidden = v !== 'Stream';
     $('#pane-bytes').hidden = v !== 'Bytes';
     $('#pane-grid').hidden = v !== 'Grid';
-    if (v === 'Spectrum') {
+    if (v === 'Spectrum' || both) {
       // The waterfall holds rows for one node at a time, and this pane no longer belongs
       // to one node: a demodulator's baseband spectrum draws here too. Changing tabs can
       // now change what the rows mean without changing the pane, and old rows under a new
@@ -1213,7 +1246,8 @@ class App {
     // group because it decides what the rest of the group is about.
     const domainCells = n.out.kind === 'real'
       ? [{ key: 'domain', label: 'domain', unit: '', type: 'enum', value: p.domain,
-           values: ['time', 'frequency'] }]
+           values: ['time', 'frequency', 'both'],
+           hint: 'the waveform, the baseband spectrum it is made of, or both at once' }]
       : [];
     // And which channel, where there is a choice. It only appears on a node that
     // produces more than one, because a `channel` pill reading "sum" above a stream that
@@ -1224,21 +1258,26 @@ class App {
       : [];
     const viewCells = domainCells.concat(channelCells);
 
-    if (this.view() === 'Time') {
-      groups.push({
-        key: 'view', title: 'view',
-        cells: viewCells.concat([
-          { key: 'trigger', label: 'trigger', unit: '', type: 'enum', value: p.trigger, values: ['auto', 'free'] },
-          { key: 'spanS', label: 'span', unit: 'ms', type: 'num', value: p.spanS,
-            fmt: (v) => (v * 1e3).toFixed(0), step: 0.0008, min: 0.002, max: 1.0 },
-        ]),
-      });
+    // The scope's controls and the spectrum's, kept apart so `both` can have the two
+    // sets in one group. It folds the overflow behind its `more` chip, which is what
+    // that mechanism is for — and a `both` with no view group at all would be a mode
+    // somebody could enter and not find the control to leave by, since `domain` lives
+    // in this group.
+    const timeCells = [
+      { key: 'trigger', label: 'trigger', unit: '', type: 'enum', value: p.trigger, values: ['auto', 'free'] },
+      { key: 'spanS', label: 'span', unit: 'ms', type: 'num', value: p.spanS,
+        fmt: (v) => (v * 1e3).toFixed(0), step: 0.0008, min: 0.002, max: 1.0 },
+    ];
+    const onTime = this.view() === 'Time' || this.view() === 'Both';
+    const onSpec = this.hasSpectrum();
+    if (onTime && !onSpec) {
+      groups.push({ key: 'view', title: 'view', cells: viewCells.concat(timeCells) });
     }
 
-    if (this.view() === 'Spectrum') {
+    if (onSpec) {
       groups.push({
         key: 'view', title: 'view',
-        cells: viewCells.concat([
+        cells: viewCells.concat(onTime ? timeCells : []).concat([
           { key: 'bins', label: 'fft', unit: 'bins', type: 'enum', value: String(p.bins), values: ['256', '512', '1024', '2048', '4096'] },
           { key: 'colormap', label: 'colormap', unit: '', type: 'enum', value: p.colormap, values: COLORMAPS },
           { key: 'speed', label: 'speed', unit: 'rows/s', type: 'num', value: p.speed, fmt: (v) => String(Math.round(v)), step: 0.35, min: 2, max: 120, integer: true },
@@ -2632,7 +2671,7 @@ class App {
 
   /** Keyboard zoom works about the center, since there is no pointer to anchor to. */
   zoomKey(factor) {
-    if (this.view() !== 'Spectrum') return;
+    if (!this.hasSpectrum()) return;
     const p = this.vp(this.current);
     const width = p.zoomHi - p.zoomLo;
     const center = (p.zoomLo + p.zoomHi) / 2;
@@ -2705,7 +2744,7 @@ class App {
     });
 
     stage.addEventListener('pointerdown', (e) => {
-      if (this.view() !== 'Spectrum') return;
+      if (!this.hasSpectrum()) return;
       if (e.target.closest('#cbar-wrap') || e.target.closest('#markers')) return;
       const r = stage.getBoundingClientRect();
       const wf = $('#wf').getBoundingClientRect();
@@ -2815,7 +2854,7 @@ class App {
     this.resetZoom = resetZoom;
 
     stage.addEventListener('wheel', (e) => {
-      if (this.view() !== 'Spectrum') return;
+      if (!this.hasSpectrum()) return;
       e.preventDefault();
       const r = stage.getBoundingClientRect();
       const at = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
@@ -2823,7 +2862,7 @@ class App {
       else applyZoom(e.deltaY > 0 ? 1.18 : 1 / 1.18, at);
     }, { passive: false });
 
-    stage.addEventListener('dblclick', () => { if (this.view() === 'Spectrum') resetZoom(); });
+    stage.addEventListener('dblclick', () => { if (this.hasSpectrum()) resetZoom(); });
 
     // pinch: two pointers set both the scale and where it is anchored
     const pts = new Map();
@@ -3073,7 +3112,7 @@ class App {
     const v = this.view();
     const p = this.vp(this.current);
 
-    if (v === 'Spectrum') {
+    if (v === 'Spectrum' || v === 'Both') {
       const pin = this.engine.isPinned(this.channel);
 
       if (pin) {
@@ -3167,7 +3206,11 @@ class App {
           this.waterfall.draw();
         }
       }
-    } else if (v === 'Time') {
+    }
+    // Its own `if` rather than the next link in the chain, so `Both` can run the two of
+    // them. `Bits` stays chained to this one, so every other view still takes exactly
+    // one branch.
+    if (v === 'Time' || v === 'Both') {
       // a triggered display is latched, so it is recomputed a few times a second
       // and simply redrawn in between — free-run still needs every frame
       this._tsAcc = (this._tsAcc || 0) + dt;

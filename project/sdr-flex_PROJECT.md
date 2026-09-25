@@ -825,7 +825,50 @@ browser.
 Also this pass: American spelling fixed throughout, including in files that predate the
 house rule.
 
+## Both axes at once, as built
+
+`domain: both` on any `real` node draws the waveform and the baseband spectrum together
+— side by side above 900px, stacked below it. ADR-0036 ruled out three ways to give a
+real stream two readings: a WBFM node, a `Spectrum of` node, and a second tab. Showing
+both at once was not among them, and it contradicts none of them: still one node, one
+tab, one set of samples, drawn against two independent variables instead of one, which
+is what that ADR's own closing line describes.
+
+No third pane. The two existing panes stop being `position:absolute` and share the
+space, so there is no second waterfall or second scope to keep in step. Side by side is
+preferred over stacked because the two are read against different axes and stacking
+halves the waterfall, which is the one that needs the pixels.
+
+**Two regressions it caused, found by driving it rather than by looking at it.** Five
+places asked `view() === 'Spectrum'`, and in `both` the view is `Both`:
+
+- The selection drag, both zooms and the double-click reset all stopped working. The
+  stage was on screen and inert. Measured against `domain: frequency` as a control — the
+  same drag there selected 36–62.4 kHz and opened the menu; under `both` it did nothing.
+- Worse: neither view group was pushed to the strip, so there was no `domain` control at
+  all. `both` was a mode you could enter and not leave by the bar you entered it from.
+
+Both now go through one `hasSpectrum()` rather than five string comparisons that can
+drift apart again.
+
+**And a flake the suite caught on the way out.** The whole suite started hanging — not
+failing, hanging, twice past a five-minute timeout. Serial it was green; parallel without
+`streamout.test.mjs` it was green; parallel with it, green *sometimes*. Node's test runner
+waits for each file's process to exit and an open socket keeps an event loop alive, so a
+listener still holding one at the end of a test does not fail the run, it wedges it — and
+only when the machine is busy enough for the timing to line up. The test listeners are
+`unref`'d now, so such a handle can never be the last thing holding the loop open, and
+they close from `t.after` so it happens even when an assertion throws first. Four
+consecutive parallel runs afterwards: 450 passing in 28–33 s each.
+
 ## Wanted later
+
+- **Persistent sessions.** Asked for mid-session. Today a graph survives a reload as a
+  *recipe* (`resume.js`, ADR-era note above) and nothing else: close the tab for good and
+  the work is gone. Wanted is a session that outlives the browser — named, listed,
+  reopened. Worth settling first: whether it is the recipe written somewhere durable
+  server-side, or the engine keeping a live session a client can reattach to, which is a
+  different and much larger claim about what the server is.
 
 
 - **The CTF's remaining modulations.** The 2026 challenge list is NBFM, WBFM, USB/LSB, CW,

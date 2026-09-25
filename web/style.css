@@ -227,6 +227,27 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .lnote { max-width:40ch; font-size:.74rem; color:var(--dim); line-height:1.5; }
 
 .panes { flex:1; min-height:0; position:relative; }
+
+/* Both axes at once (ADR-0036's `domain: both`).
+ *
+ * The two panes share the space instead of one of them being a third pane that
+ * duplicates the other — there is no second waterfall and no second scope to keep in
+ * step, only `position:absolute` turned off so they can sit next to each other.
+ *
+ * Side by side when there is width for it, stacked when there is not. Stacked is the
+ * fallback rather than the default because these two plots are read against different
+ * axes: side by side gives each its full height, where stacking halves the waterfall,
+ * which is the one of the two that needs the pixels. */
+.panes.split { display:flex; flex-direction:column; }
+.panes.split > .pane { position:relative; inset:auto; }
+.panes.split > #pane-spectrum { flex:1 1 60%; min-height:0; }
+.panes.split > #pane-time { flex:1 1 40%; min-height:0; border-top:1px solid var(--rule); }
+@media (min-width: 900px) {
+  .panes.split { flex-direction:row; }
+  .panes.split > #pane-spectrum { flex:1 1 58%; min-width:0; }
+  .panes.split > #pane-time { flex:1 1 42%; min-width:0; border-top:none;
+                              border-left:1px solid var(--rule); }
+}
 .pane { position:absolute; inset:0; display:flex; flex-direction:column; }
 .pane[hidden] { display:none; }
 .pane.scrolly { overflow:auto; padding:1rem; }
