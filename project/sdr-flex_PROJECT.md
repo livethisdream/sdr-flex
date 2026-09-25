@@ -1156,6 +1156,29 @@ program that reads samples and prints JSON, and a short Python script satisfies 
 contract exactly. So the operator-facing path is now exercised on any machine with a
 python3 rather than only on one with a full GNU Radio install.
 
+## The hosted client
+
+**It needs nothing ported.** `web/` is static ES modules with no build step, and the
+client falls back to its in-tab engine when no websocket answers — so whatever is on the
+deployed branch *is* the hosted version. Checked the way Pages actually serves it (a dumb
+file server with no `/ws`, and no `?engine=mock`): it comes up in 0.8 s, Inferno is the
+default, the speaker and the playback speed work, autoscale works, and `Identify`
+correctly reports that it has nothing to run.
+
+So everything client-side from the last two sessions is already there once the branch is
+right: the symbol-grid and tuner-grid fixes, the reload recipe, the menu hotkeys, the
+speaker, half and quarter speed, the dB popover fix, autoscale and Inferno.
+
+What it cannot have is anything that runs as a process — the external decoders, a radio,
+the capture library, and the streamed decode that drives them. That is not a gap to close;
+it is what the two deployments are for.
+
+**The one thing that was wrong**: `pages.yml`'s deploy trigger named
+`claude/sdr-flex-toolkit-planning-c4ghl1`, the branch that was trunk by accident until
+`main` took over and which has not moved since. Now `main`. If Pages is set to *Deploy
+from a branch* rather than *GitHub Actions*, the same correction has to be made in
+Settings → Pages, and that is a setting no file in this repository can see.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the
