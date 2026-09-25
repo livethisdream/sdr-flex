@@ -27,9 +27,13 @@ export const PROTOCOL = 1;
 const CHUNK_FLOATS = 1 << 20;
 
 export class Session {
-  constructor(conn, { library, log = () => {}, ringDir, pluginDir } = {}) {
+  constructor(conn, { library, log = () => {}, ringDir, pluginDir, sessions = false } = {}) {
     this.conn = conn;
     this.library = library;
+    // Whether this box keeps saved sessions. Said here and served over HTTP: a session
+    // is a document, not a graph operation (ADR-0042), and the dispatch table below is
+    // the engine's own calls and nothing else.
+    this.sessions = sessions;
     this.log = log;
     this.ringDir = ringDir;
     this.pluginDir = pluginDir;
@@ -124,7 +128,7 @@ const METHODS = {
   async hello() {
     const table = adapters.list();
     return { protocol: PROTOCOL, engine: 'node', captures: !!this.library, radios: true,
-             plugins: !!this.pluginDir,
+             plugins: !!this.pluginDir, sessions: !!this.sessions,
              // Which build answered. The page is served by this same process, so this is
              // the version of the client too — one number, not two that can disagree.
              version: version(),

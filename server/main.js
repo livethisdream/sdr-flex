@@ -23,6 +23,7 @@ import { PluginDir } from './plugindir.js';
 import * as adapters from './adapters.js';
 import { version, versionLine } from './version.js';
 import { AdapterDir } from './adapterdir.js';
+import { SessionStore, MAX_BYTES } from './sessions.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,7 +43,22 @@ export const CONFIG = {
   // Decoders you added (ADR-0026). Unset by default: an adapter is a command line, so
   // this directory only exists because you said where it is.
   adapterDir: process.env.SDRFLEX_ADAPTERS || null,
+  // Saved sessions (ADR-0042). Only an override: where they go by default is a
+  // subdirectory of whatever capture directory the server was given, which is the
+  // directory somebody mounted. A sessions directory beside the source tree is a
+  // sessions directory inside the image, and the first rebuild after a week's work
+  // would delete exactly the thing this feature exists to keep.
+  // Left `undefined` rather than null when it is not set, and that is load-bearing: a
+  // property that is undefined takes the destructuring default below, and one that is
+  // null does not. Null is how a caller says "keep none"; unset is how it says "wherever
+  // the captures are".
+  sessionDir: process.env.SDRFLEX_SESSIONS || undefined,
 };
+
+/** Where sessions go for a given capture directory. No captures, no sessions. */
+export function sessionDirFor(captureDir) {
+  return captureDir ? path.join(captureDir, '.sessions') : null;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -106,9 +122,81 @@ function underWSL() {
   try { return /microsoft|wsl/i.test(fs.readFileSync('/proc/version', 'utf8')); } catch { return false; }
 }
 
-function serveStatic(req, res, webDir) {
+/** JSON out, with the length set, because a saved session is read back by a program. */
+function sendJson(res, code, body) {
+  const text = JSON.stringify(body);
+  res.writeHead(code, { 'content-type': 'application/json',
+                        'content-length': Buffer.byteLength(text),
+                        'cache-control': 'no-store' });
+  res.end(text);
+}
+
+/**
+ * The body, or nothing, with a ceiling.
+ *
+ * Refused by its `content-length` where there is one and by counting where there is not,
+ * because a chunked request has no length to check and is the one somebody would use.
+ */
+function readBody(req, limit = MAX_BYTES) {
+  return new Promise((resolve, reject) => {
+    const declared = Number(req.headers['content-length'] || 0);
+    if (declared > limit) { reject(new Error('that is too large to be a session')); return; }
+    let n = 0;
+    const parts = [];
+    req.on('data', (c) => {
+      n += c.length;
+      if (n > limit) { reject(new Error('that is too large to be a session')); req.destroy(); return; }
+      parts.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(parts).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+/**
+ * Saved sessions, over HTTP rather than over the socket.
+ *
+ * A session is a document and the socket's dispatch table is the engine's own calls —
+ * see the note at the top of `session.js`, and `web/src/sessions.js` for why that line
+ * is worth holding. It also means `curl` can back them up.
+ */
+async function serveSessions(req, res, store, rel) {
+  if (!store) { sendJson(res, 404, { error: 'this box keeps no sessions' }); return true; }
+  const id = rel === '/sessions' ? null : decodeURIComponent(rel.slice('/sessions/'.length));
+  try {
+    if (req.method === 'GET' && !id) { sendJson(res, 200, { sessions: store.list() }); return true; }
+    if (req.method === 'GET') {
+      const rec = store.read(id);
+      if (!rec) { sendJson(res, 404, { error: 'no session by that name' }); return true; }
+      sendJson(res, 200, rec);
+      return true;
+    }
+    if (req.method === 'PUT' && id) {
+      const rec = JSON.parse(await readBody(req));
+      sendJson(res, 200, store.write(id, rec));
+      return true;
+    }
+    if (req.method === 'DELETE' && id) {
+      store.remove(id);
+      res.writeHead(204).end();
+      return true;
+    }
+  } catch (e) {
+    sendJson(res, 400, { error: e.message });
+    return true;
+  }
+  res.writeHead(405).end('no');
+  return true;
+}
+
+function serveStatic(req, res, webDir, sessions = null) {
   const url = new URL(req.url, 'http://x');
   let rel = decodeURIComponent(url.pathname);
+
+  if (rel === '/sessions' || rel.startsWith('/sessions/')) {
+    serveSessions(req, res, sessions, rel);
+    return;
+  }
 
   // `curl -s host:8722/version` — the check that needs no browser, no websocket and no
   // scrolling back through a log. It is the first thing to reach for after a rebuild.
@@ -138,14 +226,17 @@ function serveStatic(req, res, webDir) {
   });
 }
 
-export function createServer({ webDir, captureDir, quiet, ringDir, pluginDir } = CONFIG) {
+export function createServer({ webDir, captureDir, quiet, ringDir, pluginDir,
+                               sessionDir = sessionDirFor(captureDir) } = CONFIG) {
   const log = quiet ? () => {} : (...a) => console.log('[sdr-flex]', ...a);
   const library = captureDir && fs.existsSync(captureDir) ? new Library(captureDir) : null;
   if (!library) log(`no capture directory at ${captureDir} — the synthetic scene only`);
   const dir = pluginDir === undefined ? CONFIG.pluginDir : pluginDir;
   const plugins = dir && fs.existsSync(dir) ? new PluginDir(dir) : null;
 
-  const server = http.createServer((req, res) => serveStatic(req, res, webDir));
+  const sessions = sessionDir ? new SessionStore(sessionDir) : null;
+
+  const server = http.createServer((req, res) => serveStatic(req, res, webDir, sessions));
   // A malformed request or a client that hangs up mid-header is not news, and is
   // certainly not a reason to stop serving everyone else.
   server.on('clientError', (err, socket) => {
@@ -159,13 +250,13 @@ export function createServer({ webDir, captureDir, quiet, ringDir, pluginDir } =
     if (!conn) return;
     conn.on('error', (e) => log(`socket: ${e.message}`));
     log('client connected');
-    const s = new Session(conn, { library, log, pluginDir: plugins,
+    const s = new Session(conn, { library, log, pluginDir: plugins, sessions: !!sessions,
                                   ringDir: ringDir || CONFIG.ringDir });
     conn.on('close', () => log('client gone'));
     return s;
   });
 
-  return { server, library, plugins, log };
+  return { server, library, plugins, sessions, log };
 }
 
 /**

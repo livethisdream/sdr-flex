@@ -123,6 +123,9 @@ Working end to end:
 - **A reload no longer loses everything.** The window asks on the way out when there is a
   chain to lose, and what is on screen is written down as a recipe every three seconds
   and offered back on the next load (`web/src/resume.js`)
+- **Work outlives the tab.** The same recipe, named, listed and kept — on the box when
+  there is one, in the browser when there is not, and the same JSON either way
+  (`web/src/sessions.js`, ADR-0042)
 
 Tests: 404 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
@@ -863,12 +866,9 @@ consecutive parallel runs afterwards: 450 passing in 28–33 s each.
 
 ## Wanted later
 
-- **Persistent sessions.** Asked for mid-session. Today a graph survives a reload as a
-  *recipe* (`resume.js`, ADR-era note above) and nothing else: close the tab for good and
-  the work is gone. Wanted is a session that outlives the browser — named, listed,
-  reopened. Worth settling first: whether it is the recipe written somewhere durable
-  server-side, or the engine keeping a live session a client can reattach to, which is a
-  different and much larger claim about what the server is.
+- ~~**Persistent sessions.**~~ Built (ADR-0042). The question it was waiting on —
+  recipe written somewhere durable, or a live engine held open — is settled below, and
+  the deciding argument was not effort.
 
 
 - **The CTF's remaining modulations.** The 2026 challenge list is NBFM, WBFM, USB/LSB, CW,
@@ -1363,6 +1363,78 @@ agreement rewarded smoothness and picked the wrong branch. And smoothing the
 autocorrelation inside the frame search — the obvious next idea — was tried across four
 widths and made every case worse; it is not in the code.
 
+## Persistent sessions, as built
+
+Asked for as "Todo: persistent sessions" and then "Tempest and then persistent". A graph
+already survived a reload as a *recipe* — `resume.js`, one `localStorage` slot,
+overwritten every three seconds. What it did not have was a name. Close the tab for good
+and come back on Tuesday and there is nothing to come back to.
+
+**The open question was recipe-versus-live-engine, and it is not close.** Holding a
+session open on the server loses on the first argument and three more behind it:
+
+- **This tool runs with no server at all** — `index.html` off a disk, the hosted copy,
+  `?engine=mock`. A session living in a server process is a feature the primary
+  deployment cannot have.
+- It inverts ADR-0029. A held session holds a playhead, and the client owns the clock.
+- It stores derived values, which ADR-0017 exists to prevent. A recipe re-derives them
+  with fresh evidence; a held engine brings back a measurement of a capture that may
+  have been replaced.
+- Lifetimes, eviction, a memory budget, two clients on one session — all of it to avoid
+  re-running a chain that rebuilds in under a second.
+
+What a live session would genuinely buy is a long decode you do not want to repeat.
+Nothing here is one. Written up as **ADR-0042**.
+
+**So: the same recipe, named, in a place that is not one slot.** `web/src/sessions.js`
+adds no new description of a graph — it is a record (`{id, name, at, nodes, source,
+recipe}`), two stores with one shape, and a replay that is `resume.replay`.
+
+- **With a box**, sessions are `.json` files in `.sessions` *inside the capture
+  directory*. That is the directory somebody mounted; a sessions directory beside the
+  source tree is one inside the image, and the first `--build` after a week's work would
+  delete the thing the feature exists to keep. Asserted that the library's scan cannot
+  see it.
+- **Without one**, they are in the browser. Same JSON, so moving between the two is a
+  copy rather than a conversion, and `curl host:8722/sessions/<id>` is a backup.
+- **Over HTTP, not the socket.** The socket's dispatch table is deliberately the calls
+  `MockEngine` already had — the whole point of that exercise, and only meaningful if the
+  calls do not grow to make it true. A session is a document; it goes where `/version`
+  goes.
+- **`hello` says whether the box keeps them** rather than the client probing. A probe
+  cannot tell "no session directory" from "not a box": on a static host `GET /sessions`
+  answers with a 404 *page*.
+- **Nothing autosaves under a name.** No undo here, and a session that wrote itself down
+  continuously would eventually overwrite what you meant to keep with what you were
+  about to abandon. The name wears an asterisk when the graph has moved. The
+  three-second slot stays, doing the job it was built for.
+- **A live radio is refused with a reason.** `canReplay` already declined to restore one;
+  this declines at save time, where somebody can still do something about it.
+
+**The server now writes on a client's behalf for the first time**, which with no
+authentication in front of it is worth bounding out loud: one `.json` per id in one
+directory, ids matched against `[a-z0-9-]` *on the server* and not merely generated
+safely on the client, writes through a rename so a full disk cannot leave a truncated
+session where a whole one was, and a body over a megabyte refused before it is read.
+
+**Found by smoke-testing rather than by the suite, which is the note worth keeping.**
+Twenty-one tests passed against a server that kept no sessions at all. They each built a
+server by naming a few options; `start()` hands over `CONFIG` whole, and `CONFIG` carried
+an explicit `sessionDir: null` — which is a different thing from leaving the key out, and
+took the destructuring default away. Four `curl` calls against the real binary found it in
+a minute. There is now a test that constructs the server the way `start` does.
+
+**One UI change went with it.** The strip's text control committed on every keystroke,
+which is right for a sync word — each character narrows the framing and you watch it
+happen — and wrong for a name: typing "work" saved four times and called it "wor" on the
+way. `commit: 'enter'` holds the draft until the popover closes, and clears it before
+committing, because committing re-renders and a draft that survives that renames twice.
+
+**Not verified here.** There is no browser in this environment and the Playwright suites
+are not in this checkout, so the click path — the `session` box, the `saved sessions…`
+menu — is exercised only as far as its parts. The stores, the routes, the id safety and
+the replay round trip are tested; the wiring between the strip and those is not.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the
@@ -1615,6 +1687,11 @@ have `/version`.
   and is the tool for this. Two rounds were lost to guessing.
 - **Auto parameters must show their evidence** (ADR-0017). Twice, an estimator was
   confidently wrong in a way only its own stated reasoning exposed.
+- **A default that is `null` is not a default that is missing.** Twenty-one passing
+  tests each named their own options; the shipped `CONFIG` passed `sessionDir: null`,
+  which is present, so the destructuring default never ran and the real server kept no
+  sessions. Tests that construct a thing by hand do not test the way it is constructed
+  for real — build it the way `start` does, at least once.
 - **Pick the measure before you pick the winner, and check the measure can see the
   failure.** Stacking forty TEMPEST frames scored 0.85 on half-against-half agreement
   against 0.51 for seven — and looked visibly blurrier. The measure rewarded smoothness,

@@ -107,3 +107,46 @@ test('re-anchoring repositions but does not rebuild the popover', () => {
   assert.deepEqual(rebuiltVia, [], 'it went back through openPop, which rebuilds everything');
   assert.equal(self.pop.style.left, '10px', 'it should still be placed against its anchor');
 });
+
+// ── a name is not a sync word ───────────────────────────────────────────────
+//
+// The text control committed on every keystroke, which is right for a sync word — every
+// character narrows the framing and you watch it happen — and wrong for anything that is
+// a name. Typing "work" into the session box saved four times and called the work "w",
+// "wo" and "wor" on the way. `commit: 'enter'` holds the draft until the popover closes.
+
+test('a text control that commits on enter does not commit on every keystroke', () => {
+  const got = [];
+  const s = Object.create(Strip.prototype);
+  s.onScrub = (g, k, v) => got.push(v);
+  s._find = () => null;
+  s._openPill = null;
+  s.pop = { hidden: true, style: {} };
+
+  // What `_openPop` would have set up for `commit: 'enter'`, driven directly: there is
+  // no DOM here, and what is being tested is when the draft leaves rather than how the
+  // input element is wired.
+  const commit = (v) => { s.onScrub('node', 'session', v); };
+  for (const draft of ['w', 'wo', 'wor', 'work']) {
+    s._pending = { gk: 'node', key: 'session', value: draft, commit };
+  }
+  assert.deepEqual(got, [], 'nothing left while it was being typed');
+
+  s.closePop();
+  assert.deepEqual(got, ['work'], 'and one value left when it was finished');
+});
+
+test('closing twice does not commit twice', () => {
+  // `commit` re-renders the strip, which comes back through `closePop`. A draft that is
+  // not cleared first is a session saved twice, and on a slower store two writes racing.
+  const got = [];
+  const s = Object.create(Strip.prototype);
+  s.onScrub = (g, k, v) => got.push(v);
+  s._find = () => null;
+  s._openPill = null;
+  s.pop = { hidden: true, style: {} };
+  s._pending = { gk: 'node', key: 'session', value: 'work',
+                 commit: (v) => { s.onScrub('node', 'session', v); s.closePop(); } };
+  s.closePop();
+  assert.deepEqual(got, ['work']);
+});

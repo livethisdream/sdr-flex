@@ -25,9 +25,15 @@ export class Strip {
   }
 
   closePop() {
+    // Whatever was waiting to be committed is committed now, because closing is how
+    // somebody says they are finished with it. Cleared first: `commit` re-renders, which
+    // comes back through here, and a draft that commits itself twice renames twice.
+    const p = this._pending;
+    this._pending = null;
     this.pop.hidden = true;
     if (this._openPill) this._openPill.classList.remove('open');
     this._openPill = null;
+    if (p) p.commit(p.value);
   }
 
   render(groups) {
@@ -303,7 +309,19 @@ export class Strip {
     }
     const text = this.pop.querySelector('.poptext input');
     if (text) {
-      text.addEventListener('input', () => commit(text.value));
+      // Two kinds of text, and the difference is whether a half-typed value means
+      // anything. A sync word does: every character narrows the framing and you watch it
+      // happen, so it commits as you type. A *name* does not — committing "t", "th",
+      // "the" saves three times and calls the work "th" twice on the way. So a spec can
+      // ask to be committed when the person says they are finished, which is Enter or
+      // clicking away, and this holds the draft in the meantime.
+      const onEnter = spec.commit === 'enter';
+      if (onEnter) {
+        this._pending = { gk, key, value: text.value, commit };
+        text.addEventListener('input', () => { this._pending.value = text.value; });
+      } else {
+        text.addEventListener('input', () => commit(text.value));
+      }
       text.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.closePop(); });
       // the caret belongs here the moment it opens; there is nothing else to do in it
       setTimeout(() => { text.focus(); text.select(); }, 0);

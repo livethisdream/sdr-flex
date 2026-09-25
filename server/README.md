@@ -27,6 +27,7 @@ as they are, and the server is Node's own `http`, `net` and `crypto`. Node 22 or
 | `SDRFLEX_WEB` | `../web` | The client to serve |
 | `SDRFLEX_RINGS` | the system temp directory | Where live recordings are kept |
 | `SDRFLEX_PLUGINS` | `../web/plugins` | Decoders the box offers every tab |
+| `SDRFLEX_SESSIONS` | `<captures>/.sessions` | Saved sessions. Inside the capture directory because that is the directory you mounted — one beside the source tree is one a rebuild deletes. No capture directory, no sessions |
 
 ## In a container, on a tailnet
 
@@ -676,6 +677,38 @@ Two things follow that are worth knowing:
   the capture programs above and writing a ring to disk. The driver list is fixed and
   the arguments are built here rather than passed through, so this is not a way to run
   arbitrary commands — but it is a way to use up a dongle and some disk.
+- **Anything that can reach the port can read, write and delete saved sessions.** This is
+  the only thing the server writes on a client's behalf, so it is worth knowing what it
+  is bounded by: one `.json` per session in `SDRFLEX_SESSIONS` and nowhere else, ids that
+  have to match `[a-z0-9-]` before they become a path, and a body over a megabyte refused
+  before it is read. A session holds a graph and a capture's name — no samples.
+
+## Saved sessions
+
+Name the work in the `session` box on the source's parameter bar and press enter, and it
+is kept. `saved sessions…` next to it lists what is there, opens one, or forgets one.
+
+What is stored is a **recipe** and not a result — the nodes, the parameters you turned by
+hand, and which capture — so opening one rebuilds the chain and re-derives every measured
+value against the capture as it is now ([ADR-0042](../docs/adr/0042-a-session-is-a-recipe-somewhere-durable.md),
+[ADR-0017](../docs/adr/0017-auto-manual-parameters.md)). A few kilobytes each. Nothing is
+written until you ask; the name wears an asterisk when the graph has moved since you last
+did.
+
+With this server running they live on the box, so the work follows you between browsers
+and machines. In a tab with no server they live in that browser. Same JSON either way, so
+they are also a `curl` away:
+
+```bash
+curl -s host:8722/sessions | jq                 # what is saved
+curl -s host:8722/sessions/<id> > backup.json   # one of them
+curl -X PUT host:8722/sessions/<id> \
+     -H 'content-type: application/json' -d @backup.json
+```
+
+A live radio cannot be saved — the samples it was reading are gone, and a session that
+can never be opened is worse in a list than one that was refused. Record a ring first and
+save that.
 
 ## Is it working?
 

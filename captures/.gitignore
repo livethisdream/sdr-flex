@@ -1,3 +1,8 @@
 # Captures live on the box, not in the repository. Never commit sample data.
+#
+# `*` also covers `.sessions/`, which is where saved sessions go (ADR-0042) and which is
+# deliberately inside this directory — a session names the capture it was built on, and
+# the name of a capture is exactly the kind of thing the house rule about private
+# repositories is about.
 *
 !.gitignore

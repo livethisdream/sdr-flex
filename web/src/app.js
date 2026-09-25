@@ -24,6 +24,7 @@ import { WINDOWS, spectrumHasSignal } from './dsp.js';
 import * as scene from './scene.js';
 import { CRCS } from './frames.js';
 import * as resume from './resume.js';
+import * as sessions from './sessions.js';
 
 // How much capture one streamed decode covers.
 //
@@ -149,6 +150,29 @@ class App {
     this._specAcc = 0;
     this._specData = null;
     this._lastFrame = performance.now();
+    // Where saved sessions go. This browser until `hello` says the box keeps them,
+    // which is also the final answer for a tab with no server behind it (ADR-0042).
+    this.sessions = sessions.storeFor({ sessions: false });
+    this.sessionId = null;         // the one that is open, if any
+    this.sessionName = '';
+    this._sessionSaved = '';       // the recipe as it was when it was last written
+  }
+
+  /**
+   * Whether the open session has changed since it was written.
+   *
+   * Compared against the same text `keep` compares — nodes and source, not the view —
+   * because moving the playhead is not work somebody would be upset to lose, and a name
+   * that wears an asterisk after every scrub is a name nobody reads.
+   */
+  sessionDirty() {
+    if (!this.sessionId) return false;
+    return this.sessionText() !== this._sessionSaved;
+  }
+
+  sessionText() {
+    const r = resume.recipe(this.engine, { source: this.openedFrom });
+    return r ? JSON.stringify(r.nodes) + JSON.stringify(r.source) : '';
   }
 
   async start() {
@@ -1133,6 +1157,25 @@ class App {
         nodeCells.push({ key: 'radio', label: live ? 'change radio…' : 'listen to a radio…',
                          type: 'action', value: '' });
       }
+      // A session is named by typing its name, and saved by committing it — the same
+      // gesture as naming a node, and for the same reason: this tool has no dialogs.
+      // The asterisk is the document convention and it is doing real work here, because
+      // nothing is written until you ask (ADR-0042).
+      const dirty = this.sessionDirty();
+      nodeCells.push({
+        key: 'session', label: 'session', unit: '', type: 'text', commit: 'enter',
+        placeholder: 'name it to keep it',
+        // The value is the name and nothing else, because it is what the input hands
+        // back when somebody opens the box and presses enter without editing. The
+        // asterisk is display, so it goes where display goes.
+        value: this.sessionName,
+        fmt: (v) => (v ? v + (dirty ? ' *' : '') : 'unsaved'),
+        hint: this.sessionName
+          ? (dirty ? 'changed since it was saved — press enter on the name to save it again'
+                   : `saved in ${this.sessions.where}`)
+          : `type a name and press enter; it is kept in ${this.sessions.where}`,
+      });
+      nodeCells.push({ key: 'sessions', label: 'saved sessions…', type: 'action', value: '' });
       if (live) nodeCells.push({ key: 'stopradio', label: 'stop the radio', type: 'action', value: '' });
     } else {
       const live = !n.params.timeMode || n.params.timeMode.value === 'live';
@@ -1299,6 +1342,7 @@ class App {
       if (k === 'library') this.openLibrary(x, y);
       if (k === 'radio') this.openRadios(x, y);
       if (k === 'stopradio') this.stopRadio();
+      if (k === 'sessions') this.openSessions(x, y);
     };
   }
 
@@ -1336,6 +1380,10 @@ class App {
       this.renderStrip();
       return;
     }
+    // Not a parameter of anything: the name of the work, which is a property of the
+    // window rather than of a node. It sits on the source because that is where "which
+    // capture is this" already lives.
+    if (key === 'session') { await this.saveSession(value); return; }
     const n = this.node();
     if (!n.params[key]) return;
     if (n.out.kind === 'audio' && key === 'volume') this.mixer.setVolume(n.id, value);
@@ -2021,6 +2069,10 @@ class App {
       this.hasLibrary = !!hello.captures;
       this.hasRadios = !!hello.radios;
       this.hasPluginDir = !!hello.plugins;
+      // Sessions move to the box when the box keeps them, so the work follows you
+      // between browsers. Until then they are in this browser, which is also the whole
+      // story for a tab with no server (ADR-0042).
+      this.sessions = sessions.storeFor({ sessions: !!hello.sessions });
       this.build = hello.version || null;
       this.metrics.build = this.build;
       // On the console rather than on the screen. "Which build is this" is a question
@@ -2100,6 +2152,126 @@ class App {
       }
       this.metrics.endOp();
     });
+  }
+
+  /**
+   * Keep what is on screen under a name.
+   *
+   * Saving is committing the name, which means the gesture that creates a session and
+   * the gesture that updates one are the same gesture. Changing the name of an open
+   * session renames it in place rather than leaving a copy behind under the old one —
+   * "save as" is a thing a tool with files needs and this does not have files.
+   */
+  async saveSession(name) {
+    const clean = String(name || '').trim();
+    if (!clean) { this.sessionId = null; this.sessionName = ''; this.renderStrip(); return; }
+    const r = resume.recipe(this.engine, {
+      source: this.openedFrom, current: this.current, channel: this.channel, tabs: this.tabs,
+    });
+    const can = sessions.canSave(r);
+    if (!can.ok) { this.notify(can.why, 9000); this.renderStrip(); return; }
+    const rec = sessions.make(clean, r, { id: this.sessionId });
+    try {
+      await this.sessions.save(rec);
+      this.sessionId = rec.id;
+      this.sessionName = rec.name;
+      this._sessionSaved = JSON.stringify(r.nodes) + JSON.stringify(r.source);
+      this.notify(`saved “${rec.name}” — ${rec.nodes} node${rec.nodes === 1 ? '' : 's'}` +
+                  ` in ${this.sessions.where}`);
+    } catch (err) {
+      this.notify(`could not save that: ${err.message}`, 9000);
+    }
+    this.renderStrip();
+  }
+
+  /**
+   * What has been saved, in the same menu everything else opens in.
+   *
+   * Opening and forgetting are two groups rather than two menus. The list is the same
+   * list, the menu is type-filtered, and a second control for the rarer of the two would
+   * be a second control to find.
+   */
+  async openSessions(x, y) {
+    let saved;
+    try { saved = await this.sessions.list(); }
+    catch (err) { this.notify(`could not read saved sessions: ${err.message}`, 8000); return; }
+    if (!saved.length) {
+      this.notify(`nothing saved yet — name this one in the session box to keep it` +
+                  ` (they go in ${this.sessions.where})`, 8000);
+      return;
+    }
+    const ops = [];
+    for (const rec of saved) ops.push({ id: `open:${rec.id}`, name: sessions.describe(rec), group: 'open' });
+    for (const rec of saved) ops.push({ id: `forget:${rec.id}`, name: `forget “${rec.name}”`, group: 'forget' });
+    const px = x != null ? x : innerWidth / 2, py = y != null ? y : innerHeight - 120;
+    this.menu.open(px, py, ops, async (pick) => {
+      const [what, id] = [pick.slice(0, pick.indexOf(':')), pick.slice(pick.indexOf(':') + 1)];
+      if (what === 'forget') {
+        try { await this.sessions.remove(id); } catch (err) { this.notify(`could not forget that: ${err.message}`, 8000); return; }
+        if (this.sessionId === id) { this.sessionId = null; this.sessionName = ''; }
+        this.notify('forgotten');
+        this.renderStrip();
+        return;
+      }
+      await this.loadSession(id);
+    });
+  }
+
+  /**
+   * Put one back.
+   *
+   * The same two steps the resume offer takes — open what it was built on, then replay
+   * the recipe onto it — because it is the same recipe and there is one replayer. What
+   * is different is that this one is asked for rather than offered, so it does not have
+   * to be careful about surprising anybody; it still says what did not come back.
+   */
+  async loadSession(id) {
+    let rec;
+    try { rec = await this.sessions.load(id); }
+    catch (err) { this.notify(`could not read that session: ${err.message}`, 8000); return; }
+    if (!rec || !rec.recipe) { this.notify('that session is not there any more', 8000); return; }
+
+    let captures = [];
+    if (rec.recipe.source && rec.recipe.source.kind === 'library') {
+      try { captures = await this.engine.listCaptures(); } catch { captures = []; }
+    }
+    const can = resume.canReplay(rec.recipe, { captures, remote: !!this.remote });
+    if (!can.ok) { this.notify(`“${rec.name}”: ${can.why}`, 10000); return; }
+
+    this.metrics.beginOp();
+    try {
+      if (can.open) {
+        this.mixer.removeAll();
+        await this.engine.openCapture(can.open.id);
+        this.afterOpen(can.open);
+        this.openedFrom = { kind: 'library', id: can.open.id, label: can.open.label };
+      }
+      const done = await resume.replay(this.engine, rec.recipe);
+      if (done.map.size) {
+        const land = rec.recipe.view && rec.recipe.view.current && done.map.get(rec.recipe.view.current);
+        const chan = rec.recipe.view && rec.recipe.view.channel && done.map.get(rec.recipe.view.channel);
+        if (chan) this.channel = chan;
+        if (land) { this.current = land; this.vp(land); }
+        for (const [was, tab] of rec.recipe.view?.tabs || []) {
+          const to = done.map.get(was);
+          if (to) this.tabs.set(to, tab);
+        }
+      }
+      this.sessionId = rec.id;
+      this.sessionName = rec.name;
+      // What was just rebuilt is what was saved, whatever the ids came back as — the
+      // comparison is on the recipe, and replaying one produces the same recipe.
+      this._sessionSaved = this.sessionText();
+      this.refresh();
+      this.notify(done.skipped.length
+        ? `opened “${rec.name}” — ${done.made.length} of ${rec.recipe.nodes.length} nodes; ` +
+          `${done.skipped.map((k) => k.op).join(', ')} did not come back`
+        : `opened “${rec.name}” — ${done.made.length} node${done.made.length === 1 ? '' : 's'}`,
+      done.skipped.length ? 12000 : 6000);
+    } catch (err) {
+      this.notify(`could not open that session: ${err.message}`, 9000);
+    }
+    this.metrics.endOp();
   }
 
   /**
