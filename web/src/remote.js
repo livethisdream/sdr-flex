@@ -367,6 +367,19 @@ export class RemoteEngine extends Graph {
     return r;
   }
 
+  /**
+   * Push one chunk of a sink's parent out to the network. Server-side by necessity —
+   * a browser cannot open a UDP socket — and client-driven by choice, because the
+   * clock is the client's (ADR-0029).
+   */
+  async streamPush(nodeId, t0, seconds) {
+    return await this.call('streamPush', { nodeId, t0, seconds });
+  }
+
+  async streamStop(nodeId) {
+    return await this.call('streamStop', { nodeId });
+  }
+
   /** One block of it. The node keeps nothing: the caller is accumulating. */
   async runRecordsSpan(nodeId, t0, t1) {
     const n = this.node(nodeId);

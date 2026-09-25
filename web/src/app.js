@@ -42,6 +42,23 @@ const STREAM_BLOCK_S = 5;
 // for hearing something, and a recording played faster is not easier to hear.
 const SPEEDS = [1, 0.5, 0.25];
 
+// How often a running stream sink is fed, in milliseconds of wall clock.
+//
+// The same trade the audio mixer makes — long enough that a datagram carries useful
+// samples and the round trip is not most of the work, short enough that the far end is
+// not waiting on a buffer — with one number underneath it that was measured rather than
+// picked. Nothing paces the datagrams inside a chunk: `send` on a connectionless socket
+// queues and returns, deliberately, so a sink cannot stall the read loop for something
+// that may not even be listening. The pacing *is* this tick.
+//
+// So a chunk has to fit in what a socket will take at once. On loopback, the most
+// forgiving path there is, 64 kB in one burst arrives whole, 96 kB loses four datagrams
+// and 128 kB loses thirty-six — the receiving buffer saturates a little over ninety.
+// A quarter second of 48 kHz s16 is 24 kB, two dozen datagrams, about 2.5x of headroom
+// on the friendliest link. The loss when it comes is silent, which is why that margin
+// is not thinner. `web/test/streamout.test.mjs` pins it.
+const SINK_CHUNK_MS = 250;
+
 const $ = (s, r = document) => r.querySelector(s);
 
 /** Safe inside an attribute as well as in text — a name is whatever somebody typed. */
@@ -71,6 +88,7 @@ const VIEWS = {
   grid: ['Grid', 'Flow'],
   audio: ['Listen', 'Flow'],
   file: ['Export', 'Flow'],
+  sink: ['Stream', 'Flow'],
   bytes: ['Bytes', 'Flow'],
 };
 
@@ -853,6 +871,7 @@ class App {
     $('#pane-events').hidden = v !== 'Events';
     $('#pane-audio').hidden = v !== 'Listen';
     $('#pane-export').hidden = v !== 'Export';
+    $('#pane-stream').hidden = v !== 'Stream';
     $('#pane-bytes').hidden = v !== 'Bytes';
     $('#pane-grid').hidden = v !== 'Grid';
     if (v === 'Spectrum') {
@@ -1151,9 +1170,26 @@ class App {
           // reads as text and says so; the other two are the coin, flipped by hand.
           invert: { label: 'polarity', unit: '', type: 'enum', fmt: String,
                     values: ['auto', 'normal', 'inverted'] },
+          // The network sink's four. `running` is an enum rather than a button because
+          // it is a property of the node — the graph says what is happening, and a sink
+          // that is sending is a different graph from one that is not (ADR-0027).
+          host: { label: 'to', unit: '', type: 'text', placeholder: '127.0.0.1',
+                  hint: 'where the decoder is. In a container 127.0.0.1 is the container, not your machine',
+                  fmt: String },
+          port: { label: 'port', unit: '', type: 'num', step: 1, min: 1, max: 65535,
+                  integer: true, fmt: String,
+                  hint: '7355 is what GQRX uses, so the tools that eat its audio expect it' },
+          running: { label: 'running', unit: '', type: 'enum', values: ['no', 'yes'], fmt: String,
+                     hint: 'sends while the transport plays; stopping leaves the node and closes the socket' },
         // An adapter's parameters come with the node, since the client has no table of
         // somebody else's decoder's knobs and should not need one.
-        }[key] || (n.paramMeta && n.paramMeta[key]
+        }[key] || (n.op === 'core.stream' && {
+          format: { label: 'format', unit: '', type: 'enum', fmt: String,
+                    values: ['s16', 'cs16', 'cu8', 'cf32', 'f32', 'raw'],
+                    hint: 's16 at 48 kHz is the GQRX convention; raw sends the bytes as they are' },
+          rate: { label: 'rate', unit: 'kS/s', type: 'num', step: 20, min: 1000, max: 400_000,
+                  integer: true, fmt: (v) => (v / 1e3).toFixed(1) },
+        }[key]) || (n.paramMeta && n.paramMeta[key]
           // A decoder's own knob, drawn from what the node carries. Long text is
           // summarized here and read in full in the popover — an rtl_433 flex spec is
           // sixty characters and would be the entire bar.
@@ -1264,6 +1300,14 @@ class App {
     const n = this.node();
     if (!n.params[key]) return;
     if (n.out.kind === 'audio' && key === 'volume') this.mixer.setVolume(n.id, value);
+    // Stopping a sink closes its socket rather than merely not feeding it. A socket
+    // left open on a node that says `no` is the graph lying about what is running,
+    // which is the one thing ADR-0027 makes a sink a node to prevent.
+    if (n.op === 'core.stream' && key === 'running' && value !== 'yes') {
+      this._sinkTold = false;
+      if (this._sinkAt instanceof Map) this._sinkAt.delete(n.id);
+      this.engine.streamStop(n.id);
+    }
     const wasAuto = n.params[key].mode === 'auto';
     if (wasAuto && n.params[key].auto) n.params[key].auto.suggested = n.params[key].value;
 
@@ -1696,6 +1740,42 @@ class App {
         <div class="lnote">Volume and squelch are in the bar below. The speaker on the
           transport mutes and unmutes without removing anything; the \u2715 on this tab
           stops the audio and removes the block; the transport's pause stops it too.</div>
+      </div>`;
+  }
+
+  /**
+   * The Stream pane.
+   *
+   * A sink has no picture of its own — what it is doing is *whether* it is doing it, and
+   * where to. The same shape as Listen, for the same reason, with one addition: the far
+   * end of a UDP socket never answers, so the only honest evidence that this is working
+   * is the count of datagrams going out. A number that is not moving is the difference
+   * between "nothing is listening" and "nothing is being sent", and only the second one
+   * is this tool's fault.
+   */
+  renderStream() {
+    const n = this.node();
+    if (!n || n.out.kind !== 'sink') return;
+    const src = this.engine.node(n.parent);
+    const on = n.params.running.value === 'yes';
+    const st = n._sink || {};
+    const where = `${n.params.host.value}:${n.params.port.value}`;
+    const fmt = `${n.params.format.value} at ${fmtRate(Number(n.params.rate.value) || 0)}`;
+    const esc = (x) => String(x).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+    $('#pane-stream').innerHTML = `
+      <div class="listenwrap">
+        <div class="lspk ${st.error ? 'stopped' : on ? 'playing' : 'stopped'}">\u21AA</div>
+        <div class="lstate">${on ? (this.engine.playing ? 'sending' : 'armed \u00b7 paused') : 'stopped'}
+          \u00b7 ${esc(where)}</div>
+        <div class="lsrc">${src ? `${this.tag(src)} \u00b7 ${fmt}` : 'nothing upstream'}</div>
+        ${st.error ? `<div class="everr">${esc(st.error)}</div>` : ''}
+        <div class="lnote">${st.sent
+          ? `${st.sent} datagram${st.sent === 1 ? '' : 's'}, ${(st.bytes / 1024).toFixed(0)} kB sent.
+             UDP does not answer, so this counts what left rather than what arrived —
+             a number that climbs while the far end says nothing means the far end.`
+          : `Nothing sent yet. Set <b>running</b> to yes in the bar below and press play.
+             In a container <code>127.0.0.1</code> is the container; point <b>host</b> at
+             the machine your decoder is on.`}</div>
       </div>`;
   }
 
@@ -2191,6 +2271,47 @@ class App {
         packets, the modulation is wrong rather than the timings.</span></p>
         <button class="exgo" id="usesug">Try this decoder</button>` : ''}
     </div>`;
+  }
+
+  /**
+   * Feed every running stream sink the seconds that just went by.
+   *
+   * One at a time and never overlapping: the push is a round trip and a second one
+   * launched before the first returns would send the same seconds twice, which to a
+   * decoder on the far end looks like the signal repeating itself.
+   *
+   * The chunk is taken from the node's own playhead rather than the wall clock, so a
+   * pinned clip streams the clip, and slowing the transport down slows what goes out —
+   * which is what somebody who slowed it down meant.
+   */
+  async pumpSinks() {
+    if (this._sinkBusy) return;
+    const sinks = [...this.engine.nodes.values()].filter(
+      (n) => n.op === 'core.stream' && n.params.running.value === 'yes');
+    if (!sinks.length) return;
+    this._sinkBusy = true;
+    try {
+      for (const n of sinks) {
+        const at = this.engine.effectiveTime(n.parent);
+        if (at == null) continue;
+        const last = this._sinkAt instanceof Map ? this._sinkAt.get(n.id) : null;
+        if (!(this._sinkAt instanceof Map)) this._sinkAt = new Map();
+        // Seconds of capture since this sink last sent, clamped: after a scrub the gap
+        // is meaningless, and sending it would dump minutes of audio in one burst.
+        const secs = last != null && at > last && at - last < 2 ? at - last : SINK_CHUNK_MS / 1000;
+        this._sinkAt.set(n.id, at);
+        const out = await this.engine.streamPush(n.id, Math.max(0, at - secs), secs);
+        const live = this.engine.node(n.id);
+        if (live) live._sink = out;
+        if (out && out.error && !this._sinkTold) {
+          this._sinkTold = true;
+          this.notify(`stream out: ${out.error}`, 8000);
+        }
+      }
+    } finally {
+      this._sinkBusy = false;
+    }
+    if (this.view() === 'Stream') this.renderStream();
   }
 
   /**
@@ -3071,6 +3192,8 @@ class App {
         this.timeSeries.draw(this._tsCache.data, this._tsCache.spanS);
         this.renderTimeAxis(this._tsCache);
       }
+    } else if (v === 'Stream') {
+      this.renderStream();
     } else if (v === 'Bits') {
       // decoded records do not need 60 fps, and a one-second window is expensive
       this._bitsAcc = (this._bitsAcc || 0) + dt;
@@ -3080,6 +3203,14 @@ class App {
         const f = this.engine.frame(this.current, {});
         if (f.kind === 'bits') this.bitRaster.draw(f.groups, f.symbolUs);
       }
+    }
+
+    // Streaming out, on the same cadence and for the same reason as the audio mixer:
+    // the clock is here, so the chunks are taken from here. A sink that is not running
+    // costs one property read per tick.
+    if (this.engine.playing) {
+      this._sinkAcc = (this._sinkAcc || 0) + dt;
+      if (this._sinkAcc > SINK_CHUNK_MS) { this._sinkAcc = 0; this.pumpSinks(); }
     }
 
     // Decoding as it plays. Checked a few times a second rather than every frame: the

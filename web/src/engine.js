@@ -196,6 +196,18 @@ export const OPS = {
   'core.export': {
     name: 'Export', group: 'Export', in: '*', out: 'file',
   },
+  // The network sink ADR-0027 named when it listed what a sink is. Everything in this
+  // table either analyzes a stream or decodes it; this one hands it to somebody else.
+  //
+  // The reason it is not an adapter: an adapter is a *function* — it reads a span,
+  // prints records, exits, and the records come back into the tool with timestamps and
+  // a pane. Some programs are *destinations* instead. A ground station drawing a drone's
+  // flight on a map is not a `parse()` anybody wants to write; the map is the point. So
+  // the samples go out and nothing comes back, which is what makes this a sink rather
+  // than a decoder — and why `Identify` will never offer it.
+  'core.stream': {
+    name: 'Stream out', group: 'Export', in: '*', out: 'sink',
+  },
   // The external decoders are not listed here. Which of them exist depends on what is
   // installed on the box, which only the engine can know, so `palette` asks the adapter
   // table rather than this one — and a decoder whose program is missing is still shown,
@@ -1126,6 +1138,21 @@ export class MockEngine extends Graph {
   }
 
   /**
+   * The in-tab engine has no network, so a stream sink here is a sink with nothing
+   * behind it.
+   *
+   * Said rather than thrown: this is the same shape as an external decoder in the
+   * hosted build — the node is real, the graph is honest about what it contains, and
+   * what cannot happen says so in the one place somebody will look for it.
+   */
+  async streamPush() {
+    return { error: 'a stream sink sends from the engine, and this tab is the engine',
+             sent: 0, bytes: 0, sentNow: 0 };
+  }
+
+  async streamStop() { return { stopped: true }; }
+
+  /**
    * One span of a decoder's output, without disturbing what the node already holds.
    *
    * `runRecords` answers "what is in this capture" and caches the answer on the node.
@@ -1696,6 +1723,25 @@ export class MockEngine extends Graph {
       };
       node.out = { kind: 'file', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'Export';
+    } else if (op === 'core.stream') {
+      // Defaults that are GQRX's, because that is the convention the receiving end
+      // already knows: 48 kHz signed 16-bit mono on a UDP port. `multimon-ng -` and
+      // friends have been fed exactly this for years.
+      const audio = p.out.kind === 'real' || p.out.kind === 'audio';
+      node.params = {
+        // Loopback, because a sink that defaults to shouting at the network is a
+        // different kind of tool. In a container this has to be the host's address to
+        // reach anything — see server/README.md, which says so rather than leaving it
+        // to be discovered.
+        host: param('127.0.0.1'),
+        port: param(7355),
+        format: param(audio ? 's16' : 'raw',
+                      'manual', null),
+        rate: param(audio ? 48_000 : Math.round(p.out.sampleRate)),
+        running: param('no'),
+      };
+      node.out = { kind: 'sink', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = 'Stream out';
     } else if (op === 'core.pwm_slicer') {
       // estimate from a real window of the parent's output — auto shows its work
       // estimate over a window wide enough to be sure it contains a burst — the

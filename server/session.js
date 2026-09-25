@@ -19,6 +19,7 @@ import { encode, decode } from '../web/src/proto.js';
 import { Radio, list as listDrivers } from './radio.js';
 import * as adapters from './adapters.js';
 import { version } from './version.js';
+import { StreamOut } from './streamout.js';
 
 export const PROTOCOL = 1;
 
@@ -43,6 +44,7 @@ export class Session {
     // none of which should become one just to be tried.
     this.engine.runAdapterData = (a) => adapters.run(a.adapter, a);
     this.radio = null;
+    this.sinks = new Map();   // nodeId → StreamOut
     this.closed = false;
 
     conn.on('message', (buf) => this._onMessage(buf));
@@ -81,6 +83,8 @@ export class Session {
   }
 
   dispose() {
+    for (const sink of this.sinks.values()) sink.close();
+    this.sinks.clear();
     // A radio is a process and a file on disk; a tab going away has to take both with
     // it, or a box accumulates dead dongles and gigabytes of ring nobody is watching.
     if (this.radio) { this.radio.stop(); this.radio = null; }
@@ -197,6 +201,10 @@ const METHODS = {
   },
 
   async removeNode({ id }) {
+    // A sink removed is a sink that stops: ADR-0027's whole point is that taking one
+    // off the graph makes something real stop happening.
+    const sink = this.sinks.get(id);
+    if (sink) { sink.close(); this.sinks.delete(id); }
     await this.engine.removeNode(id);
     return {};
   },
@@ -288,6 +296,57 @@ const METHODS = {
   async runRecords({ nodeId, at }) {
     const r = await this.engine.runRecords(nodeId, at);
     return r || null;
+  },
+
+  /**
+   * Push one chunk of a stream sink's parent out to the network.
+   *
+   * Driven by the client, one chunk at a time, exactly the way the audio mixer is
+   * driven — because the client owns the clock (ADR-0029) and a server-side loop
+   * sending on its own schedule would be a second clock disagreeing with the first.
+   * The playhead the chunk is taken from is the client's, and when it stops, this
+   * stops, with no timer anywhere to unwind.
+   *
+   * The conversion is the adapters' own, so a sink and a decoder agree about what
+   * `s16 at 48 kHz` means, and a format nobody can produce is rejected in one place.
+   */
+  async streamPush({ nodeId, t0, seconds }) {
+    const e = this.engine;
+    const n = e.node(nodeId);
+    if (!n || n.op !== 'core.stream') return null;
+    const p = e.node(n.parent);
+    if (!p) return { error: 'nothing upstream' };
+
+    const host = String(n.params.host.value || '127.0.0.1');
+    const port = Number(n.params.port.value) || 7355;
+    let sink = this.sinks.get(nodeId);
+    // Re-made when the address changes, rather than mutated: a socket that quietly
+    // starts pointing somewhere else is the kind of thing nobody can debug from the
+    // receiving end.
+    if (sink && (sink.host !== host || sink.port !== port)) { sink.close(); sink = null; }
+    if (!sink) { sink = new StreamOut({ host, port, log: this.log }); this.sinks.set(nodeId, sink); }
+
+    const got = await e.readSpan(p.id, t0, t0 + seconds);
+    if (!got) return { ...sink.status(), sentNow: 0 };
+
+    const format = String(n.params.format.value || 's16');
+    let bytes;
+    if (format === 'raw' && got.data instanceof Uint8Array) {
+      bytes = Buffer.from(got.data.buffer, got.data.byteOffset, got.data.byteLength);
+    } else {
+      const want = { format: format === 'raw' ? 'cf32' : format,
+                     rate: Number(n.params.rate.value) || got.sampleRate };
+      bytes = adapters.convert(got.data, got.kind, got.sampleRate, want).bytes;
+    }
+    const sentNow = sink.write(bytes);
+    return { ...sink.status(), sentNow };
+  },
+
+  /** Stop sending and let the socket go. */
+  async streamStop({ nodeId }) {
+    const sink = this.sinks.get(nodeId);
+    if (sink) { sink.close(); this.sinks.delete(nodeId); }
+    return { stopped: true };
   },
 
   /** One block of it, for a decoder being watched while the capture plays. */

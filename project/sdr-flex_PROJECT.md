@@ -1194,6 +1194,36 @@ websocket resolves to `wss://<host>/ws`, which closes without opening — the cl
 that as no engine and falls back to the in-tab one in about half a second rather than
 waiting out a timeout.
 
+## The network sink, as built
+
+ADR-0027 named it three years of commits ago — "the audio sink, and later the file
+writer, the network sink, the recorder" — so this implements a decision rather than
+making one. `core.stream` on any node sends that node's output to a UDP port, GQRX's
+defaults: 48 kHz s16 mono on 7355, which is what the tools that eat GQRX's audio expect.
+
+**Why a sink and not another adapter.** An adapter is a *function*: reads a span, prints
+records, exits, and the records come back with timestamps, a pane, `Identify` and a
+golden capture. Some programs are *destinations* — a ground station drawing a drone's
+flight is not a `parse()` anybody wants to write, its map is the point. Nothing comes
+back, which is the trade, and it is why decoders worth parsing stay adapters.
+
+Client-driven, one chunk per tick, exactly like the audio mixer and for the same reason:
+the clock is the client's (ADR-0029), and a server-side send loop would be a second clock
+disagreeing with the first. So a pinned clip streams the clip, and slowing the transport
+slows what goes out.
+
+**A measurement that decided a constant.** Nothing paces datagrams within a chunk —
+`send` queues and returns, so a sink cannot stall the read loop for something that may
+not be listening — so a chunk has to fit what a socket takes at once. On loopback, the
+most forgiving path there is: 64 kB in one burst arrives whole, 96 kB loses 4 datagrams,
+128 kB loses 36. The receiving buffer saturates a little over ninety. A quarter second of
+48 kHz s16 is 24 kB, about 2.5x of headroom, and the loss when it comes is silent — which
+is why the margin is not thinner. Found by a test that failed at 96 kB before the number
+was chosen.
+
+**The trap worth knowing**: in a container `127.0.0.1` is the container, and nothing on
+your machine is listening there. `server/README.md` says so.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the

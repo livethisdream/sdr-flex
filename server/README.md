@@ -309,6 +309,45 @@ Nine is this version. If it says *of 8*, the container is older than M17 packet 
 which is a second, independent way to notice the same thing, and the one that works when
 you only have the log and not a shell.
 
+## Handing a stream to something else
+
+Some programs are not decoders you run, they are places you send things. A ground
+station drawing a drone's flight, a live Wireshark capture, a decoder somebody else
+maintains. Writing a parser for those gets you nothing — their own display is the point.
+
+Add a **Stream out** block to any node and it sends that node's output to a UDP port:
+
+| | |
+|---|---|
+| `to` / `port` | where the decoder is. Default `127.0.0.1:7355` |
+| `format` | `s16`, `cs16`, `cu8`, `cf32`, `f32`, or `raw` |
+| `rate` | what it is resampled to on the way out |
+| `running` | sends while the transport plays |
+
+The defaults are GQRX's — 48 kHz signed 16-bit mono on port 7355 — because that is the
+convention the receiving end already knows:
+
+```sh
+nc -luk 7355 | multimon-ng -t raw -a POCSAG1200 -
+```
+
+**In a container, `127.0.0.1` is the container.** Nothing on your machine is listening
+there. Point `to` at the host: `host.docker.internal` where Docker provides it, or the
+address of the machine running the decoder. This is outbound traffic from the container,
+which the compose file does not restrict — it scopes what can reach *in*, not what can
+go out, so a sink can reach anything the container's network can.
+
+**UDP does not answer**, so the pane counts what left rather than what arrived. A number
+that climbs while the far end stays quiet means the far end. Datagrams are capped under
+a typical MTU so nothing is fragmented, and a chunk is a quarter second, which is two
+dozen datagrams — measured headroom against the ~90 that a receiving socket buffers
+before it starts dropping them silently.
+
+**Nothing comes back.** A sink is where data leaves the graph (ADR-0027), so there is no
+Events pane, no `Identify`, and no golden capture for this path. That is the trade for
+not having to write a parser, and it is why decoders that *are* worth parsing are
+adapters instead.
+
 ## Decoders
 
 Two places a decoder can come from, with deliberately different trust stories:
