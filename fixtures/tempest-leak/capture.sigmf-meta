@@ -1,0 +1,16 @@
+{
+  "global": {
+    "core:datatype": "cu8",
+    "core:sample_rate": 8000000,
+    "core:description": "Synthetic video leak: 40x72 visible, 196.04 samples a line (fractional on purpose), 84 lines a frame, 6 frames walking 2.0 samples apart end to end, with the 13th harmonic of the pixel clock folded back into the passband. The screen has SDR on it. Nobody transmitted this and it is not a picture of anybody's monitor.",
+    "core:license": "CC0-1.0",
+    "core:recorder": "sdr-flex fixtures/make.mjs (synthesized, not recorded)"
+  },
+  "captures": [
+    {
+      "core:sample_start": 0,
+      "core:frequency": 300000000
+    }
+  ],
+  "annotations": []
+}

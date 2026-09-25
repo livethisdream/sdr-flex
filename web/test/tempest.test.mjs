@@ -160,6 +160,129 @@ test('averaging can be turned off, and then you see every frame', async () => {
   assert.equal(g.frames, 1);
 });
 
+// ── the same screen, the way a receiver actually gets it ────────────────────
+//
+// Everything above is the clean case. A real leak differs in three ways, and each one
+// breaks something different — see fixtures/tempest-leak/README.md, which says what and
+// why. These are the regression tests for the three fixes, and each was checked to fail
+// against the code that came before it.
+
+const LEAK_RATE = 8_000_000;
+const leak = () => {
+  const img = mod.bitmapText('SDR', { width: 40, height: 72, scale: 2 });
+  return mod.rasterLeak(img, { width: 40, height: 72, hBlank: 12, vBlank: 12,
+                               samplesPerPixel: 3.77, harmonic: 13, frames: 6,
+                               walkPerFrame: 0.47, jitter: 1, seed: 0x51ea });
+};
+
+test('a folded pixel-clock harmonic does not get mistaken for the line', () => {
+  // Without the smoothing this returns 194.02 samples and a two-line "frame": the folded
+  // harmonic correlates with itself better than the picture does, and wins.
+  const r = leak();
+  const est = dsp.estimateRaster(r.signal, r.signal.length, LEAK_RATE);
+  assert.ok(Math.abs(est.lineSamples - r.samplesPerLine) < 0.1,
+            `${est.lineSamples.toFixed(3)} samples against ${r.samplesPerLine}`);
+  assert.equal(est.linesPerFrame, r.frameLines);
+  assert.ok(est.smoothWin > 1, 'and it says how much it smoothed to get there');
+});
+
+test('the line period is taken back out of the frame, which is far more of it', () => {
+  // One correlation peak locates a period to about a tenth of a sample. The same peak a
+  // frame away locates it that many lines better, and on a leak the difference between
+  // the two is the difference between a readable frame and a sheared one. On the 20 Msps
+  // capture this was written for, with 525 lines to a frame, it was 180 ppm against 2.
+  // Here it is worth less and for a reason worth keeping: a frame that lands a sample
+  // from where it was predicted puts a sample of uncertainty into the lag it is measured
+  // from, and 84 lines cannot divide that away the way 525 can. It is still the better
+  // of the two numbers by a wide margin, which is all that is being claimed.
+  const r = leak();
+  const est = dsp.estimateRaster(r.signal, r.signal.length, LEAK_RATE);
+  assert.equal(est.refined, true, 'it refined off the frame rather than the line');
+  // `value` is where the line peak alone put it; `lineSamples` is after the frame.
+  const shear = (P) => Math.abs(P - r.samplesPerLine) * r.frameLines;
+  assert.ok(shear(est.lineSamples) < shear(est.value) / 2,
+            `${shear(est.lineSamples).toFixed(2)} samples of shear across a frame, ` +
+            `against ${shear(est.value).toFixed(2)} off the line peak alone`);
+  // Within about the jitter that was put in, which is the floor this can reach.
+  assert.ok(shear(est.lineSamples) < 1.5,
+            `${shear(est.lineSamples).toFixed(2)} samples from the top of the frame to the bottom`);
+});
+
+test('stacking takes the sharper of aligned and not, rather than assuming', () => {
+  // The trap this guards against is a stack that looks like more signal and is less. On
+  // the 20 Msps leak this was written for, aligning the frames was worth ninety times the
+  // horizontal detail. Here it is worth about half — what folds back into the passband is
+  // near two samples a cycle, so the column correlation has a peak every two samples and
+  // picking the wrong one is worse than not having looked. Neither is knowable in
+  // advance, so both get built.
+  const r = leak();
+  const est = dsp.estimateRaster(r.signal, r.signal.length, LEAK_RATE);
+  const P = est.lineSamples, lines = est.linesPerFrame, cols = Math.round(P);
+  const st = dsp.stackFrames(r.signal, r.signal.length, P, lines, { cols });
+  assert.equal(st.frames, r.frames, 'every frame in the capture');
+
+  const detail = (a) => {
+    let s = 0;
+    for (let y = 0; y < lines; y++) {
+      for (let x = 1; x < cols; x++) { const d = a[y * cols + x] - a[y * cols + x - 1]; s += d * d; }
+    }
+    return s;
+  };
+  const blind = new Float32Array(lines * cols);
+  for (let f = 0; f < r.frames; f++) {
+    const g = dsp.foldRaster(r.signal, r.signal.length, P, { cols, maxRows: lines, from: f * lines * P });
+    for (let i = 0; i < blind.length; i++) blind[i] += g.data[i] / r.frames;
+  }
+  // Whichever it chose, what comes back is at least as sharp as stacking them blind.
+  assert.ok(detail(st.data) >= detail(blind) * 0.999,
+            `${detail(st.data).toExponential(2)} against ${detail(blind).toExponential(2)} blind`);
+  assert.equal(st.aligned, false, 'and on this one, aligning is the worse of the two');
+});
+
+test('the node reads the hard capture too, end to end', async () => {
+  const data = fs.readFileSync(path.join(HERE, '..', '..', 'fixtures', 'tempest-leak', 'capture.sigmf-data'));
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  await e.openCapture(new Capture({
+    buffer: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+    format: 'cu8', sampleRate: LEAK_RATE, centerHz: CENTER, label: 'leak' }));
+  const n = await e.addNode({ parent: e.root.id, op: 'core.raster', at: e.duration() });
+  const g = await e.sliceGrid(n.id, e.duration());
+
+  const r = leak();
+  assert.equal(g.rows, r.frameLines, 'a frame of lines');
+  assert.equal(g.frames, r.frames, 'every frame in the capture went into it');
+  const live = e.node(n.id);
+  assert.ok(Math.abs(live.params.lineUs.value - (r.samplesPerLine / LEAK_RATE) * 1e6) < 0.02,
+            `${live.params.lineUs.value} µs`);
+});
+
+// ── the same numbers, a great deal faster ───────────────────────────────────
+
+test('the autocorrelation agrees with the one done by hand', () => {
+  // The direct correlation is one multiply-add per sample per lag, and a raster search
+  // wants forty thousand lags: eighty-six seconds on the capture this was written for.
+  // The FFT does not care how many lags are asked for. This is the check that swapping
+  // one for the other did not change the answer.
+  const r = leak();
+  const x = r.signal, count = 1 << 14;
+  const a = dsp.autocorrelate(x, count, { maxSamples: count });
+
+  let mean = 0;
+  for (let i = 0; i < count; i++) mean += x[i];
+  mean /= count;
+  let e0 = 0;
+  for (let i = 0; i < count; i++) { const v = x[i] - mean; e0 += v * v; }
+  for (const lag of [1, 7, 120, 196, 500, 1000]) {
+    let acc = 0;
+    const m = count - lag;
+    for (let i = 0; i < m; i++) acc += (x[i] - mean) * (x[i + lag] - mean);
+    const byHand = acc / (e0 * (m / count));
+    assert.ok(Math.abs(a.r[lag] - byHand) < 2e-3,
+              `lag ${lag}: ${a.r[lag].toFixed(5)} by FFT against ${byHand.toFixed(5)} by hand`);
+  }
+});
+
 // ── and the limit, stated rather than discovered later ──────────────────────
 
 test('a moving picture has no frame to average, and says so', async () => {

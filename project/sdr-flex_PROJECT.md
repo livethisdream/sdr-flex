@@ -1298,6 +1298,71 @@ binary copied out of the build stage does not bring its shared libraries. The ru
 stage now installs both, and the verification line runs noise through the real binary on
 stdin so a rejected argument list fails the build rather than the first click.
 
+## TEMPEST, as built — the raster against a real leak
+
+The node existed; it could not read a real one. Tried against a 0.667 s synthetic capture
+of a monitor's HDMI leak at 20 MS/s (640×480@59.94, pixel clock 25.175 MHz +3 ppm,
+harmonic 11, 800×525 raster → **635.55 samples a line**, 525 lines, 40 frames). The
+capture is not in the repository and is not going in it: a TEMPEST capture is a picture of
+a screen. It lives in the scratchpad.
+
+The first run returned a picture two lines wide with no frame found, in **86 seconds**.
+Four things were wrong and each was measured before it was changed.
+
+**The autocorrelation was done by hand.** One multiply-add per sample per lag, forty
+thousand lags, half a million samples: 86 s. Through the FFT — power spectrum, transform
+again — it is 1.1 s and agrees to four decimal places at every lag checked. The transform
+runs forward twice rather than forward-then-inverse, because the power spectrum is real
+and non-negative so its transform is real and even; reversal does not matter and the scale
+cancels. `dsp.autocorrelate`.
+
+**The folded pixel clock beat the picture.** 25.175 MHz sampled at 20 MS/s lands at
+5.175 MHz — 3.86 samples a cycle — and the envelope correlates with *that* at 0.71 against
+0.37 with its own line structure. So the line came out 1271.03 samples, exactly twice the
+truth, and the frame search settled on two lines. Averaging the signal over a quarter of
+the shortest line the search will consider removes it: 635.67, and a 525-line frame.
+Measured across windows: 10 still fails, 16 is marginal, 20 and up are solid.
+
+**A parabola through one correlation peak is not precise enough.** 635.67 against 635.55
+is 180 ppm — 60 samples of shear from the top of a frame to the bottom. Taking the line
+period back *out* of the frame lag, which is 525 lines away, gives 635.5489: **2 ppm**,
+and less than one sample of shear across the frame. Same peak, measured from 525 times
+further away.
+
+**And the frames walk.** Nine samples from the first to the fortieth, because the
+monitor's clock is not the radio's. A 4096-row cap meant only seven frames were being
+averaged; lifting it to use all forty made the picture *smoother and blurrier*, and the
+half-against-half measure used to check it said 0.85 against 0.51 — it could not see the
+smear, because both halves were smeared the same way. Measuring horizontal detail instead
+showed it plainly: forty frames stacked blind are **ninety times** less sharp than forty
+aligned, and worse than seven on their own.
+
+So each frame is now aligned against the stack before being added — and then the synthetic
+fixture built to pin that down showed the opposite, because its folded harmonic lands near
+two samples a cycle and the column correlation used to measure alignment has a peak every
+two samples. Both results are real. The node builds the stack both ways and keeps the
+sharper, which is **ADR-0041**.
+
+Result: the screen reads, with its text legible, in about 5 s end to end through
+`core.raster` with nothing told to it.
+
+**`fixtures/tempest-leak`** (193 kB, synthesized) is the regression test: a fractional
+number of samples a line, a pixel-clock harmonic folded into the passband, and frames that
+walk and jitter. `mod.rasterLeak` generates it. Every one of the four fixes was checked to
+fail against the code that came before it. `fixtures/tempest-raster` stays as the clean
+case and its README now points next door rather than claiming the hard case is untested.
+
+**What is still not claimed.** A harmonic that folds to within roughly twenty times the
+line rate is not separable by smoothing and will still win — at that point it is
+indistinguishable from the line's own twentieth harmonic. Interlace is not handled. A
+moving picture has no frame to average and the node says so rather than smearing three
+pictures together.
+
+**Two of my own measurements were worthless and were replaced.** Half-against-half
+agreement rewarded smoothness and picked the wrong branch. And smoothing the
+autocorrelation inside the frame search — the obvious next idea — was tried across four
+widths and made every case worse; it is not in the code.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the
@@ -1550,6 +1615,11 @@ have `/version`.
   and is the tool for this. Two rounds were lost to guessing.
 - **Auto parameters must show their evidence** (ADR-0017). Twice, an estimator was
   confidently wrong in a way only its own stated reasoning exposed.
+- **Pick the measure before you pick the winner, and check the measure can see the
+  failure.** Stacking forty TEMPEST frames scored 0.85 on half-against-half agreement
+  against 0.51 for seven — and looked visibly blurrier. The measure rewarded smoothness,
+  which is what the failure produces. Horizontal detail showed a 90× difference in the
+  other direction. A metric that cannot distinguish the two outcomes is not evidence.
 - **"The rebuild did not take" is three separate questions, and guessing picks the wrong
   one.** A container ran 37 hours across a dozen `docker compose up -d --build` runs.
   Three theories were wrong in order — the build is failing, `git pull` is missing, the

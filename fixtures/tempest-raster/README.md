@@ -18,9 +18,10 @@ fraction of a sample shears a little more with every line, so a fixture with tex
 fails where you can see it rather than as a number that has quietly moved.
 
 **A caveat worth stating plainly.** This proves the mechanism, not that it will read a
-real leak. A genuine TEMPEST capture has an unknown pixel clock, a harmonic rather than a
-baseband carrier, interlace, and a receiver that is not synchronized to any of it —
+real leak: it is the case where the pixel clock is at baseband, a line is a whole number
+of samples, and every frame is identical — all of which a genuine capture gets wrong, and
 which is why `gr-tempest` exposes five live knobs a person turns until the picture locks.
-This fixture is the case where all of that is already right.
+`tempest-leak` next door is the same screen with those three assumptions removed, and is
+where the harder claim is tested.
 
 License: CC0-1.0.

@@ -2554,7 +2554,10 @@ class App {
       `<b>${g.rows} × ${g.cols}</b>` +
       `<span>${raster
         ? `${(g.symbolS * 1e6).toFixed(1)} µs per line` +
-          `${g.frames > 1 ? ` · ${g.frames} frames averaged` : ''}`
+          `${g.frames > 1 ? ` · ${g.frames} frames averaged` : ''}` +
+          // What the frames had to be moved to line up is worth saying: a screen whose
+          // clock is walking is a different situation from one that is holding still.
+          `${g.walked >= 0.5 ? ` · they walked ${g.walked.toFixed(0)} samples apart` : ''}`
         : `${(g.symbolS * 1e6).toFixed(0)} µs per symbol · ${(spacing / 1e3).toFixed(2)} kHz per subcarrier`}` +
       `${g.confident ? '' : ' · <em>not confident</em>'}</span>` +
       '<button class="exgo" id="gridrun">Read again</button>';

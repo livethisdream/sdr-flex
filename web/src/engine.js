@@ -2072,25 +2072,28 @@ export class MockEngine extends Graph {
         confident: !!est.frameConfident } };
 
     const cols = Math.max(2, Math.round(lineSamples));
-    const folded = dsp.foldRaster(video, span.count, lineSamples, { cols, maxRows: 4096 });
-
-    // Fold the frames on top of each other, when there are frames and averaging is on.
-    let out = folded;
     const lines = est.linesPerFrame;
     const wantAvg = n.params.average.value && est.frameConfident && lines > 2;
-    let frames = 1;
-    if (wantAvg && folded.rows >= lines * 2) {
-      frames = Math.floor(folded.rows / lines);
-      const acc = new Float32Array(lines * cols);
-      for (let f = 0; f < frames; f++) {
-        for (let i = 0; i < lines * cols; i++) acc[i] += folded.data[f * lines * cols + i];
-      }
-      for (let i = 0; i < acc.length; i++) acc[i] /= frames;
-      out = { rows: lines, cols, data: acc };
+    const haveFrames = wantAvg ? Math.floor(span.count / (lineSamples * lines)) : 0;
+
+    // Fold the frames on top of each other, when there are frames and averaging is on.
+    //
+    // Every frame in the capture, not the few a row cap allowed: what is held is one
+    // frame however many go into it, and each is lined up against the ones before it, for
+    // the reason `stackFrames` gives.
+    let out, frames = 1, walked = 0;
+    if (haveFrames >= 2) {
+      const st = dsp.stackFrames(video, span.count, lineSamples, lines, { cols });
+      ({ frames, walked } = st);
+      out = { rows: st.rows, cols: st.cols, data: st.data };
+    } else {
+      // Nothing to average into: stack the lines and let somebody look at them. The cap
+      // is memory, not meaning — a grid is drawn, and nobody reads four thousand lines.
+      out = dsp.foldRaster(video, span.count, lineSamples, { cols, maxRows: 4096 });
     }
 
     n._grid = { key, ...out, sampleRate: fs, centerHz: p.out.centerHz, t0: span.t0,
-                symbolS: lineSamples / fs, spacingHz: 0, frames,
+                symbolS: lineSamples / fs, spacingHz: 0, frames, walked,
                 confident: !!est.confident, kindLabel: 'raster' };
     return n._grid;
   }

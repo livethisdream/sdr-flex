@@ -1002,6 +1002,75 @@ export function findHops(iq, count, sampleRate, { bins = 256, step = 128, minSte
 }
 
 /**
+ * An autocorrelation, by FFT, normalized so that lag zero is 1.
+ *
+ * Done directly this is one multiply-add per sample per lag, and a raster search wants
+ * forty thousand lags over half a million samples: eighty-six seconds, measured, on the
+ * capture this was written for. Through the FFT it is three transforms regardless of how
+ * many lags are asked for — the same numbers to four decimal places in about a second.
+ *
+ * The transform runs forward twice rather than forward-then-inverse. The power spectrum
+ * is real and non-negative, so what comes back from it is real and *even*, and a second
+ * forward transform of an even sequence gives that sequence reversed and scaled by N.
+ * Reversed does not matter when it is even, and the scale cancels in the normalization.
+ *
+ * `smoothWin` averages the signal on its way in. That is not a detail: on a real leak the
+ * envelope carries the pixel clock folded back into the passband, which correlates far
+ * more strongly with itself than the line structure does and buries it. See
+ * `estimateRaster`, which is where the window gets its size.
+ */
+export function autocorrelate(x, count, { maxSamples = 1 << 21, smoothWin = 1 } = {}) {
+  const n = Math.min(count, maxSamples);
+  let fftN = 1;
+  while (fftN < n * 2) fftN <<= 1;
+  const w = Math.max(1, Math.min(smoothWin | 0, n));
+
+  // Smoothed and mean-removed in one pass, straight into the transform buffer. A video
+  // signal sits on a pedestal, and correlating a pedestal with itself is a large number
+  // that says nothing.
+  const buf = new Float32Array(fftN * 2);
+  let acc = 0, mean = 0;
+  const half = (w / 2) | 0;
+  for (let i = 0; i < n + half; i++) {
+    acc += i < n ? x[i] : 0;
+    if (i >= w) acc -= x[i - w];
+    const at = i - half;
+    if (at >= 0) {
+      const v = acc / Math.min(i + 1, w);
+      buf[at * 2] = v;
+      mean += v;
+    }
+  }
+  mean /= n || 1;
+  for (let i = 0; i < n; i++) buf[i * 2] -= mean;
+
+  fft(buf);
+  for (let i = 0; i < fftN; i++) {
+    const re = buf[i * 2], im = buf[i * 2 + 1];
+    buf[i * 2] = re * re + im * im;
+    buf[i * 2 + 1] = 0;
+  }
+  fft(buf);
+
+  const r0 = buf[0];
+  const maxLag = fftN >> 1;
+  const r = new Float32Array(maxLag);
+  if (!(r0 > 0)) return { r, n, maxLag, flat: true };
+  // Each lag averaged over the n-lag terms that exist, rather than over all n: without
+  // this every correlation tapers towards zero as the lag grows, and a frame — which is
+  // hundreds of lines out — loses to a line for no reason but its distance.
+  for (let lag = 0; lag < maxLag; lag++) r[lag] = (buf[lag * 2] / r0) / ((n - lag) / n);
+  return { r, n, maxLag, flat: false };
+}
+
+/** The sub-sample position of a correlation peak, through the parabola at its top. */
+function refinePeak(r, lag) {
+  const a = r[lag - 1], b = r[lag], c = r[lag + 1];
+  const denom = a - 2 * b + c;
+  return lag + (denom !== 0 ? Math.max(-1, Math.min(1, (0.5 * (a - c)) / denom)) : 0);
+}
+
+/**
  * The period a signal repeats at, found by correlating it with itself.
  *
  * Normalized, so the answer does not depend on the level, and refined by a parabola
@@ -1009,48 +1078,27 @@ export function findHops(iq, count, sampleRate, { bins = 256, step = 128, minSte
  * and a period rounded to the nearest sample shears the picture a little more with every
  * line until it is unreadable halfway down.
  */
-export function estimatePeriod(x, { minLag, maxLag, maxSamples = 1 << 19 }) {
-  const n = Math.min(x.length, maxSamples);
-  const hi = Math.min(maxLag, Math.floor(n / 3));
+export function estimatePeriod(x, { minLag, maxLag, maxSamples = 1 << 21, smoothWin = 1, acf = null }) {
+  const a = acf || autocorrelate(x, x.length, { maxSamples, smoothWin });
+  const n = a.n;
+  const hi = Math.min(maxLag, a.maxLag - 2, Math.floor(n / 3));
   if (hi <= minLag + 2) return { value: 0, confident: false, reason: 'nothing to correlate over' };
+  if (a.flat) return { value: 0, confident: false, reason: 'a flat signal has no period' };
 
-  // Mean removed: a video signal sits on a pedestal, and correlating the pedestal with
-  // itself is a large number that says nothing.
-  let mean = 0;
-  for (let i = 0; i < n; i++) mean += x[i];
-  mean /= n;
-
-  let e0 = 0;
-  for (let i = 0; i < n; i++) { const v = x[i] - mean; e0 += v * v; }
-  if (!(e0 > 0)) return { value: 0, confident: false, reason: 'a flat signal has no period' };
-
-  const score = new Float32Array(hi + 1);
+  const score = a.r;
   let best = -Infinity, bestLag = 0;
-  for (let lag = minLag; lag <= hi; lag++) {
-    let acc = 0;
-    const m = n - lag;
-    for (let i = 0; i < m; i++) acc += (x[i] - mean) * (x[i + lag] - mean);
-    const v = acc / (e0 * (m / n));
-    score[lag] = v;
-    if (v > best) { best = v; bestLag = lag; }
-  }
+  for (let lag = minLag; lag <= hi; lag++) if (score[lag] > best) { best = score[lag]; bestLag = lag; }
   if (bestLag <= minLag || bestLag >= hi) {
     return { value: bestLag, confident: false, reason: 'the best match is at the edge of the search' };
   }
-
-  // Sub-sample, through the peak and its two neighbors.
-  const a = score[bestLag - 1], b = score[bestLag], c = score[bestLag + 1];
-  const denom = a - 2 * b + c;
-  const shift = denom !== 0 ? (0.5 * (a - c)) / denom : 0;
-  const lag = bestLag + Math.max(-1, Math.min(1, shift));
 
   // How much it stands out. A signal with no period still has a highest correlation
   // somewhere, and reporting that as a period is how a picture of noise gets drawn.
   let sum = 0, k = 0;
   for (let i = minLag; i <= hi; i++) { sum += score[i]; k++; }
   const mean2 = sum / (k || 1);
-  return { value: lag, peak: best, background: mean2, contrast: best - mean2,
-           confident: best > 0.3 && best - mean2 > 0.15, score, minLag, maxLag: hi };
+  return { value: refinePeak(score, bestLag), peak: best, background: mean2, contrast: best - mean2,
+           confident: best > 0.3 && best - mean2 > 0.15, score, minLag, maxLag: hi, acf: a };
 }
 
 /**
@@ -1080,53 +1128,182 @@ export function foldRaster(x, count, period, { cols = 0, maxRows = 1024, from = 
 }
 
 /**
+ * Every frame in a capture, added on top of one another.
+ *
+ * A still screen sends the same frame over and over, so adding them up is free signal —
+ * that is the whole reason for finding the frame period at all. What it is not is free of
+ * conditions: the monitor's clock is not the receiver's, and on the 0.667 s leak this was
+ * written against the frames walked nine samples apart from first to last. Stacked where
+ * they were predicted to be, forty of them came out *ninety times* less sharp than the
+ * same forty aligned, and worse than seven frames on their own — more averaging making a
+ * worse picture, which is the trap.
+ *
+ * So each frame can be measured against what is already in the stack before it is added.
+ * The measurement is a correlation of column sums: hundreds of rows summed down each
+ * column leave the vertical structure of the screen and very little noise, and the offset
+ * that lines two of those up is the offset that lines the frames up. Then the frame is
+ * folded again from its corrected place, so the correction is applied where it belongs —
+ * in the resampling — rather than by sliding whole columns around afterwards.
+ *
+ * Can, not does. Aligning is not free either: where what leaks folds back into the
+ * passband near two samples a cycle, the column correlation has a peak every two samples
+ * and picking the wrong one is worse than not having looked. On the synthetic leak in
+ * `fixtures/tempest-leak` that is exactly what happens, and stacking the frames where
+ * they were predicted to be gives a picture half again as sharp.
+ *
+ * Neither of those is knowable in advance, so both are built and the sharper one is kept.
+ * Horizontal detail is the measure because it is the first thing a misaligned stack
+ * loses, and doubling the work is worth not having to guess — the whole failure this
+ * guards against is a stack that looks like more signal and is less.
+ */
+export function stackFrames(x, count, period, lines, { cols = 0, maxShift = 0 } = {}) {
+  const width = cols || Math.max(2, Math.round(period));
+  const frameLen = lines * period;
+  const frames = Math.floor(count / frameLen);
+  if (frames < 1) {
+    return { rows: 0, cols: width, data: new Float32Array(0), frames: 0, shifts: [], aligned: false, walked: 0 };
+  }
+  const search = Math.max(2, Math.round(maxShift || width / 8));
+  const fold = (from) => foldRaster(x, count, period, { cols: width, maxRows: lines, from }).data;
+
+  // Where they are predicted to be, which is what aligning has to beat.
+  const blind = fold(0);
+  for (let f = 1; f < frames; f++) {
+    const g = fold(f * frameLen);
+    for (let k = 0; k < blind.length; k++) blind[k] += g[k];
+  }
+  if (frames < 2) {
+    return { rows: lines, cols: width, data: blind, frames, shifts: [0], aligned: false, walked: 0 };
+  }
+
+  // Column sums, mean removed: what the screen looks like from above.
+  const profile = (a) => {
+    const c = new Float32Array(width);
+    for (let y = 0; y < lines; y++) {
+      const row = y * width;
+      for (let i = 0; i < width; i++) c[i] += a[row + i];
+    }
+    let m = 0;
+    for (let i = 0; i < width; i++) m += c[i];
+    m /= width;
+    for (let i = 0; i < width; i++) c[i] -= m;
+    return c;
+  };
+
+  const acc = fold(0);
+  const shifts = [0];
+  for (let f = 1; f < frames; f++) {
+    const here = profile(fold(f * frameLen));
+    const there = profile(acc);
+    let best = -Infinity, at = 0;
+    const score = new Float32Array(2 * search + 1);
+    for (let sh = -search; sh <= search; sh++) {
+      let a = 0;
+      for (let i = 0; i < width; i++) a += there[i] * here[(i + sh + width) % width];
+      score[sh + search] = a;
+      if (a > best) { best = a; at = sh; }
+    }
+    // Between columns, through the parabola, because a frame rarely walks a whole one.
+    const i = at + search;
+    let shift = at;
+    if (i > 0 && i < 2 * search) {
+      const d = score[i - 1] - 2 * score[i] + score[i + 1];
+      if (d !== 0) shift = at + Math.max(-1, Math.min(1, (0.5 * (score[i - 1] - score[i + 1])) / d));
+    }
+    const g = fold(f * frameLen + shift * (period / width));
+    for (let k = 0; k < acc.length; k++) acc[k] += g[k];
+    shifts.push(shift);
+  }
+
+  // Horizontal detail: the first thing a stack that did not line up loses.
+  const detail = (a) => {
+    let s = 0;
+    for (let y = 0; y < lines; y++) {
+      const row = y * width;
+      for (let i = 1; i < width; i++) { const d = a[row + i] - a[row + i - 1]; s += d * d; }
+    }
+    return s;
+  };
+  const aligned = detail(acc) > detail(blind);
+  const out = aligned ? acc : blind;
+  for (let k = 0; k < out.length; k++) out[k] /= frames;
+  return { rows: lines, cols: width, data: out, frames, aligned,
+           shifts: aligned ? shifts : shifts.map(() => 0),
+           walked: aligned ? Math.max(...shifts.map(Math.abs)) : 0 };
+}
+
+/**
  * A raster: how long a line is, and how many lines make a frame.
  *
- * Two periods, found one after the other, because they are found differently. The line
- * period is the shortest thing the signal repeats at and falls straight out of an
- * autocorrelation. The frame is a *whole number of lines* — so rather than search the
- * autocorrelation again and risk landing on a lag that is not a multiple, only multiples
- * of the line period are scored.
+ * Three steps, because the obvious two do not survive a real leak.
  *
- * Averaging the frames is the point of finding the second one. A leak is a weak signal
+ * First the signal is smoothed. A leak is a harmonic of the pixel clock, and at any
+ * sensible sample rate that clock folds back into the passband — on the 20 Msps capture
+ * this was written against, 25.175 MHz landed at 5.175 MHz, four samples a cycle. The
+ * envelope correlates with *that* at 0.7 and with its own line structure at 0.37, so the
+ * line period came out exactly twice too long and the frame search settled on two lines.
+ * Averaging over a quarter of the shortest line the search will consider removes it and
+ * keeps everything the search is actually for: four samples per line is already far below
+ * anything that could distinguish one line period from another.
+ *
+ * Then the line period, straight out of the autocorrelation.
+ *
+ * Then the frame — a *whole number of lines*, so rather than search the autocorrelation
+ * again and risk landing on a lag that is not a multiple, only multiples of the line
+ * period are scored, each at the best lag within an eighth of a line of where it is
+ * predicted so that a line period slightly off does not walk off the peak by the
+ * hundredth multiple.
+ *
+ * And then the line period is taken back *out* of the frame lag. One correlation peak
+ * locates a period to about a tenth of a sample; the same peak five hundred lines out
+ * locates it five hundred times better. On that capture it is the difference between 180
+ * ppm and 2 ppm — between a frame that shears sixty samples from top to bottom and one
+ * that shears less than one.
+ *
+ * Averaging the frames is the point of finding the second period. A leak is a weak signal
  * and a still picture is the same frame over and over; adding them up is free signal.
  */
 export function estimateRaster(x, count, sampleRate, {
-  minLineUs = 4, maxLineUs = 2000, maxLines = 2048,
+  minLineUs = 4, maxLineUs = 2000, maxLines = 2048, maxSamples = 1 << 21,
 } = {}) {
   const minLag = Math.max(4, Math.round((minLineUs * 1e-6) * sampleRate));
   const maxLag = Math.round((maxLineUs * 1e-6) * sampleRate);
-  const line = estimatePeriod(x, { minLag, maxLag });
-  if (!line.value) return { ...line, lineSamples: 0, linesPerFrame: 0 };
+  const smoothWin = Math.max(1, Math.round(minLag / 4));
+  const acf = autocorrelate(x, count, { maxSamples, smoothWin });
+  const line = estimatePeriod(x, { minLag, maxLag, acf });
+  if (!line.value) return { ...line, smoothWin, lineSamples: 0, linesPerFrame: 0 };
 
-  // Frames: score every whole number of lines, and keep the best that is not trivial.
-  const P = line.value;
-  let mean = 0;
-  for (let i = 0; i < count; i++) mean += x[i];
-  mean /= count || 1;
-  let e0 = 0;
-  for (let i = 0; i < count; i++) { const v = x[i] - mean; e0 += v * v; }
-
-  let bestLines = 0, bestScore = -Infinity;
-  const top = Math.min(maxLines, Math.floor(count / (P * 2)));
+  const P0 = line.value;
+  const r = acf.r;
+  const room = Math.min(acf.maxLag - 2, Math.floor(acf.n / 2));
+  const window = Math.max(2, P0 / 8);
+  let bestLines = 0, bestScore = -Infinity, bestLag = 0;
+  const top = Math.min(maxLines, Math.floor(room / P0));
   for (let k = 2; k <= top; k++) {
-    const lag = Math.round(k * P);
-    if (lag >= count - 16) break;
-    let acc = 0;
-    const m = count - lag;
-    for (let i = 0; i < m; i += 2) acc += (x[i] - mean) * (x[i + lag] - mean);
-    const v = (acc * 2) / (e0 * (m / count));
-    if (v > bestScore) { bestScore = v; bestLines = k; }
+    const from = Math.max(1, Math.round(k * P0 - window));
+    const to = Math.min(room, Math.round(k * P0 + window));
+    for (let lag = from; lag <= to; lag++) {
+      if (r[lag] > bestScore) { bestScore = r[lag]; bestLines = k; bestLag = lag; }
+    }
   }
+
+  // A frame is only worth claiming if the whole frame repeats about as well as a line
+  // does. A still picture does; a signal that happens to be periodic at a line does not.
+  const frameConfident = bestLines > 2 && bestScore > 0.25;
+  // Refine off the frame only when there are enough lines in it for that to be the more
+  // precise of the two. Below about eight the parabola on the line peak is still better.
+  const P = frameConfident && bestLines >= 8 ? refinePeak(r, bestLag) / bestLines : P0;
+
   return {
     ...line,
+    smoothWin,
     lineSamples: P,
     lineUs: (P / sampleRate) * 1e6,
     linesPerFrame: bestLines,
     frameScore: bestScore,
-    // A frame is only worth claiming if the whole frame repeats about as well as a line
-    // does. A still picture does; a signal that happens to be periodic at a line does not.
-    frameConfident: bestLines > 2 && bestScore > 0.25,
+    frameLag: bestLag,
+    refined: P !== P0,
+    frameConfident,
   };
 }
 

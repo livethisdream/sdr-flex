@@ -443,6 +443,42 @@ function tempestRaster() {
   return { dir, bytes, samples: iq.length / 2, rate };
 }
 
+// ── 9b. The same screen, the way a receiver actually gets it ─────────────
+// `tempest-raster` is the clean case — one sample a pixel, whole samples a line, three
+// identical frames — and it is clean because it was built to show the mechanism. This one
+// is built to show what a mechanism has to survive.
+//
+// Three things are different and all three are unavoidable on real hardware. What leaks
+// is a *harmonic* of the pixel clock, which is above any receiver's sample rate and folds
+// back into the passband, where it correlates with itself far better than the picture
+// correlates with itself. A line is a fractional number of samples, because nothing locks
+// the monitor's clock to the radio's. And the frames walk, for the same reason one level
+// up — the tenth frame is six samples from where the first one was.
+//
+// Still synthetic, and for the same two reasons: ADR-0025, and that a real TEMPEST capture
+// is a picture of somebody's actual screen.
+function tempestLeak() {
+  const rate = 8_000_000, centerHz = 300_000_000;
+  const width = 40, height = 72;
+  const img = mod.bitmapText('SDR', { width, height, scale: 2 });
+  const r = mod.rasterLeak(img, { width, height, hBlank: 12, vBlank: 12,
+                                  samplesPerPixel: 3.77, harmonic: 13, frames: 6,
+                                  walkPerFrame: 0.47, jitter: 1, seed: 0x51ea });
+  const iq = mod.amCarrier(r.signal, { seed: 0x3c40 });
+  const dir = path.join(HERE, 'tempest-leak');
+  const bytes = writeSigmf(dir, 'capture', iq, {
+    sampleRate: rate, centerHz,
+    note: `Synthetic video leak: ${width}x${height} visible, ` +
+          `${r.samplesPerLine.toFixed(2)} samples a line (fractional on purpose), ` +
+          `${r.frameLines} lines a frame, ${r.frames} frames walking ` +
+          `${(r.offset[r.frames - 1] - r.offset[0]).toFixed(1)} samples apart end to end, ` +
+          'with the 13th harmonic of the pixel clock folded back into the passband. The ' +
+          'screen has SDR on it. Nobody transmitted this and it is not a picture of ' +
+          'anybody\'s monitor.',
+  });
+  return { dir, bytes, samples: iq.length / 2, rate };
+}
+
 // ── 10. Direct-sequence spread spectrum, for the despreader ──────────────
 // BPSK spread by a 127-chip m-sequence, one code period per bit: 21 dB of processing
 // gain, and unreadable until the code is known. Which is the point — the question a
@@ -603,7 +639,7 @@ function rdsBroadcast() {
 }
 
 for (const make of [ookPwm, manchesterCrc, aprsAfsk, adsbModeS, loraCss, m17Fm, m17Packet, fhssHopping,
-                    ofdmGrid, tempestRaster, dsssSpread, bbcConcurrent, rdsBroadcast]) {
+                    ofdmGrid, tempestRaster, tempestLeak, dsssSpread, bbcConcurrent, rdsBroadcast]) {
   const r = make();
   if (r.skipped) {
     console.log(`${path.basename(r.dir).padEnd(20)} skipped — ${r.skipped}`);

@@ -45,3 +45,4 @@ why, what it costs, and what would make us change our minds.
 | [0038](0038-a-node-may-have-two-inputs.md) | A node may have two inputs, and one of them is the primary | Accepted |
 | [0039](0039-the-menu-answers-the-gesture.md) | The menu answers the gesture, and folds everything else | Accepted, not yet built |
 | [0040](0040-a-decoder-may-read-symbols.md) | A decoder may read symbols, and then the clock is a node | Accepted |
+| [0041](0041-build-both-and-measure.md) | Where two methods each win on real signals, build both and keep the better one | Accepted |
