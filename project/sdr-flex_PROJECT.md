@@ -1124,10 +1124,18 @@ range out of shape with, and the bar's tooltip says so. Snapped rather than ease
 is right when the range is following a signal that is changing, and wrong as the answer
 to somebody asking for it now.
 
-**Inferno is the default colormap.** Both it and Viridis are perceptually uniform and
-colorblind-safe, so either is defensible; Inferno's dark end is nearly black, so an empty
-waterfall reads as empty and a weak carrier is the first thing that is not. Viridis starts
-at a purple floor a faint signal has to out-shout.
+**Inferno is the default colormap**, and now in one place. Both it and Viridis are
+perceptually uniform and colorblind-safe, so that does not separate them; Inferno's dark
+end is nearly black, so an empty waterfall reads as empty and a weak carrier is the first
+thing that is not, where Viridis starts on a purple floor a faint signal has to
+out-shout.
+
+"The default colormap" was a literal in five places — three fallbacks in `colormap.js`,
+the waterfall's own constructor, and the viewport defaults — and the first pass at this
+changed one of them. The waterfall was still *built* Viridis and only became Inferno when
+something happened to set it afterwards. There is one exported `DEFAULT_COLORMAP` now,
+every fallback reaches for it, and it leads the picker's list, since the order of that
+list is `Object.keys` on the table.
 
 ## Operator flowgraphs: built, and two holes closed
 

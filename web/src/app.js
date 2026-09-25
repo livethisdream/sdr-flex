@@ -17,7 +17,7 @@ import { fromFiles, FORMATS } from './capture.js';
 import * as out from './export.js';
 import * as plugins from './plugins.js';
 import { AudioMixer, meterLevel } from './audio.js';
-import { COLORMAPS, cssGradient, floorColor, lut } from './colormap.js';
+import { COLORMAPS, cssGradient, floorColor, lut, DEFAULT_COLORMAP } from './colormap.js';
 import { WINDOWS, spectrumHasSignal } from './dsp.js';
 // Only for its SIGNALS table: the synthetic scene is the one source whose contents are
 // known in advance, so it is the one source that can just say what is in it.
@@ -76,11 +76,9 @@ const VIEWS = {
 
 const defaultViewParams = () => ({
   bins: 1024, window: 'Hann', avg: 4,
-  // Inferno rather than Viridis. Both are perceptually uniform and colorblind-safe,
-  // which is why either is defensible; Inferno's dark end is nearly black, so an empty
-  // waterfall reads as empty and a weak carrier is the first thing that is not. Viridis
-  // starts at a distinctly purple floor that a faint signal has to out-shout.
-  dbMin: -74, dbMax: -18, dbAuto: true, colormap: 'Inferno', speed: 60,
+  // Named in colormap.js, with the reason, because four other places reach for the same
+  // default and one of them used to disagree.
+  dbMin: -74, dbMax: -18, dbAuto: true, colormap: DEFAULT_COLORMAP, speed: 60,
   trigger: 'auto', spanS: 0.12,
   domain: 'time', channel: 'sum',
   zoomLo: 0, zoomHi: 1,
