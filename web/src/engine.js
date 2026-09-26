@@ -8,7 +8,7 @@
 import * as dsp from './dsp.js';
 import * as scene from './scene.js';
 import * as plugins from './plugins.js';
-import { plan as identifyPlan } from './identify.js';
+import { plan as identifyPlan, MIN_DECODE_CHARS, textLength } from './identify.js';
 import { Graph, inputsOf } from './graph.js';
 import { alignment } from './delay.js';
 import * as frames from './frames.js';
@@ -472,14 +472,6 @@ function decimateFor(got, fs, audioRate) {
     rate: fs / decim,
   };
 }
-
-// Below this many characters across all of a decoder's records, a speculative pass does
-// not call it a decode. Three: enough to rule out a single symbol found in noise, few
-// enough to keep a short but real answer — eight DTMF digits are eight characters.
-const MIN_DECODE_CHARS = 3;
-
-const textLength = (records) =>
-  records.reduce((n, r) => n + String(r.text ?? '').trim().length, 0);
 
 /** Solid first, thin next, silent last; then by how much, then by name. */
 function rank(a, b) {
@@ -1209,8 +1201,7 @@ export class MockEngine extends Graph {
     // An adapter runs as a process, so this needs the engine on a box. Said plainly
     // rather than shown as an empty report, which would read as "nothing matched".
     if (!this.runAdapterData || !(this.adapters || []).length) {
-      return { tried: [], skipped: [], results: [],
-               error: 'external decoders run on the engine; this tab has no engine on a box to run them' };
+      return { tried: [], skipped: [], results: [], error: 'no decoders available' };
     }
 
     const fs = n.out.sampleRate;

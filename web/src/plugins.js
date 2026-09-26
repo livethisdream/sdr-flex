@@ -140,6 +140,53 @@ export async function loadAll(sources) {
   return out;
 }
 
+/**
+ * The decoders that ship with the client, loaded from wherever the client is served.
+ *
+ * A box hands these over on the socket (`listPlugins`) because it can scan its own
+ * directory. A static host cannot: there is no directory listing over HTTP, so the files
+ * are named in `plugins/index.json` next to them and fetched one at a time.
+ *
+ * Without this the hosted copy of the tool served `plugins/bbc.js` to anyone who asked
+ * for it by name and never asked for it — a decoder sitting in the deployed directory,
+ * runnable entirely in the tab, that nothing ever loaded. It is also the only decoder a
+ * tab with no box has, which is what made `Identify` look like it had been removed.
+ *
+ * A manifest that names a file that is not there is one decoder missing, not a failed
+ * load: the rest still come back, and the failure is reported the way a bad drop is.
+ */
+export async function loadSite(base = 'plugins', fetchFn = null) {
+  const f = fetchFn || globalThis.fetch;
+  const out = { loaded: [], failed: [] };
+  if (!f) return out;
+  let names;
+  try {
+    const res = await f(`${base}/index.json`);
+    if (!res.ok) return out;
+    names = (await res.json()).plugins;
+  } catch {
+    // No manifest is the ordinary case for a box, which never looks here, and for a
+    // deployment that ships no decoders. It is not an error and does not get reported
+    // as one.
+    return out;
+  }
+  for (const name of Array.isArray(names) ? names : []) {
+    if (typeof name !== 'string' || name.includes('/') || !name.endsWith('.js')) {
+      out.failed.push({ filename: String(name), error: 'not a plugin filename' });
+      continue;
+    }
+    if ([...registry.values()].some((p) => p.filename === name)) continue;
+    try {
+      const res = await f(`${base}/${name}`);
+      if (!res.ok) throw new Error(`the server answered ${res.status}`);
+      out.loaded.push(await loadSource(await res.text(), name));
+    } catch (err) {
+      out.failed.push({ filename: name, error: err.message });
+    }
+  }
+  return out;
+}
+
 /** Plugins that can sit after a node of this stream kind. */
 export function forKind(kind) {
   return loaded().filter((p) => p.in === '*' || p.in === kind);

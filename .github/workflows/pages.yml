@@ -4,9 +4,19 @@
 # with no build step, and the client falls back to its in-tab engine when no websocket
 # answers (ADR-0021) — so Pages serves a working tool rather than a demo. What it cannot
 # have is anything that runs as a process: the external decoders, a radio, the capture
-# library. `Identify` knows this and says so rather than offering a decoder that cannot
-# run. Everything else — the DSP, the flowgraph, the views, the synthetic scene, a
+# library. Everything else — the DSP, the flowgraph, the views, the synthetic scene, a
 # capture you drop on the window — is the same code the server serves.
+#
+# **`Identify` opens here and says "no decoders available" when it has none.** It used to
+# not be drawn at all, because the button required an installed adapter — so the feature
+# looked as though it had been removed rather than as though it had nothing to run. This
+# comment claimed it "knows this and says so"; it did not, until it did.
+#
+# **The decoders in `web/plugins/` do run here**, because a plugin is a file the tab
+# executes and not a process (ADR-0029). A static host cannot list a directory, so
+# `web/plugins/index.json` names them and the client fetches that. They were deployed and
+# never loaded before it existed; `web/test/plugins.test.mjs` asserts it matches the
+# directory, because the drift is silent — it works on a box, which scans.
 #
 # Pages is set to Settings → Pages → Source → **GitHub Actions**, so this is the deploy:
 # `web/` is published as the site root and the repository's root index.html — which

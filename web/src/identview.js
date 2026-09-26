@@ -96,15 +96,20 @@ export class IdentifyPanel {
     const answered = this.rows.filter((r) => r.state === 'done').length;
     const found = this.rows.filter((r) => r.records > 0 && !r.thin && !r.suspect).length;
 
+    // A byte stream has no window: it is whatever the slicer produced, all of it, and
+    // "0.5 s of bytes" would be describing the samples they came from rather than them.
+    const what = a.kind === 'iq' ? `${fmtSeconds(a.windowS)} of spectrum`
+      : a.kind === 'real' ? `${fmtSeconds(a.windowS)} of audio`
+      : 'the bytes upstream';
     const head =
       `<div class="idhead"><b>Identify</b>` +
-      `<span>${fmtSeconds(a.windowS)} of ${a.kind === 'iq' ? 'spectrum' : 'audio'} · ` +
+      `<span>${what} · ` +
       `${this.rows.length} decoder${this.rows.length === 1 ? '' : 's'}` +
       `${this.done ? '' : ` · ${answered} done`}</span></div>`;
 
     const body = this.rows.length
       ? `<ol class="idlist">${this.rows.map((r) => this._row(r)).join('')}</ol>`
-      : `<div class="idnone">${esc(this.error || 'no decoder on this engine can read this stream')}</div>`;
+      : `<div class="idnone">${esc(this.error || 'no decoders available')}</div>`;
 
     // The summary line is the answer to the question that was asked, so it is stated
     // rather than left to be counted off the list.

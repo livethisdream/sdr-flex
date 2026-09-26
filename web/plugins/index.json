@@ -1,0 +1,4 @@
+{
+  "_why": "A static host cannot list a directory, so the files in it are named here. The server does not read this — it scans (server/plugindir.js). web/test/plugins.test.mjs asserts the two agree, because a decoder that ships and is never loaded is worse than one that is not there.",
+  "plugins": ["bbc.js"]
+}

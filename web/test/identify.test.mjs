@@ -280,11 +280,15 @@ const have = (id) => adapters.available(id);
 const hit = (r, id, via = null) => by(r.results, id, via);
 
 test('an engine with no decoders on the box says so', async () => {
+  // Plainly, and as a sentence. The button used to be missing altogether in this case —
+  // `canIdentify` required an installed adapter — so the hosted copy of the tool looked
+  // as though the feature had been removed. A panel saying four words is not much, but
+  // absence says nothing at all, which is the one thing ADR-0031 asks this not to do.
   const e = new MockEngine({ latency: false });
   await e.createSession();
   await e.openCapture(fixture('adsb-modes'));
   const r = await e.identify(e.root.id);
-  assert.match(r.error, /no engine on a box/);
+  assert.equal(r.error, 'no decoders available');
   assert.deepEqual(r.results, [], 'rather than an empty report, which reads as "nothing matched"');
 });
 

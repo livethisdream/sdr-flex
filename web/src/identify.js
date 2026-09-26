@@ -27,10 +27,11 @@ export const RATE_HEADROOM = 4;
 
 /**
  * @param {Array} adapters  the `list()` descriptors: { id, name, in, out, wants, available, command }
- * @param {{kind: string, sampleRate: number, demods?: Array<{op: string, label: string}>}} stream
+ * @param {{kind: string, sampleRate: number, demods?: Array<{op: string, label: string}>,
+ *          plugins?: Array}} stream
  * @returns {{tried: Array, skipped: Array}}
  */
-export function plan(adapters, { kind, sampleRate, demods = [] }) {
+export function plan(adapters, { kind, sampleRate, demods = [], plugins = [] }) {
   const tried = [], skipped = [];
   for (const a of adapters || []) {
     const row = { id: a.id, name: a.name, blurb: a.blurb, wants: a.wants,
@@ -54,8 +55,75 @@ export function plan(adapters, { kind, sampleRate, demods = [] }) {
     }
     skipped.push({ ...row, why: `takes ${say(a.in)}, and this is ${say(kind)}` });
   }
-  return { tried, skipped };
+  return { tried: tried.concat(pluginPlan(plugins, kind, skipped)), skipped };
 }
+
+/**
+ * The decoders that came from a file rather than from a process.
+ *
+ * Planned separately and much more simply, because none of the adapter reasoning
+ * applies: a plugin is already here, so "not installed" cannot happen; it runs in this
+ * tab, so there is no box to be missing; and it reads bytes that have already been
+ * sliced, so there is no sample rate for it to be too narrow for. What is left is the
+ * one question — does it take this kind of stream — and the answer to "no" is still
+ * written down, for the reason at the top of this file.
+ *
+ * They are planned at all because they are the only decoders a tab with no server has.
+ * `Identify` that could only ever offer a subprocess was `Identify` that did not exist
+ * on the hosted copy of the tool, and a button that is not drawn cannot say why.
+ */
+function pluginPlan(plugins, kind, skipped) {
+  const tried = [];
+  for (const p of plugins || []) {
+    const row = { id: p.id, name: p.name, blurb: p.blurb, plugin: true, params: settings(p) };
+    if (p.in === kind || p.in === '*') tried.push({ ...row, via: null, viaLabel: '' });
+    else skipped.push({ ...row, why: `takes ${say(p.in)}, and this is ${say(kind)}` });
+  }
+  return tried;
+}
+
+/**
+ * Run the plugin half of a plan, here in the tab.
+ *
+ * It does not go through the engine and it must not: a plugin is a file somebody dropped
+ * on *this window* (ADR-0029), so on a box the server has never seen it and could not run
+ * it if it had. The engine runs the adapters, this runs these, and both land in the same
+ * report — which is the whole reason the row shape is defined here rather than in either.
+ *
+ * `run` is passed in rather than imported so this stays a pure function of a plan, which
+ * is the property that makes the planner testable without loading a decoder.
+ */
+export function runPlugins(tried, bytes, run, onResult = null) {
+  const results = [];
+  for (const cand of tried) {
+    const out = run(cand.id, bytes, cand.params) || { records: [] };
+    const records = out.records || [];
+    const row = {
+      id: cand.id, name: cand.name, via: null, viaLabel: '', params: cand.params,
+      plugin: true,
+      records: records.length, ms: out.ms, error: out.error,
+      thin: records.length > 0 && textLength(records) < MIN_DECODE_CHARS,
+      suspect: records.length > 0 && records.every((r) => r.suspect),
+      sample: records.slice(0, 3).map((r) => r.text),
+    };
+    results.push(row);
+    if (onResult) onResult(row);
+  }
+  return results;
+}
+
+// Below this many characters across all of a decoder's records, a speculative pass does
+// not call it a decode. Three: enough to rule out a single symbol found in noise, few
+// enough to keep a short but real answer — eight DTMF digits are eight characters.
+//
+// Here rather than in the engine because both halves of a report have to agree on it. A
+// plugin row and an adapter row sit in the same list and are sorted against each other,
+// and a threshold that was three in one file and something else in another would rank
+// them by which code path produced them.
+export const MIN_DECODE_CHARS = 3;
+
+export const textLength = (records) =>
+  records.reduce((n, r) => n + String((r && r.text) ?? '').trim().length, 0);
 
 /**
  * Everything that has to run between the node being identified and this decoder.

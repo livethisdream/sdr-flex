@@ -1435,6 +1435,55 @@ are not in this checkout, so the click path — the `session` box, the `saved se
 menu — is exercised only as far as its parts. The stores, the routes, the id safety and
 the replay round trip are tested; the wiring between the strip and those is not.
 
+## Identify, as fixed — it had gone missing on the hosted copy
+
+Reported: "I was looking at the new web version, and it's working very well. Where did the
+'identify' capability go?" It had not gone anywhere; it had never been drawn there. Three
+separate faults, found while answering:
+
+**The button required an installed adapter.** `canIdentify` returned false unless some
+adapter was `available`, and adapters are processes the box owns (ADR-0013) — `MockEngine`
+never sets `this.adapters` at all. No box, no adapters, no button. **A button that is not
+drawn cannot say why it is not there**, which is the one thing ADR-0031 asks of this
+feature. The panel now opens on any `iq`, `real` or `bytes` node and says **"no decoders
+available"** when it has none.
+
+**The doc claimed the fix that was not there.** The Pages workflow comment said
+"`Identify` knows this and says so rather than offering a decoder that cannot run." It did
+not. Written last session, by me, about behavior that did not exist. Corrected in place.
+
+**The one decoder that could have run there was never loaded.** `web/plugins/bbc.js` is
+deployed to the site and executes entirely in the tab (ADR-0029), but `loadPlugins` only
+fetched plugins when a *server* advertised a plugin directory. A static host cannot list a
+directory, so there is now `web/plugins/index.json` naming them and `plugins.loadSite()`
+fetching it. The drift this invites is silent — add a decoder, it works on a box because
+the box scans, and is simply absent from the hosted copy — so a test asserts the manifest
+and the directory agree, and it was checked to fail when they do not.
+
+**And Identify could not have run it anyway.** `identifyPlan` only ever saw
+`engine.adapters`. Plugins are now planned too, marked `plugin: true`, and skipped *with a
+reason* when they take a different kind rather than being left out of the report. Two
+things fell out of doing it:
+
+- **The plugin half runs in the client, always.** A plugin is a file dropped on this
+  window; on a box the server has never seen it. So `app.openIdentify` builds one plan and
+  hands each half to whoever can run it, and calls `engine.identify` only when there are
+  adapter candidates — asking an engine to identify a byte stream answers "nothing to
+  identify on a bytes stream", which is true of the engine and false of the report.
+- **Identify now works on a `bytes` node**, which is where a plugin reads. That is the
+  only kind this tool can identify with no box at all. `runPlugin` has always been
+  bytes-only regardless of what a manifest declares, so this is the honest scope rather
+  than the advertised one.
+
+`MIN_DECODE_CHARS` and `textLength` moved from `engine.js` into `identify.js`, because a
+plugin row and an adapter row sit in the same sorted list and a threshold that differed
+between them would rank rows by which code path produced them.
+
+**Not verified here.** No browser in this environment and the Playwright suites are not in
+this checkout, so the button appearing and the panel filling are tested only as far as
+their parts: the planner, the runner, the loader, and the engine's message. The click path
+is not.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the
@@ -1687,6 +1736,15 @@ have `/version`.
   and is the tool for this. Two rounds were lost to guessing.
 - **Auto parameters must show their evidence** (ADR-0017). Twice, an estimator was
   confidently wrong in a way only its own stated reasoning exposed.
+- **A capability that hides itself when it cannot run reads as a capability that was
+  removed.** `Identify` required an installed decoder before it would draw its own
+  button, so on the hosted copy it did not exist — and the person looking for it had no
+  way to tell "nothing to run" from "gone". Four words in a panel beat an absence.
+  The same applies to a file that ships and is never loaded.
+- **A comment describing behavior is a claim, and claims rot.** The Pages workflow said
+  `Identify` "knows this and says so" about behavior that was never written. Nothing
+  tests a comment. When one describes what the code does rather than why, it is worth
+  asking whether it still does.
 - **A default that is `null` is not a default that is missing.** Twenty-one passing
   tests each named their own options; the shipped `CONFIG` passed `sessionDir: null`,
   which is present, so the destructuring default never ran and the real server kept no

@@ -8,7 +8,7 @@ import { Waterfall } from './waterfall.js';
 import { SpectrumTrace, TimeSeries, BitRaster } from './views.js';
 import { ContextMenu } from './menu.js';
 import { IdentifyPanel } from './identview.js';
-import { plan as identifyPlan } from './identify.js';
+import { plan as identifyPlan, runPlugins } from './identify.js';
 import { Strip } from './strip.js';
 import { HOTKEYS, KEY_FOR, opForKey, firstOpNamed } from './keys.js';
 import { delayOf } from './delay.js';
@@ -25,6 +25,13 @@ import * as scene from './scene.js';
 import { CRCS } from './frames.js';
 import * as resume from './resume.js';
 import * as sessions from './sessions.js';
+
+// The stream kinds Identify has anything to say about.
+//
+// `iq` and `real` are where the external decoders read, and `bytes` is where a plugin
+// does — the kind a decoder dropped on the window takes, and the only kind this tool can
+// identify with no box behind it at all.
+const IDENTIFIABLE = ['iq', 'real', 'bytes'];
 
 // How much capture one streamed decode covers.
 //
@@ -826,11 +833,19 @@ class App {
     });
   }
 
-  /** Is there anything here to identify, and anything on the box to do it with? */
+  /**
+   * Is there anything here that could be identified?
+   *
+   * Not "is there anything to identify it *with*". This used to require an installed
+   * adapter, which meant the button did not exist at all on a tab with no box — and a
+   * button that is not drawn cannot say why, which is the one thing ADR-0031 asks of
+   * this feature. Somebody went looking for Identify on the hosted copy and could not
+   * find it. Now it opens and the panel says "no decoders available", which is a
+   * sentence, where absence was not.
+   */
   canIdentify() {
     const n = this.node();
-    if (!n || (n.out.kind !== 'iq' && n.out.kind !== 'real')) return false;
-    return (this.engine.adapters || []).some((a) => a.available);
+    return !!n && IDENTIFIABLE.includes(n.out.kind);
   }
 
   /**
@@ -846,20 +861,42 @@ class App {
     if (!n) return;
     this.metrics.beginOp();
     const kind = n.out.kind;
-    const plan = identifyPlan(this.engine.adapters || [],
-      { kind, sampleRate: n.out.sampleRate, demods: demodsFor(kind) });
+    // One plan, two runners. The adapters are programs and belong to the engine; the
+    // plugins are files dropped on *this window* (ADR-0029) and the engine has never
+    // seen them — on a box it could not run one if it had. So the plan is built here,
+    // where both are visible, and each half is run by whoever can run it.
+    const plan = identifyPlan(this.engine.adapters || [], {
+      kind, sampleRate: n.out.sampleRate, demods: demodsFor(kind), plugins: plugins.loaded(),
+    });
+    const mine = plan.tried.filter((c) => c.plugin);
+    const theirs = plan.tried.filter((c) => !c.plugin);
     const at = this.engine.effectiveTime(n.id);
     const win = this.engine.identifyWindow(n.id, at);
     this.ident.open({ x, y }, plan,
       { windowS: win.t1 - win.t0, kind, sampleRate: n.out.sampleRate },
       (row) => this.buildFromIdentify(n.id, row));
 
-    let report;
-    try {
-      report = await this.engine.identify(n.id, { at, onResult: (r) => this.ident.result(r) });
-    } catch (e) {
-      report = { error: e.message };
+    let report = null;
+    // Only when there is something for it to run. Asking an engine to identify a byte
+    // stream gets "nothing to identify on a bytes stream", which is true of the engine
+    // and false of the report — the plugins below are about to read exactly that.
+    if (theirs.length) {
+      try {
+        report = await this.engine.identify(n.id, { at, onResult: (r) => this.ident.result(r) });
+      } catch (e) {
+        report = { error: e.message };
+      }
     }
+    if (mine.length) {
+      try {
+        const src = await this.engine.sliceBytes(n.id);
+        if (src) runPlugins(mine, src.bytes, plugins.run, (r) => this.ident.result(r));
+        else report = report || { error: 'nothing upstream has produced bytes yet' };
+      } catch (e) {
+        report = report || { error: e.message };
+      }
+    }
+    if (!plan.tried.length) report = report || { error: 'no decoders available' };
     if (!this.ident.isOpen) return;            // closed while it ran, which is allowed
     // The final reply carries every row again. Rows that arrived on the progress
     // channel are already in place; this is what catches an engine that answered all at
@@ -2112,6 +2149,13 @@ class App {
         if (got.loaded.length) said.push(`${got.loaded.length} from the server`);
         for (const f of got.failed) this.notify(`${f.filename}: ${f.error}`, 10000);
       } catch (err) { this.notify(`could not read the server's decoders: ${err.message}`, 8000); }
+    } else {
+      // No box to scan a directory, so the client reads the manifest beside the files.
+      // These are the only decoders a hosted tab has, and they were being served and
+      // never loaded.
+      const got = await plugins.loadSite();
+      if (got.loaded.length) said.push(`${got.loaded.length} that ship with the client`);
+      for (const f of got.failed) this.notify(`${f.filename}: ${f.error}`, 10000);
     }
     const mine = await plugins.restore();
     if (mine.loaded.length) said.push(`${mine.loaded.length} you dropped earlier`);
