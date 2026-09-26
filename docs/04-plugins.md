@@ -116,7 +116,7 @@ reinterpret `symbols` as `bits`.
 | Kind | What you write | Use when |
 |---|---|---|
 | `gr_hier` | A GNU Radio hier block (Python or C++) | Default for transparent chains. Composes existing GR blocks. |
-| `js` | An ES module the user drops on the window | **The late end of the chain** — a protocol codec on already-demodulated bytes. Runs in the client, needs no server, shipped in M0. See [ADR-0028](adr/0028-plugin-boundary-is-a-stream-type.md). |
+| `js` | An ES module the user drops on the window | **Anything that reads a stream and returns records** — a protocol codec on bytes, a tone or burst detector on audio, an analyzer on IQ. Runs in the client, needs no server, shipped in M0. See [ADR-0028](adr/0028-plugin-boundary-is-a-stream-type.md) and the contract below. |
 | `process` | A manifest wrapping an existing CLI program | **Reusing the field's existing decoders** — `rtl_433`, `multimon-ng`, `dump1090`, `direwolf`, `dsd`. See [ADR-0013](adr/0013-external-decoders-as-subprocesses.md) and [reuse](07-reuse.md). |
 | `gr_block` | A single GR block from an OOT module | Wrapping something that already exists |
 | `grc` | A `.grc` file | Prototyping in GRC, promoting to a plugin |
@@ -134,6 +134,47 @@ opaque reuse, depth via transparent native chains — is covered in
 GNU Radio Companion" to "it's a first-class operation in the workflow" is writing a
 20-line manifest. That is the cheapest possible path from the existing GR community
 into this tool.
+
+### What a `js` plugin actually gets
+
+The kind that ships today, spelled out, because the manifest and the runner have to
+agree and for a while they did not.
+
+```js
+export const manifest = {
+  id: 'ext.dtmf',        // reverse-DNS-ish, unique
+  name: 'DTMF',          // what the menu shows
+  group: 'Decode',
+  in: 'real',            // 'iq' | 'real' | 'bytes' | '*'
+  out: 'events',         // records, and only records — see below
+  params: [{ id: 'minMs', label: 'shortest tone', type: 'enum',
+             default: 40, values: [20, 40, 70, 100] }],
+};
+
+export function decode(data, params, info) { … }   // → [{ text, … }]
+```
+
+**`in` decides what `data` is**, and the engine reads the parent accordingly:
+`Float32Array` samples for `iq` (interleaved) and `real`, a `Uint8Array` for `bytes`,
+and whichever the parent happens to be for `*`.
+
+**`info` is what a decoder cannot work out for itself**: `{ kind, sampleRate, centerHz,
+count, t0, t1 }`. Anything reading samples needs the rate — a tone decoder that assumes
+8 kHz and is handed 48 reports every digit as a different one. It is a third argument so
+that a decoder which does not care never has to mention it; every plugin written against
+the two-argument form still works.
+
+**How much it gets**: the whole span, or the pinned clip if there is one — the same rule
+an external decoder gets, because one handed the two hundred milliseconds that happen to
+be on screen finds nothing and says nothing about why. `Identify` is the exception and
+passes its own bounded window, which it reports alongside the results.
+
+**`out` is `events`.** A plugin returns records. A manifest declaring `out: 'real'` is
+declaring itself a stage in the chain, which means everything downstream reads its
+samples through `readSpan`, on demand and cached, on the engine's clock — and nothing
+routes a read through a JS function. Such a node would build, appear in the menu and
+produce nothing, so it is refused at load with that reason rather than at run time with
+a shrug. The general block is a real thing to want and a different piece of work.
 
 ## Distribution
 

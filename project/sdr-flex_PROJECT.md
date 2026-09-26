@@ -1484,6 +1484,67 @@ this checkout, so the button appearing and the panel filling are tested only as 
 their parts: the planner, the runner, the loader, and the engine's message. The click path
 is not.
 
+## Plugins are fed what they declare, as built
+
+Asked as "what's the difference between plugin and decoder?", which turned into a real
+finding. The vocabulary answer: **adapter** is the subprocess kind (`server/adapters.js`,
+ADR-0013), **plugin** in the code means the JS kind (`web/src/plugins.js`), and
+**decoder** is a *category* in `docs/04-plugins.md` — while ADR-0028 says all of them are
+plugins and the category is defined by the stream types it sits between. The code had
+drifted back into the conflation ADR-0028 was written to end.
+
+**And the decision had only ever been half-implemented.** The manifest declared `in`, the
+palette filtered on it, `Identify` planned on it — and `runPlugin` fetched bytes whatever
+it said. A plugin declaring `real` was offered in the menu, built a node, and then
+reported "nothing upstream has produced bytes yet". Invisible, because the only plugin
+that existed read bytes.
+
+**The "just convert it in the plugin" option did not exist.** The bytes a plugin received
+are the *output of a slicer*, several nodes downstream of the audio — not a serialized
+form of it. There was never a buffer to reinterpret, so the choice was never
+engine-converts versus plugin-converts; it was fed versus cannot run. Worth writing down
+because it looked like a genuine fence for a while.
+
+Built:
+
+- **`Graph.pluginFeed(nodeId, at, span)`** — reads the node's output by its kind:
+  `readSpan` for `iq`/`real`, `sliceBytes` for `bytes`. On `Graph` rather than in either
+  engine, because `Identify` runs the plugin half in the client (ADR-0029) whichever
+  engine is behind it. Whole span or the pinned clip, the same rule an adapter gets.
+- **`decode(data, params, info)`** — a third argument carrying `{kind, sampleRate,
+  centerHz, count, t0, t1}`. Backward compatible; the two-argument plugins still work.
+  Anything on samples needs the rate, and a decoder that assumed 8 kHz and was handed 48
+  would report every digit as a different one.
+- **`out` bounded where `in` was widened.** A manifest declaring `out: 'real'` is
+  declaring itself a stage, and everything downstream would read it through `readSpan`,
+  cached, on the engine's clock — nothing routes a read through a JS function, so that
+  node would build, appear in the menu and produce nothing. Refused at load, with the
+  reason. The general block is a different piece of work.
+- **`Identify` passes its own bounded window** to the plugin half. A plugin runs
+  *synchronously in the tab*; handed a hundred seconds it would lock the window, and the
+  report would be claiming something about a span it never read.
+- **`web/plugins/dtmf.js`** — the second shipped plugin, and the first that reads `real`,
+  so the path has a test that is not hypothetical. Eight Goertzel filters on a 12 ms grid.
+  All sixteen digits at 8/22.05/44.1/48 kHz; rejects noise, a single tone, and a sweep
+  through the band; decodes at −12 dB wideband SNR (unsurprising — eight narrow filters
+  is about 25 dB of processing gain — but measured, and the number to argue with if it
+  regresses).
+
+**One thing measured and corrected on the way.** A 36 ms tone passed a 40 ms floor,
+because `round(40/12)` happens to be 3. The fix was not to round differently — a tone is
+only seen on the block grid, so a real 40 ms tone measures as 36 or 48 depending on where
+it starts, and requiring the larger count would reject a legal tone on alignment alone.
+The rule is now stated: keep it if it *could* have been long enough, and report the
+measured length so the doubt is visible.
+
+**The test suite found one of my own errors too.** The graph test encoded its `cu8`
+fixture as though zero were byte zero, ignoring the 127.5 offset — so the "envelope" came
+back centred on zero, the detector rectified it, and nothing decoded. Written out
+longhand in the test now rather than folded into a constant.
+
+**Not verified here.** No browser, so the palette offering a `real` plugin and the panel
+filling are tested through the engine and the planner rather than by clicking.
+
 ## Open, needs a decision
 
 - **No real radio has ever been attached.** The first one plugged into the box is the
@@ -1736,6 +1797,10 @@ have `/version`.
   and is the tool for this. Two rounds were lost to guessing.
 - **Auto parameters must show their evidence** (ADR-0017). Twice, an estimator was
   confidently wrong in a way only its own stated reasoning exposed.
+- **A contract honored in three places out of four is a contract that lies.** The plugin
+  manifest's `in` was read by the palette, the planner and the type filter, and ignored
+  by the runner. Every consumer agreeing except the one that does the work is worse than
+  no declaration at all, because everything upstream of it says the thing will work.
 - **A capability that hides itself when it cannot run reads as a capability that was
   removed.** `Identify` required an installed decoder before it would draw its own
   button, so on the hosted copy it did not exist — and the person looking for it had no

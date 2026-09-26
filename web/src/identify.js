@@ -91,12 +91,14 @@ function pluginPlan(plugins, kind, skipped) {
  * report — which is the whole reason the row shape is defined here rather than in either.
  *
  * `run` is passed in rather than imported so this stays a pure function of a plan, which
- * is the property that makes the planner testable without loading a decoder.
+ * is the property that makes the planner testable without loading a decoder. `feed` is
+ * whatever `Graph.pluginFeed` handed back — the samples or the bytes, and the facts about
+ * them a decoder cannot work out for itself.
  */
-export function runPlugins(tried, bytes, run, onResult = null) {
+export function runPlugins(tried, feed, run, onResult = null) {
   const results = [];
   for (const cand of tried) {
-    const out = run(cand.id, bytes, cand.params) || { records: [] };
+    const out = run(cand.id, feed.data, cand.params, feed.info) || { records: [] };
     const records = out.records || [];
     const row = {
       id: cand.id, name: cand.name, via: null, viaLabel: '', params: cand.params,
@@ -221,7 +223,7 @@ function narrowWhy(a, sampleRate) {
          `what it decodes is not inside a channel this narrow, so resampling cannot reach it`;
 }
 
-const say = (kind) => (kind === 'real' ? 'audio' : kind);
+export const say = (kind) => (kind === 'real' ? 'audio' : kind);
 
 export function fmtRate(hz) {
   return hz >= 1e6

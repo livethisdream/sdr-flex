@@ -8,7 +8,7 @@
 import * as dsp from './dsp.js';
 import * as scene from './scene.js';
 import * as plugins from './plugins.js';
-import { plan as identifyPlan, MIN_DECODE_CHARS, textLength } from './identify.js';
+import { plan as identifyPlan, MIN_DECODE_CHARS, textLength, say } from './identify.js';
 import { Graph, inputsOf } from './graph.js';
 import { alignment } from './delay.js';
 import * as frames from './frames.js';
@@ -1317,11 +1317,15 @@ export class MockEngine extends Graph {
     const n = this.node(nodeId);
     if (!n || !n.plugin) return null;
     const p = this.node(n.parent);
-    const src = p.out.kind === 'bytes' ? await this.sliceBytes(p.id, null, at) : null;
-    if (!src) return { records: [], error: 'nothing upstream has produced bytes yet' };
+    // Whatever the parent produces, chosen by its kind rather than assumed to be bytes.
+    // See `Graph.pluginFeed`, and the manifest that said which all along.
+    const src = await this.pluginFeed(p.id, at);
+    if (!src) {
+      return { records: [], error: `nothing upstream has produced ${say(p.out.kind)} yet` };
+    }
     const args = {};
     for (const [k, v] of Object.entries(n.params)) args[k] = v.value;
-    const out = plugins.run(n.plugin, src.bytes, args);
+    const out = plugins.run(n.plugin, src.data, args, src.info);
     n._records = out;
     return out;
   }

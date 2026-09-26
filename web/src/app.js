@@ -889,9 +889,9 @@ class App {
     }
     if (mine.length) {
       try {
-        const src = await this.engine.sliceBytes(n.id);
-        if (src) runPlugins(mine, src.bytes, plugins.run, (r) => this.ident.result(r));
-        else report = report || { error: 'nothing upstream has produced bytes yet' };
+        const feed = await this.engine.pluginFeed(n.id, at, win);
+        if (feed) runPlugins(mine, feed, plugins.run, (r) => this.ident.result(r));
+        else report = report || { error: `nothing here has produced ${kind} yet` };
       } catch (e) {
         report = report || { error: e.message };
       }

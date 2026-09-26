@@ -91,12 +91,37 @@ export async function restore() {
   return out;
 }
 
+/**
+ * The stream kinds a plugin may read, and the one it may produce.
+ *
+ * `in` is open because the engine can hand over any of these: samples off a `readSpan`,
+ * bytes off a slicer, or whichever the parent happens to be for a plugin that takes `*`.
+ *
+ * `out` is not, and the limit is real rather than cautious. A plugin returns *records* —
+ * that is what `decode` gives back and what the events pane draws. A manifest declaring
+ * `out: 'real'` is declaring itself a stage in the chain, which means everything
+ * downstream would read its samples through `readSpan`, on demand, cached, on the
+ * engine's clock. Nothing routes a read through a JS function today, so such a node
+ * would be built, appear in the menu, and produce nothing — which is the failure this
+ * whole change is fixing, reintroduced one level up. Refused at load, where the author
+ * can read the reason.
+ */
+export const PLUGIN_IN = ['iq', 'real', 'bytes', '*'];
+export const PLUGIN_OUT = ['events'];
+
 function validate(m, where) {
   const bad = (why) => { throw new Error(`${where}: ${why}`); };
   if (!m || typeof m !== 'object') bad('no manifest export');
   if (!m.id || !/^[\w.]+$/.test(m.id)) bad('manifest.id must be a word like "ext.bbc"');
   if (!m.name) bad('manifest.name is required — it is what the menu shows');
   if (!m.in || !m.out) bad('manifest.in and manifest.out name the stream types it sits between');
+  if (!PLUGIN_IN.includes(m.in)) {
+    bad(`manifest.in is "${m.in}"; a plugin reads one of ${PLUGIN_IN.join(', ')}`);
+  }
+  if (!PLUGIN_OUT.includes(m.out)) {
+    bad(`manifest.out is "${m.out}"; a plugin returns records, so it is "events" — ` +
+        'a stage that produces a stream is not something this can run yet');
+  }
   for (const p of m.params || []) {
     if (!p.id) bad('every param needs an id');
     if (p.default === undefined) bad(`param ${p.id} has no default; a plugin has to arrive usable`);
@@ -198,12 +223,16 @@ export function forKind(kind) {
  * rather than an exception — a decoder that fails on this packet is a result, not a
  * crash, and the whole point is to try several.
  */
-export function run(id, bytes, params) {
+export function run(id, data, params, info = null) {
   const p = registry.get(id);
   if (!p) return { records: [], error: `plugin ${id} is not loaded` };
   const t0 = performance.now();
   try {
-    const out = p.decode(bytes, params || {}) || [];
+    // A third argument rather than a different signature: `decode(bytes, params)` is
+    // what every plugin written so far takes, and a decoder that does not care what it
+    // is reading should not have to say so. One that does — anything on samples, which
+    // cannot do arithmetic on time without knowing the rate — reads it from here.
+    const out = p.decode(data, params || {}, info || {}) || [];
     const records = (Array.isArray(out) ? out : [out]).map((r) =>
       typeof r === 'string' ? { text: r } : r);
     return { records, ms: performance.now() - t0 };

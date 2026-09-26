@@ -48,9 +48,9 @@ test('the manifest names every decoder in the directory, and nothing else', () =
 test('a static host serves the decoders it ships, and they load', async () => {
   const got = await plugins.loadSite('plugins', siteFetch());
   assert.deepEqual(got.failed, []);
-  assert.ok(got.loaded.length >= 1);
-  assert.ok(plugins.get('ext.bbc'), 'the one that ships is in the registry');
+  assert.ok(got.loaded.length >= 2);
   assert.equal(plugins.get('ext.bbc').in, 'bytes');
+  assert.equal(plugins.get('ext.dtmf').in, 'real', 'and not all of them read bytes');
 });
 
 test('loading twice does not load twice', async () => {
@@ -83,9 +83,57 @@ test('a manifest naming a file that is not there loses one decoder, not the rest
   assert.match(got.failed[0].error, /404/);
 });
 
+// ── what a manifest may declare ─────────────────────────────────────────────
+
+const src = (m, body = 'export function decode(){ return []; }') =>
+  `export const manifest = ${JSON.stringify(m)};\n${body}`;
+
+test('a plugin may read samples or bytes', async () => {
+  for (const kind of ['iq', 'real', 'bytes', '*']) {
+    const p = await plugins.loadSource(
+      src({ id: `t.in${kind === '*' ? 'any' : kind}`, name: kind, in: kind, out: 'events' }));
+    assert.equal(p.in, kind);
+  }
+});
+
+test('a manifest that declares a stream out is refused, with the reason', async () => {
+  // Not caution. A plugin returns records; a node whose `out` is a stream is read
+  // through `readSpan`, on demand and cached, and nothing routes a read through a JS
+  // function. Such a node would build, appear in the menu, and produce nothing — which
+  // is the exact failure this whole change is fixing, one level up.
+  for (const out of ['real', 'iq', 'bytes', 'grid']) {
+    await assert.rejects(
+      () => plugins.loadSource(src({ id: 't.out', name: 'x', in: 'real', out })),
+      /a plugin returns records/, out);
+  }
+});
+
+test('a manifest that declares an input nobody can feed is refused', async () => {
+  for (const kind of ['bits', 'symbols', 'audio', 'nonsense']) {
+    await assert.rejects(
+      () => plugins.loadSource(src({ id: 't.badin', name: 'x', in: kind, out: 'events' })),
+      /a plugin reads one of/, kind);
+  }
+});
+
+test('the decoders that ship satisfy their own contract', async () => {
+  // They are loaded by the same validator, so this would be caught anyway — but a
+  // shipped file failing its own rules is worth one line that names it.
+  await plugins.loadSite('plugins', siteFetch());
+  for (const id of ['ext.bbc', 'ext.dtmf']) {
+    const p = plugins.get(id);
+    assert.ok(p, id);
+    assert.ok(plugins.PLUGIN_IN.includes(p.in), `${id} reads ${p.in}`);
+    assert.ok(plugins.PLUGIN_OUT.includes(p.out), `${id} produces ${p.out}`);
+  }
+});
+
 // ── and into Identify ───────────────────────────────────────────────────────
 
 const stub = (id, kind) => ({ id, name: id, in: kind, out: 'events', params: [] });
+
+/** What `Graph.pluginFeed` hands back for a byte stream. */
+const bytesFeed = (n) => ({ data: new Uint8Array(n), info: { kind: 'bytes', count: n } });
 
 test('a plugin is planned for the kind it takes', () => {
   const p = plan([], { kind: 'bytes', sampleRate: 48_000, plugins: [stub('ext.a', 'bytes')] });
@@ -123,7 +171,7 @@ test('plugins and adapters land in one plan, told apart by who can run them', ()
 
 test('a plugin row looks like an adapter row, because they are sorted against each other', () => {
   const run = () => ({ records: [{ text: 'HELLO' }, { text: 'THERE' }], ms: 4 });
-  const rows = runPlugins([{ id: 'ext.a', name: 'A', params: { x: 1 } }], new Uint8Array(4), run);
+  const rows = runPlugins([{ id: 'ext.a', name: 'A', params: { x: 1 } }], bytesFeed(4), run);
   assert.equal(rows.length, 1);
   const r = rows[0];
   assert.equal(r.records, 2);
@@ -135,17 +183,17 @@ test('a plugin row looks like an adapter row, because they are sorted against ea
 });
 
 test('the thin and suspect rules are the engine’s, not a second copy of them', () => {
-  const thin = runPlugins([{ id: 'a', name: 'A' }], new Uint8Array(1),
+  const thin = runPlugins([{ id: 'a', name: 'A' }], bytesFeed(1),
     () => ({ records: [{ text: 'E' }] }))[0];
   assert.equal(thin.thin, true, `under ${MIN_DECODE_CHARS} characters is not a decode`);
-  const suspect = runPlugins([{ id: 'a', name: 'A' }], new Uint8Array(1),
+  const suspect = runPlugins([{ id: 'a', name: 'A' }], bytesFeed(1),
     () => ({ records: [{ text: 'LONG ENOUGH', suspect: true }] }))[0];
   assert.equal(suspect.suspect, true);
   assert.equal(suspect.thin, false);
 });
 
 test('a decoder that throws is a row with an error, not a lost report', () => {
-  const rows = runPlugins([{ id: 'a', name: 'A' }], new Uint8Array(1),
+  const rows = runPlugins([{ id: 'a', name: 'A' }], bytesFeed(1),
     () => ({ records: [], error: 'A: bad length' }));
   assert.equal(rows[0].records, 0);
   assert.match(rows[0].error, /bad length/);
@@ -153,7 +201,7 @@ test('a decoder that throws is a row with an error, not a lost report', () => {
 
 test('results arrive one at a time, the way the panel fills in', () => {
   const seen = [];
-  runPlugins([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], new Uint8Array(1),
+  runPlugins([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], bytesFeed(1),
     () => ({ records: [] }), (r) => seen.push(r.id));
   assert.deepEqual(seen, ['a', 'b']);
 });
@@ -175,7 +223,9 @@ test('the shipped decoder is planned and read off a byte stream, with no box any
   // Its planned settings are the manifest's defaults, which are not this fixture's, so
   // the row is run the way the panel would run it after the settings are the ones that
   // answered — here, given directly.
-  const rows = runPlugins([{ ...mine[0], params: P }], codeword, plugins.run);
+  const rows = runPlugins([{ ...mine[0], params: P }],
+                          { data: codeword, info: { kind: 'bytes', count: codeword.length } },
+                          plugins.run);
   assert.equal(rows[0].error, undefined);
   assert.deepEqual(rows[0].sample, [message]);
   assert.equal(rows[0].thin, false);
