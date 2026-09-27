@@ -83,11 +83,47 @@ const TREATMENTS = {
 
 const FOLD = 6;   // ADR-0039: at most six rows, then `more…` expanding in place
 
+/* `+ 15 more…` is where the time goes, and the reason is that it says nothing. You
+ * cannot tell whether what is down there is the thing you came for, so the only move is
+ * to open it and look — the fold defers the cost of a long list rather than removing it.
+ *
+ * Two separate fixes, because they answer different halves of that:
+ *
+ *   `label`  — the fold row names what it holds, so the decision to open it can be made
+ *              without opening it. The catalog already knows; nothing new is needed.
+ *   `mode`   — what ends up behind the fold at all. By pure rank, a bare click on an iq
+ *              node puts seven view parameters on top and folds ALL FOURTEEN operations,
+ *              which is not a tail, it is half the menu's purpose. `mixed` guarantees
+ *              both kinds are represented above the fold, so the fold is a tail again.
+ */
+function foldLabel(hidden) {
+  if (!hidden.length) return '';
+  const ops = hidden.filter((r) => r.kind === 'op').length;
+  const par = hidden.filter((r) => r.kind === 'param').length;
+  const part = [];
+  if (ops) part.push(`${ops} operation${ops === 1 ? '' : 's'}`);
+  if (par) part.push(`${par} view option${par === 1 ? '' : 's'}`);
+  return part.join(' · ');
+}
+
+function foldSplit(all) {
+  if (st.foldMode !== 'mixed') return all.slice(0, FOLD);
+  const first = all.filter((r) => r.kind === all[0]?.kind);
+  const other = all.filter((r) => r.kind !== all[0]?.kind);
+  if (!other.length) return all.slice(0, FOLD);
+  const a = Math.ceil(FOLD / 2);
+  const take = first.slice(0, a).concat(other.slice(0, FOLD - a));
+  // keep them in the list's own order so the seam stays a seam
+  return all.filter((r) => take.includes(r));
+}
+
 /* ── state ─────────────────────────────────────────────────────────────────── */
 
 const st = {
-  gesture: 'click', treatment: 'value', kind: 'iq', view: 'Spectrum',
-  paramsOpen: false,
+  // The hairline is the default now: of the four rungs it is the one that reads as one
+  // list while still saying where the seam is.
+  gesture: 'click', treatment: 'ruled', kind: 'iq', view: 'Spectrum',
+  foldMode: 'rank', paramsOpen: false,
   open: false, folded: true, target: null, t0: 0,
   runs: [],            // {treatment, gesture, ms, expanded, hit}
 };
@@ -132,7 +168,7 @@ function rows() {
 function render() {
   const g = GESTURES[st.gesture];
   const all = rows();
-  const shown = st.folded ? all.slice(0, FOLD) : all;
+  const shown = st.folded ? foldSplit(all) : all;
   const el = $('#menu');
 
   const rowHtml = (r, i) => `
@@ -154,11 +190,16 @@ function render() {
     lastKind = r.kind;
   });
 
-  const hidden = all.length - shown.length;
+  const hiddenRows = all.filter((r) => !shown.includes(r));
+  const hidden = hiddenRows.length;
   el.innerHTML =
     (st.treatment === 'headed' ? '' : `<div class="mh">${g.head}</div>`) +
     body +
-    (hidden ? `<div class="rule"></div><button class="row more" id="more">+ ${hidden} more…</button>`
+    // The count and the label said the same thing twice — "+ 15 more" beside
+    // "14 operations · 1 view option" — and the redundant half was the one being
+    // ellipsised away. So the label IS the row: it carries both the size and the kind.
+    (hidden ? `<div class="rule"></div>
+       <button class="row more" id="more"><span class="rt">+ ${foldLabel(hiddenRows)}</span></button>`
             : st.folded ? '' : `<div class="rule"></div><button class="row more" id="more">− less</button>`);
 
   el.hidden = !st.open;
@@ -179,11 +220,14 @@ function render() {
 /* ── measurement ───────────────────────────────────────────────────────────── */
 
 function measure() {
-  const { all, shown } = { all: rows(), shown: st.folded ? rows().slice(0, FOLD) : rows() };
+  const all = rows();
+  const shown = st.folded ? foldSplit(all) : all;
   const el = $('#menu');
   const h = el.hidden ? 0 : el.scrollHeight;
   const vh = 720;   // ADR-0039's yardstick: a 720 px laptop viewport
   const pct = (100 * h / vh);
+  const hiddenNow = all.filter((r) => !shown.includes(r));
+  const opsAbove = shown.filter((r) => r.kind === 'op').length;
   const opRows = all.filter((r) => r.kind === 'op');
   const ops = opRows.length;
   const keyed = opRows.filter((r) => r.key).length;
@@ -192,7 +236,10 @@ function measure() {
   $('#nums').innerHTML = `
     <span>rows <b>${all.length}</b> — ${ops} op${ops === 1 ? '' : 's'} · ${params} param${params === 1 ? '' : 's'}${
       params === 0 ? ' <b class="good">(one kind only)</b>' : ''}</span>
-    <span>above the fold <b>${shown.length}</b></span>
+    <span>above the fold <b>${shown.length}</b>${
+      hiddenNow.length ? ` · folded ${hiddenNow.length} — ${foldLabel(hiddenNow)}` : ''}${
+      hiddenNow.length && hiddenNow.every((r) => r.kind === 'op') && opsAbove === 0
+        ? ' <b class="bad">every operation is behind the fold</b>' : ''}</span>
     <span>height <b class="${pct > 60 ? 'bad' : pct > 40 ? 'warn' : 'good'}">${h} px</b> · ${pct.toFixed(0)}% of 720</span>
     <span>keyed ops <b class="${keyed / (ops || 1) < 0.5 ? 'warn' : ''}">${keyed} of ${ops}</b>${
       ops && keyed < ops ? ' — the rest show nothing' : ''}</span>
@@ -335,7 +382,8 @@ function controls() {
      <span class="lab">view</span>${seg('v-sel', Object.fromEntries(
        Object.keys(VIEW_PARAMS).map((k) => [k, k])), st.view)}
      <span class="lab">treatment</span>${seg('t-sel', Object.fromEntries(
-       Object.keys(TREATMENTS).map((k) => [k, k])), st.treatment)}`;
+       Object.keys(TREATMENTS).map((k) => [k, k])), st.treatment)}
+     <span class="lab">fold</span>${seg('f-sel', { rank: 'by rank', mixed: 'both kinds' }, st.foldMode)}`;
 
   const wire = (id, set) => {
     for (const b of $(`#${id}`).querySelectorAll('button'))
@@ -345,6 +393,7 @@ function controls() {
   wire('k-sel', (v) => { st.kind = v; });
   wire('v-sel', (v) => { st.view = v; });
   wire('t-sel', (v) => { st.treatment = v; st.paramsOpen = false; });
+  wire('f-sel', (v) => { st.foldMode = v; });
 }
 
 // Only an explicit `?theme=` pins the palette. Left alone, `web/style.css` already

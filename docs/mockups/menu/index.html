@@ -43,6 +43,44 @@
   <div id="res"></div>
 
 
+  <h2>The fold was the expensive part</h2>
+  <p class="sub">
+    <b>“+ 15 more…” says nothing, so the only move is to open it and look.</b> The fold
+    defers the cost of a long list rather than removing it — you cannot tell whether what
+    is down there is what you came for, so your attention stalls on a decision it has no
+    information for. Two fixes, and they answer different halves of it.
+  </p>
+  <p class="sub">
+    <b>Naming it.</b> The fold row now reads <em>“+ 14 operations · 1 view option”</em>.
+    The catalog already knows this; nothing new had to be invented, and the count and the
+    kind fit in the row the bare count used to occupy alone.
+  </p>
+  <p class="sub">
+    <b>And what is behind it at all.</b> Naming the fold exposed something worse.
+    Ordered by ADR-0039's rank, a bare click on an <code>iq</code> node puts seven view
+    parameters on top and folds <b>all fourteen operations</b>; a selection drag does the
+    mirror image, folding <b>all seven view parameters</b>. The fold was not holding a
+    tail, it was holding an entire category — which is exactly why you could not guess
+    what was in it. Switch <em>fold</em> to “both kinds” to see the alternative, where
+    three of each sit above the line and the fold becomes a tail again.
+  </p>
+  <table class="res">
+    <tr><th>gesture · stream</th><th>by rank</th><th>both kinds</th></tr>
+    <tr><td>click · iq</td><td class="n bad">14 operations · 1 view option</td>
+        <td class="n">11 operations · 4 view options</td></tr>
+    <tr><td>drag · iq</td><td class="n bad">9 operations · 7 view options</td>
+        <td class="n">12 operations · 4 view options</td></tr>
+    <tr><td>click · real</td><td class="n">9 operations · 3 view options</td>
+        <td class="n">6 operations · 6 view options</td></tr>
+    <tr><td>click · bytes</td><td class="n good">no fold — 3 rows</td>
+        <td class="n good">no fold</td></tr>
+  </table>
+  <p class="sub" style="margin-top:1rem">
+    There is a second casualty of rank ordering, visible on the page right now: with all
+    six rows above the fold being the same kind, <b>the hairline never appears</b>. The
+    treatment you would be judging is not on screen until you expand.
+  </p>
+
   <h2>Why this page exists</h2>
   <p class="sub">
     The gesture discriminator is settled — <code>openMenu(x, y, selection)</code> already
