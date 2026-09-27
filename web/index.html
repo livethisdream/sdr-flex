@@ -20,7 +20,6 @@
     <div class="crumbs" id="topbar"></div>
     <span class="pathsep" aria-hidden="true"></span>
     <div class="tabs" id="tabs"></div>
-    <button id="theme" class="themebtn" title="theme" aria-label="theme">◐</button>
   </div>
 
   <div class="panes" id="panes">
@@ -90,6 +89,11 @@
       <button id="speed" class="tbtn spd" aria-label="playback speed" title="playback speed">1&times;</button>
       <button id="listen" class="tbtn spk" aria-label="listen to this channel" title="listen" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path class="wave" d="M16.5 8.5a5 5 0 0 1 0 7"/><path class="wave2" d="M19 6a8.5 8.5 0 0 1 0 12"/><line class="slash" x1="3" y1="21" x2="21" y2="3"/></svg></button>
       <button id="track" class="track" aria-label="scrub through time"><i></i></button>
+      <!-- Theme is one preference about the room, and the room does not change while you
+           are reading a path. It rode the breadcrumb because that row always exists;
+           so does this one, and this one is already where the things you set and then
+           forget live. -->
+      <button id="theme" class="themebtn" title="theme" aria-label="theme">◐</button>
     </div>
     <div class="strip" id="strip"></div>
     </div>

@@ -132,14 +132,14 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   flex:none; align-self:center; width:1px; height:1.1em;
   background:var(--rule); margin:0 .55rem 0 .3rem;
 }
-/* Theme is one preference about the room. It lives in the dead space at the end of
-   the breadcrumb — the only row that always exists and never fills up. */
+/* Theme is one preference about the room, and it lives on the transport now — the bar
+   that already holds the things you set once and stop looking at. */
 .themebtn {
-  flex:none; width:26px; height:26px; border-radius:5px;
+  flex:none; width:26px; height:26px; border-radius:999px;
   display:inline-flex; align-items:center; justify-content:center;
   font-size:.82rem; line-height:1; color:var(--dim);
 }
-.themebtn:hover { background:var(--panel); color:var(--bright); }
+.themebtn:hover { background:var(--raised); color:var(--bright); }
 .dev {
   display:inline-flex; align-items:center; gap:.45rem;
   padding:.3rem .7rem; border-radius:999px; border:1px solid transparent;
@@ -186,7 +186,10 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 }
 .tab:hover { color:var(--body); background:var(--raised); }
 .tab.on { color:var(--bright); background:var(--view-lo); border-color:var(--view-mid); }
-.tab.plus { color:var(--dim); font-family:var(--mono); margin-left:auto; }
+/* Beside the last tab, not at the end of the row. `margin-left:auto` put 480 px of
+   nothing between "the views you have" and "add one", which reads as two unrelated
+   controls rather than the end of a list. */
+.tab.plus { color:var(--dim); font-family:var(--mono); }
 
 /* Remove sits on the current crumb and the current tab and nowhere else. It gets a
    real target — 22px, not a glyph — because a tap that misses navigates instead,
@@ -596,9 +599,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 /* ── Identify: the auto mode of choosing a decoder (ADR-0017) ── */
 /* `+` picks one by hand and sits at the right; Identify is the same choice made for
    you, so it sits beside it and takes over the margin that pushes the pair over. */
-.tab.ident-btn { margin-left:auto; color:var(--accent); font-weight:600; }
-.tab.ident-btn:hover { color:var(--bright); background:var(--accent-lo); }
-.tab.ident-btn + .tab.plus { margin-left:0; }
+/* Identify is a menu row now, not a tab. */
 
 .ident {
   position:fixed; z-index:40; width:392px; max-height:min(70vh,620px); overflow-y:auto;

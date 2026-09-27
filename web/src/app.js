@@ -831,7 +831,6 @@ class App {
       // `+` is choosing a decoder by hand; Identify is the auto mode of the same
       // choice (ADR-0017). They belong next to each other, and Identify has to be one
       // click from here or UC-1' does not fit in its three interactions.
-      (this.canIdentify() ? '<button class="tab ident-btn" title="try every decoder that could read this stream">Identify</button>' : '') +
       '<button class="tab plus" title="operations valid here">+</button>';
 
     this.wireRemove(el);
@@ -849,11 +848,6 @@ class App {
       const r = e.target.getBoundingClientRect();
       this.metrics.beginOp();
       this.openMenu(r.left, r.bottom + 4, null);
-    });
-    const idb = el.querySelector('.ident-btn');
-    if (idb) idb.addEventListener('click', (e) => {
-      const r = e.target.getBoundingClientRect();
-      this.openIdentify(r.left, r.bottom + 4);
     });
   }
 
@@ -1526,7 +1520,25 @@ class App {
     this.engine.palette(this.current).then((ops) => {
       const usable = selection ? ops : ops.filter((o) => !o.fromSelection);
       const shown = (usable.length ? usable : ops).map((o) => ({ ...o, key: KEY_FOR[o.id] || null }));
-      this.menu.open(x, y, shown, (opId) => this.applyOp(opId, selection));
+      // Identify leads.
+      //
+      // It had a button of its own on the tab row, which put the automatic way of
+      // choosing a decoder on a different surface from every manual one — and ADR-0031
+      // is explicit that it *is* the auto mode of that same choice. Picking by hand and
+      // asking what it is are the same question answered two ways, so they belong in the
+      // same list, with the one that needs no knowledge first.
+      //
+      // First rather than merely present, because the ranking rule is whether an entry
+      // moves the signal toward a result: when you do not yet know what you are looking
+      // at, nothing moves you further than this.
+      const rows = this.canIdentify()
+        ? [{ id: '__identify', name: 'Identify', group: 'Narrow', key: '?',
+             hint: 'try every decoder that could read this stream' }].concat(shown)
+        : shown;
+      this.menu.open(x, y, rows, (opId) => {
+        if (opId === '__identify') { this.openIdentify(x, y); return; }
+        this.applyOp(opId, selection);
+      });
     });
   }
 
@@ -3356,6 +3368,16 @@ class App {
       // table — those are matched later and do not return, so a key in both would fire
       // both, and a test asserts the two sets stay disjoint.
       if (e.key === 'o' || e.key === 'O') { e.preventDefault(); $('#file').click(); }
+      // The menu draws a key on the Identify row, so there has to be one. `?` is shift
+      // and the key that already opens the menu, which is the right relationship: `/`
+      // asks what you can do, `?` asks what this is. Refused where Identify is not
+      // offered, so the badge and the key are wrong in the same places rather than
+      // different ones.
+      if (e.key === '?' && this.canIdentify()) {
+        e.preventDefault();
+        const r = $('#stage').getBoundingClientRect();
+        this.openIdentify(r.left + r.width / 2 - 120, r.top + 60);
+      }
       if (e.key === '=' || e.key === '+') { e.preventDefault(); this.zoomKey(1 / 1.4); }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); this.zoomKey(1.4); }
       if (e.key === '0') { e.preventDefault(); this.resetZoom && this.resetZoom(); }

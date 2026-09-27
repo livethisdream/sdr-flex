@@ -40,7 +40,7 @@ export const HOTKEYS = {
  * three weeks later, so a test asserts the two sets stay disjoint.
  */
 export const RESERVED = [' ', 'ArrowLeft', 'ArrowRight', 'Escape', 'm', 'M', '=', '+', '-', '_', '0', '/',
-                         'o', 'O'];
+                         'o', 'O', '?'];
 
 /** The key that reaches an operation, for the badge the menu draws beside it. */
 export const KEY_FOR = {};
