@@ -227,3 +227,83 @@ test('a local adapter decodes, end to end', async (t) => {
   assert.match(out.records.map((r) => r.text).join(''), /HELLO/);
   assert.match(out.note, /WAV wrapper/, 'and the container the manifest asked for was applied');
 });
+
+// ── a pack that actually runs ───────────────────────────────────────────────
+
+// Everything above checks that a manifest *compiles*: the fields are the right shape and
+// the paths resolve. Nothing ran one, and the two bugs below were both invisible to a
+// compile-time check because they live in the seam between the validator and `convert`.
+//
+// No GNU Radio here, and none needed: ADR-0032's whole point is that a flowgraph is just
+// a program — samples in on stdin, one JSON object per record on stdout. A short Python
+// script satisfies that contract exactly, which makes the operator-facing path testable
+// on any machine with a python3 rather than only on one with a full GNU Radio install.
+
+import { spawnSync } from 'node:child_process';
+
+const PY = ['python3.12', 'python3.11', 'python3']
+  .find((p) => { try { return spawnSync(p, ['-c', 'pass']).status === 0; } catch { return false; } });
+
+const GRAPH = `import sys, json, struct, math
+raw = sys.stdin.buffer.read()
+n = len(raw) // 4
+x = struct.unpack("<%df" % n, raw[:n * 4]) if n else ()
+rms = math.sqrt(sum(v * v for v in x) / n) if n else 0.0
+print(json.dumps({"text": "%d samples" % n, "rms": round(rms, 4)}))
+`;
+
+test('an operator’s flowgraph pack runs and its records come back parsed', async (t) => {
+  if (!PY) { t.skip('no python3 on this machine'); return; }
+  const dir = pack({
+    id: 'ext.rantest', name: 'Ran', in: 'real', out: 'events',
+    command: ['python3.12', 'python3.11', 'python3'],
+    // What makes a flowgraph "installed" is a module inside the interpreter rather than
+    // a name on PATH. `json` stands in for `gnuradio` on a machine without it.
+    module: 'json',
+    wants: { format: 'f32', rate: 48_000 },
+    flowgraph: 'graph.py', parse: 'jsonl', args: [],
+  }, { 'graph.py': GRAPH });
+
+  const { adapters: found, problems } = await new AdapterDir(dir).load();
+  assert.deepEqual(problems, [], 'the pack did not load');
+  assert.deepEqual(found.map((f) => f.id), ['ext.rantest']);
+  for (const { id, spec } of found) adapters.register(id, spec);
+  t.after(() => adapters.forget('ext.rantest'));
+
+  assert.ok(adapters.list().some((a) => a.id === 'ext.rantest' && a.available),
+            'a pack that loaded should be offered');
+
+  const n = 4800;
+  const x = new Float32Array(n);
+  for (let i = 0; i < n; i++) x[i] = Math.sin(i * 0.1) * 0.5;
+  const out = await adapters.run('ext.rantest', {
+    data: x, kind: 'real', sampleRate: 48_000, centerHz: 0, params: {} });
+
+  assert.equal(out.error, undefined, `run failed: ${out.error}`);
+  assert.equal(out.records.length, 1, JSON.stringify(out.records));
+  // Parsed as JSON, not swallowed as a line of text: the record keeps the fields the
+  // program chose, which is what `jsonl` is for.
+  assert.equal(out.records[0].text, `${n} samples`);
+  assert.ok(out.records[0].rms > 0.3, `rms ${out.records[0].rms}`);
+});
+
+test('the formats a pack may ask for are the ones that can be produced', () => {
+  // These were two lists and they drifted in both directions at once.
+  //
+  // `f32` was convertible and rejected, so nobody could write a pack that reads one
+  // float per symbol — which is exactly what the M17 packet decoder shipped here does.
+  // `cs8` was accepted and had no branch in `convert`, so such a pack passed validation
+  // at startup and threw `no conversion to cs8` at the first click. Startup validation
+  // exists to stop precisely that, so the second one was the worse of the two.
+  const probe = new Float32Array(64).fill(0.5);
+  for (const format of adapters.FORMATS) {
+    assert.doesNotThrow(() => adapters.convert(probe, 'real', 8000, { format, rate: 8000 }),
+                        `FORMATS lists ${format}, which convert() cannot produce`);
+  }
+  // And every adapter that ships asks for one of them.
+  for (const [id, a] of Object.entries(adapters.ADAPTERS)) {
+    const w = typeof a.wants === 'function' ? a.wants({ params: {} }) : a.wants;
+    assert.ok(adapters.FORMATS.includes(w.format),
+              `${id} wants ${w.format}, which a local pack would be refused for`);
+  }
+});

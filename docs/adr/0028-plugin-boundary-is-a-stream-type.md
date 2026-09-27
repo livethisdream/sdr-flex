@@ -64,3 +64,34 @@ If real plugins turn out to cluster at the IQ end after all — if `bytes → ev
 one-off that only concurrent codes need — then the late boundary is a special case and
 ADR-0013's framing was right. The test is whether the second and third `js` plugins
 arrive without being asked for.
+
+## Addendum: what the second plugin settled, and what it exposed
+
+The second `js` plugin is a DTMF decoder, and it reads **`real`** — not `bytes`, and not
+IQ. So the prediction above is answered in the middle: plugins do not cluster at the IQ
+end, and `bytes → events` was not the whole of it either. The boundary is a stream type,
+which is what this ADR said; it is just not one stream type.
+
+Getting there exposed that **the decision had only ever been half-implemented.** The
+manifest declared `in`, the palette filtered on it, `Identify` planned on it — and the
+runner ignored it, fetching bytes whatever it said. A plugin declaring `real` was
+therefore offered in the menu, built a node, and then reported "nothing upstream has
+produced bytes yet", which is wrong and unhelpful about being wrong. It was invisible
+because the only plugin that existed read bytes.
+
+Worth naming, because it was not a conversion that was missing. The bytes a plugin used
+to receive are the *output of a slicer*, several nodes downstream of the audio — not a
+serialized form of it. There was never a buffer for a plugin to reinterpret, so "let the
+plugin convert" was never the alternative it looked like. Which node's output a plugin
+gets is the whole question, and the manifest had been answering it all along.
+
+`Graph.pluginFeed` is the fix: read the parent by its kind, and pass the facts a decoder
+cannot derive — the sample rate, above all — as a third argument to `decode`.
+
+**`out` is now bounded where `in` was widened**, which is the opposite move and the right
+one. A plugin returns records. A manifest declaring `out: 'real'` is declaring itself a
+*stage*, and everything downstream would read its samples through `readSpan`, on demand,
+cached, on the engine's clock. Nothing routes a read through a JS function, so such a
+node builds, appears in the menu and produces nothing — this same failure, one level up.
+It is refused at load with the reason. A general block that produces a stream is a real
+thing to want; it is a different piece of work and not this one.

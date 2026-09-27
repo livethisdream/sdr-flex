@@ -47,6 +47,15 @@ export class Graph {
     // all. A whole capture stopping dead at its end was the odd one out, and on a
     // fixture two thirds of a second long it is the only thing you ever see.
     this.loop = true;
+    // How fast the clock runs against the wall.
+    //
+    // Slowing a recording down is the oldest trick in listening to radio: a weak voice
+    // through noise, or fast Morse, is legible at half speed when it is not at full.
+    // It belongs on the *clock* rather than on the speaker, because everything here
+    // follows the clock — the waterfall, the playhead, the decoders reading blocks as
+    // it plays — and audio that slowed down on its own would simply drift away from
+    // the picture of it.
+    this.speed = 1;
     this.capture = null;   // null means the synthetic scene
     this._last = performance.now();
   }
@@ -98,6 +107,66 @@ export class Graph {
     // Live: the past is however far back the ring still goes (ADR-0005).
     const [first] = this.span();
     return { t0: Math.max(isFinite(first) ? first : 0, now - seconds), t1: now, pinned: false };
+  }
+
+  /**
+   * What to hand a plugin, chosen by the kind of stream it is being attached to.
+   *
+   * A plugin declares the stream types it sits between ([ADR-0028](../../docs/adr/0028-plugin-boundary-is-a-stream-type.md)),
+   * and until this existed only one of them was honored: the runner fetched bytes and
+   * nothing else, so a decoder declaring `real` was offered in the menu, built a node,
+   * and then reported "nothing upstream has produced bytes yet". Wrong, and unhelpful
+   * about being wrong.
+   *
+   * It is not a conversion. The bytes a plugin used to receive are the *output of a
+   * slicer* several nodes downstream of the audio, not a serialized form of it — so
+   * there was never a buffer for a plugin to reinterpret. Which node's output it gets is
+   * the whole question, and the manifest already answers it.
+   *
+   * On `Graph` rather than in either engine because both need it and both already have
+   * the two reads it is built from: `Identify` runs the plugin half in the client
+   * (ADR-0029) whichever engine is behind it, and on a box the samples come down the
+   * same socket everything else does.
+   *
+   * **The whole span, or the pinned clip.** The same rule an adapter gets, for the same
+   * reason: a decoder handed the two hundred milliseconds that happen to be on screen
+   * finds nothing and says nothing about why. Pin the part you mean and that wins.
+   *
+   * `span` overrides both, and `Identify` is why. A speculative pass runs every decoder
+   * that fits over a bounded window (`identifyWindow`) precisely so it answers in a few
+   * seconds — and a plugin runs *synchronously in the tab*, so handing one a hundred
+   * seconds of audio would lock the window while it worked. The window is reported with
+   * the results either way, because "nothing in these eight seconds" and "nothing in
+   * this capture" are different claims.
+   */
+  async pluginFeed(nodeId, at = null, span = null) {
+    const n = this.node(nodeId);
+    if (!n || !n.out) return null;
+    const kind = n.out.kind;
+
+    if (kind === 'bytes') {
+      // `sliceBytes` takes its own moment; the remote engine ignores a third argument.
+      const got = await this.sliceBytes(nodeId, null, at);
+      if (!got || !got.bytes) return null;
+      return { data: got.bytes,
+               info: { kind, count: got.bytes.length, sampleRate: got.sampleRate || 0,
+                       centerHz: n.out.centerHz, t0: got.t0, t1: got.t1 } };
+    }
+
+    if (kind === 'iq' || kind === 'real') {
+      const pin = this.isPinned(nodeId);
+      const now = at != null ? at : this.effectiveTime(nodeId);
+      const t0 = span ? span.t0 : pin ? pin.params.t0.value : 0;
+      const t1 = span ? span.t1 : pin ? pin.params.t1.value
+        : (isFinite(this.duration()) ? this.duration() : now);
+      const got = await this.readSpan(nodeId, t0, t1);
+      if (!got) return null;
+      return { data: got.data,
+               info: { kind, count: got.count, sampleRate: got.sampleRate,
+                       centerHz: n.out.centerHz, t0, t1 } };
+    }
+
+    return null;
   }
 
   /** Is the source still being written? */
@@ -250,7 +319,10 @@ export class Graph {
     const now = performance.now();
     const dt = (now - this._last) / 1000;
     this._last = now;
-    const step = Math.min(dt, 0.1);
+    // Clamped against the wall rather than against the capture: a tab that was in the
+    // background for a minute should not fast-forward a minute when it comes back, and
+    // that is true whatever speed it is playing at.
+    const step = Math.min(dt, 0.1) * (this.speed || 1);
     if (this.playing) {
       this.t += step;
       const d = this.duration();

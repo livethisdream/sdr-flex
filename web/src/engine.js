@@ -8,7 +8,7 @@
 import * as dsp from './dsp.js';
 import * as scene from './scene.js';
 import * as plugins from './plugins.js';
-import { plan as identifyPlan } from './identify.js';
+import { plan as identifyPlan, MIN_DECODE_CHARS, textLength, say } from './identify.js';
 import { Graph, inputsOf } from './graph.js';
 import { alignment } from './delay.js';
 import * as frames from './frames.js';
@@ -48,6 +48,36 @@ const nid = (p) => `${p}${++nextId}`;
  * normalized separately can be matrixed against each other without a second correction.
  */
 const GAIN_TARGET = 0.25;
+
+// The matched filter's length, in symbols. M17's own tap table is span 8 at α = 0.5, and
+// a receiver's filter has to be the transmitter's or it is not matched to anything.
+const SYMBOL_SPAN = 8;
+
+// M17's, and the only symbol rate anything here reads. A second one makes this a
+// parameter of the operation rather than a constant.
+const SYMBOL_RATE = 4800;
+
+// How much of a span a symbol sync fits itself over — and, because the two must be the
+// same number, how far one fit is trusted.
+//
+// It was one fit for a whole capture, and that is the bug this constant now prevents.
+// `softSymbols` finds an instant *relative to the window it was given*: fitting a 4 s
+// window ending at t=40, 50, 60, 70, 80 and 90 on the GRCon26 M17 slot returned
+// `offset` 12.323 every single time. Converting that to a capture-absolute phase
+// therefore just re-encodes where the window happened to start, and applying it to the
+// other eighty seconds is applying a number measured somewhere else. Measured, same
+// signal, same decoder, only the fit window moved: **0 records to 95**, with an eye of
+// 0.63 either way — the eye was right, the fits really were equally good, locally.
+//
+// So the capture is cut into blocks of this length, anchored at zero, and each block is
+// fitted on itself. Overlapping reads still agree, because a block's grid is a property
+// of the block rather than of the read (which is what ADR-0040 wanted); and no grid is
+// ever used more than this far from where it was measured. Measured at 5, 10 and 20 s
+// blocks: 94–95 records every time, at both a 9 kHz and a 12 kHz selection.
+const SYMBOL_FIT_SECONDS = 10;
+
+/** The block a moment belongs to. Anchored at zero so every read agrees on the edges. */
+const fitBlock = (t) => Math.floor(Math.max(0, t) / SYMBOL_FIT_SECONDS);
 
 /** Everything in a stream multiplied by one number, given in decibels. */
 function scaled(x, gainDb) {
@@ -166,6 +196,18 @@ export const OPS = {
   'core.export': {
     name: 'Export', group: 'Export', in: '*', out: 'file',
   },
+  // The network sink ADR-0027 named when it listed what a sink is. Everything in this
+  // table either analyzes a stream or decodes it; this one hands it to somebody else.
+  //
+  // The reason it is not an adapter: an adapter is a *function* — it reads a span,
+  // prints records, exits, and the records come back into the tool with timestamps and
+  // a pane. Some programs are *destinations* instead. A ground station drawing a drone's
+  // flight on a map is not a `parse()` anybody wants to write; the map is the point. So
+  // the samples go out and nothing comes back, which is what makes this a sink rather
+  // than a decoder — and why `Identify` will never offer it.
+  'core.stream': {
+    name: 'Stream out', group: 'Export', in: '*', out: 'sink',
+  },
   // The external decoders are not listed here. Which of them exist depends on what is
   // installed on the box, which only the engine can know, so `palette` asks the adapter
   // table rather than this one — and a decoder whose program is missing is still shown,
@@ -232,6 +274,21 @@ export const OPS = {
     name: 'Math', group: 'Analyze', in: ['iq', 'real'], out: 'same',
     twoInputs: true,
   },
+  // `symbol_sync_ff`, and the step a decoder that reads symbols needs in front of it.
+  //
+  // Most external decoders take samples and find their own clock. Some take symbols —
+  // M17's packet decoder is the one here — and then somebody has to decide where in each
+  // symbol period to look. Doing that inside the adapter would hide it, which is the
+  // thing this tool is against: the sampling instant and the level fit are the two
+  // numbers that decide whether a decode happens, so they belong on a node with their
+  // evidence beside them.
+  //
+  // Out is `real` at the symbol rate. A soft symbol is a real number, and a stream of
+  // them is a real stream — there is no third thing to be, and making one would mean a
+  // new kind that only one decoder reads (ADR-0006).
+  'core.symbols': {
+    name: 'Symbol sync', group: 'Convert', in: 'real', out: 'real',
+  },
   'core.burst_detector': {
     name: 'Burst detector', group: 'Analyze', in: 'iq', out: 'events',
     stub: true,
@@ -272,6 +329,24 @@ export function demodulate(op, iq, count, fs, params = null) {
  * here rather than a branch in the engine.
  */
 export function realOp(op, x, count, fs, params = null) {
+  if (op === 'core.symbols') {
+    // The only one of these whose output rate is not its input's, which is why the
+    // return may carry a rate and a count of its own. Given no parameters it measures
+    // them — which is exactly what `Identify` needs, since a speculative pass has no
+    // node to have derived them on (ADR-0040).
+    const rate = params ? Number(params.symbolRate.value) : SYMBOL_RATE;
+    if (params) {
+      return {
+        data: dsp.softSymbolsAt(x, count, fs, rate, {
+          phase: params.phase.value, center: params.center.value, gain: params.gain.value,
+          invert: params.invert.value === 'yes', span: SYMBOL_SPAN,
+        }),
+        sampleRate: rate, label: 'Symbol sync',
+      };
+    }
+    const fit = dsp.softSymbols(x, count, fs, rate);
+    return { data: fit.symbols, count: fit.n, sampleRate: rate, eye: fit.eye, label: 'Symbol sync' };
+  }
   if (op === 'core.stereo') {
     // Number(), because the strip offers this as a list and a list hands back strings.
     const tau = params ? Number(params.deemphasisUs.value) : 75;
@@ -398,17 +473,9 @@ function decimateFor(got, fs, audioRate) {
   };
 }
 
-// Below this many characters across all of a decoder's records, a speculative pass does
-// not call it a decode. Three: enough to rule out a single symbol found in noise, few
-// enough to keep a short but real answer — eight DTMF digits are eight characters.
-const MIN_DECODE_CHARS = 3;
-
-const textLength = (records) =>
-  records.reduce((n, r) => n + String(r.text ?? '').trim().length, 0);
-
 /** Solid first, thin next, silent last; then by how much, then by name. */
 function rank(a, b) {
-  const tier = (r) => (r.records > 0 && !r.thin ? 0 : r.records > 0 ? 1 : 2);
+  const tier = (r) => (r.records > 0 && !r.thin && !r.suspect ? 0 : r.records > 0 ? 1 : 2);
   return tier(a) - tier(b) || b.records - a.records ||
          a.name.localeCompare(b.name) || String(a.viaLabel).localeCompare(String(b.viaLabel));
 }
@@ -1063,6 +1130,48 @@ export class MockEngine extends Graph {
   }
 
   /**
+   * The in-tab engine has no network, so a stream sink here is a sink with nothing
+   * behind it.
+   *
+   * Said rather than thrown: this is the same shape as an external decoder in the
+   * hosted build — the node is real, the graph is honest about what it contains, and
+   * what cannot happen says so in the one place somebody will look for it.
+   */
+  async streamPush() {
+    return { error: 'a stream sink sends from the engine, and this tab is the engine',
+             sent: 0, bytes: 0, sentNow: 0 };
+  }
+
+  async streamStop() { return { stopped: true }; }
+
+  /**
+   * One span of a decoder's output, without disturbing what the node already holds.
+   *
+   * `runRecords` answers "what is in this capture" and caches the answer on the node.
+   * This answers "what is in these seconds", which is the question a decoder being
+   * watched while the capture plays is being asked over and over — so it returns its
+   * records rather than replacing anything, and the caller decides what to keep.
+   *
+   * Blocks are what make this affordable *and* what make it correct. A decoder handed
+   * the whole capture every time the playhead moved would be quadratic; and the symbol
+   * sync in front of one now measures its grid per block of capture time, so a block is
+   * already the unit over which a decode is a decode.
+   */
+  async runRecordsSpan(nodeId, t0, t1) {
+    const n = this.node(nodeId);
+    if (!n || !(t1 > t0)) return null;
+    if (n.adapter && this.runAdapter) {
+      const out = await this.runAdapter(n, t1, { t0, t1 });
+      return { ...out, t0, t1 };
+    }
+    // Only external decoders read a span of their own. A plugin is handed the view's
+    // own samples and a framer reads bytes that are already there, so for those this
+    // is the ordinary run and saying so beats pretending otherwise.
+    const out = await this.runRecords(nodeId, t1);
+    return out ? { ...out, t0, t1 } : null;
+  }
+
+  /**
    * Try every decoder that could read this stream, and say what each one found.
    *
    * The plan comes from `identify.js` and the running happens here, because only the
@@ -1092,8 +1201,7 @@ export class MockEngine extends Graph {
     // An adapter runs as a process, so this needs the engine on a box. Said plainly
     // rather than shown as an empty report, which would read as "nothing matched".
     if (!this.runAdapterData || !(this.adapters || []).length) {
-      return { tried: [], skipped: [], results: [],
-               error: 'external decoders run on the engine; this tab has no engine on a box to run them' };
+      return { tried: [], skipped: [], results: [], error: 'no decoders available' };
     }
 
     const fs = n.out.sampleRate;
@@ -1117,15 +1225,39 @@ export class MockEngine extends Graph {
     // first is what the chain being proposed would do anyway: this *is* the tuner,
     // run once and shared, and a discriminator that is not listening to 2.4 MHz of
     // noise is a better discriminator too.
-    const audioRate = Math.max(...tried.filter((c) => c.via).map((c) => c.wants.rate), 0);
+    // `feedRate`, not `wants.rate`: a symbol decoder reads 4800 symbols a second off a
+    // stream that has to have been wide enough to contain them, and decimating to 4800
+    // would take the signal out before the symbol sync ever saw it.
+    const audioRate = Math.max(...tried.filter((c) => c.via).map((c) => c.feedRate || c.wants.rate), 0);
     const narrow = audioRate ? decimateFor(got, fs, audioRate) : null;
 
-    // Demodulate once per way of demodulating, not once per decoder behind one.
-    const audio = new Map();
+    // Run each stage once, not once per decoder behind it.
+    //
+    // A chain is a list now rather than a single demodulator, and the cache is keyed by
+    // the *prefix* rather than by the whole chain — so `fm_discriminator` is computed
+    // once and both the decoders that read its output and the ones that read a symbol
+    // sync on top of it share that one discriminator. Three decoders behind one demod was
+    // always the common case; a stage behind a stage is the new one.
+    const stages = new Map();
     const feed = (via) => {
-      if (!via) return { data: got.data, kind: got.kind, rate: fs };
-      if (!audio.has(via)) audio.set(via, demodulate(via, narrow.data, narrow.count, narrow.rate).data);
-      return { data: audio.get(via), kind: 'real', rate: narrow.rate };
+      if (!via || !via.length) return { data: got.data, kind: got.kind, rate: fs };
+      let cur = { data: narrow.data, count: narrow.count, rate: narrow.rate, kind: 'iq' };
+      let key = '';
+      for (const op of via) {
+        key = key ? `${key}>${op}` : op;
+        if (!stages.has(key)) {
+          const out = cur.kind === 'iq'
+            ? { ...demodulate(op, cur.data, cur.count, cur.rate), count: cur.count, rate: cur.rate }
+            : realOp(op, cur.data, cur.count, cur.rate);
+          stages.set(key, {
+            data: out.data, kind: 'real',
+            count: out.count != null ? out.count : cur.count,
+            rate: out.sampleRate != null ? out.sampleRate : cur.rate,
+          });
+        }
+        cur = stages.get(key);
+      }
+      return { data: cur.data, kind: 'real', rate: cur.rate };
     };
 
     const results = [];
@@ -1155,6 +1287,12 @@ export class MockEngine extends Graph {
         // The row still shows what it said, so nothing is hidden — it just does not get
         // to be the headline.
         thin: out.records.length > 0 && textLength(out.records) < MIN_DECODE_CHARS,
+        // A parser may mark a record as one the decoder had to guess at — a checksum
+        // that did not agree, most often. One suspect record among real ones is a lossy
+        // decode and still a decode; a row where *every* record is suspect is a decoder
+        // pattern-matching on noise, and ADR-0031 is the whole reason this distinction
+        // is drawn rather than counted. It ranks with `thin`: shown, never the headline.
+        suspect: out.records.length > 0 && out.records.every((r) => r.suspect),
         // Enough of what it said to recognize the answer, not the whole decode: the
         // point of the report is choosing a decoder, and the decoder's own pane is
         // three characters away once one is chosen.
@@ -1179,11 +1317,15 @@ export class MockEngine extends Graph {
     const n = this.node(nodeId);
     if (!n || !n.plugin) return null;
     const p = this.node(n.parent);
-    const src = p.out.kind === 'bytes' ? await this.sliceBytes(p.id, null, at) : null;
-    if (!src) return { records: [], error: 'nothing upstream has produced bytes yet' };
+    // Whatever the parent produces, chosen by its kind rather than assumed to be bytes.
+    // See `Graph.pluginFeed`, and the manifest that said which all along.
+    const src = await this.pluginFeed(p.id, at);
+    if (!src) {
+      return { records: [], error: `nothing upstream has produced ${say(p.out.kind)} yet` };
+    }
     const args = {};
     for (const [k, v] of Object.entries(n.params)) args[k] = v.value;
-    const out = plugins.run(n.plugin, src.bytes, args);
+    const out = plugins.run(n.plugin, src.data, args, src.info);
     n._records = out;
     return out;
   }
@@ -1194,19 +1336,34 @@ export class MockEngine extends Graph {
     const n = this.node(nodeId);
     const built = Object.entries(OPS)
       .filter(([, o]) => accepts(o.in, n.out.kind))
-      .map(([id, o]) => ({ id, ...o }));
+      // `M4` means M4 again. It had been shared with "the program is not installed", which
+      // told a machine without rtl_433 that rtl_433 arrives in a future milestone —
+      // two states with nothing in common but a boolean (ADR-0039).
+      .map(([id, o]) => ({ id, ...o, ...(o.stub ? { soon: 'M4' } : {}) }));
     // Somebody else's decoders, if this build has a table of them. Marked external and
     // opaque: you cannot see inside one, and the UI says so rather than implying you
     // could have (ADR-0013).
     const ext = (this.adapters || [])
       .filter((a) => accepts(a.in, n.out.kind))
+      // **A decoder whose program is not on this box is not in the menu** (ADR-0039). The
+      // menu answers "what do you want to do with this", and one that cannot run is not an
+      // available answer at any altitude. What it was protecting — that you cannot install
+      // what you do not know exists — is `Identify`'s job, and `Identify` already names
+      // every decoder it could not try and why (ADR-0031).
+      //
+      // One that *you* added is different and stays. You wrote that manifest and expected
+      // it to run, so its absence is a mistake to be told about rather than a capability
+      // you have not discovered, and silence is the wrong answer to a mistake.
+      .filter((a) => a.available || a.local)
       .map((a) => ({ id: a.id, name: a.name, group: a.group, in: a.in, out: a.out,
                      external: true, opaque: true, blurb: a.blurb,
                      // Yours or ours (ADR-0026). A decoder you added misbehaving and one
                      // that shipped misbehaving are different problems, and the menu is
                      // where you find out which this is.
                      ...(a.local ? { local: a.local } : {}),
-                     stub: !a.available, needs: a.command }));
+                     // Unclickable, and the badge says *why* rather than borrowing the one
+                     // that means "we have not written this yet".
+                     ...(a.available ? {} : { stub: true, soon: `needs ${a.command}`, needs: a.command }) }));
     // A loaded plugin is an operation like any other — same menu, same filter on
     // stream type, marked so you can see it came from outside (ADR-0013's opacity
     // rule, applied to a kind that is not opaque at all).
@@ -1357,6 +1514,51 @@ export class MockEngine extends Graph {
       node.params = {};
       node.out = { kind: 'real', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'To real';
+    } else if (op === 'core.symbols') {
+      // Measured once, here, and then held. A sampling instant re-derived on every frame
+      // would walk as the window slid, and a decoder downstream would see a different
+      // symbol grid each time it was asked — so this reads a window now, keeps what it
+      // found, and every frame afterwards is `softSymbolsAt` doing arithmetic.
+      const fs = p.out.sampleRate;
+      const rate = SYMBOL_RATE;
+      // The block the playhead is in, measured on itself — not the end of the capture,
+      // which is where this used to look and is nowhere near what anybody is looking at.
+      //
+      // Every other auto parameter here is a property of a carrier, which any quarter
+      // second of it will tell you. A symbol grid is not: it is a measurement of a
+      // stretch of signal, only good near that stretch, and the read path now takes each
+      // block on its own grid. These three numbers are that block's, and they say so —
+      // the span is part of the evidence because without it the number is unfalsifiable.
+      const block = fitBlock(now);
+      const fit = this._symbolGrid(node, block, p, rate);
+      const phase = fit.phase;
+      const where = `${fit.t0.toFixed(0)}–${fit.t1.toFixed(0)} s`;
+      const evidence = { confident: fit.eye > 0.7 };
+      node.params = {
+        symbolRate: param(rate, 'manual'),
+        // The eye is the evidence for all three, so it is what all three say. It is the
+        // number that decides whether any of this worked — 1 is every symbol dead on a
+        // level, 0.5 is a coin toss dressed as a decode — and a phase, a center and a
+        // gain are one measurement reported as three, so quoting it three times is
+        // honest rather than repetitive.
+        phase: param(+phase.toFixed(3), 'auto', { ...evidence, from: fit.n
+          ? `of ${fs / rate} instants in a symbol, this is where ${fit.n} of them fit the levels ` +
+            `best over ${where} (eye ${fit.eye.toFixed(3)}); every other ${SYMBOL_FIT_SECONDS} s ` +
+            'of the capture is measured on itself'
+          : 'nothing to measure yet' }),
+        // Where zero is and how far out ±3 is. A discriminator carries the tuning error
+        // as the first and the capture's own units as the second, and neither of those
+        // is knowable before looking.
+        center: param(+fit.center.toPrecision(4), 'auto', { ...evidence, from: fit.n
+          ? `the midpoint between the outer levels over ${where}, which sit ${fit.eye.toFixed(3)} of the way apart`
+          : 'nothing to measure yet' }),
+        gain: param(+fit.gain.toPrecision(4), 'auto', { ...evidence, from: fit.n
+          ? `it puts the outer level at ±3 over ${where}, where the decoder expects it (eye ${fit.eye.toFixed(3)})`
+          : 'nothing to measure yet' }),
+        invert: param('no', 'manual'),
+      };
+      node.out = { kind: 'real', sampleRate: rate, centerHz: p.out.centerHz };
+      node.label = 'Symbol sync';
     } else if (op === 'core.math') {
       // It arrives with one input and says so, the way the slicers arrive undecided:
       // choosing the other one is a question about the graph, and the graph is on screen
@@ -1516,6 +1718,25 @@ export class MockEngine extends Graph {
       };
       node.out = { kind: 'file', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'Export';
+    } else if (op === 'core.stream') {
+      // Defaults that are GQRX's, because that is the convention the receiving end
+      // already knows: 48 kHz signed 16-bit mono on a UDP port. `multimon-ng -` and
+      // friends have been fed exactly this for years.
+      const audio = p.out.kind === 'real' || p.out.kind === 'audio';
+      node.params = {
+        // Loopback, because a sink that defaults to shouting at the network is a
+        // different kind of tool. In a container this has to be the host's address to
+        // reach anything — see server/README.md, which says so rather than leaving it
+        // to be discovered.
+        host: param('127.0.0.1'),
+        port: param(7355),
+        format: param(audio ? 's16' : 'raw',
+                      'manual', null),
+        rate: param(audio ? 48_000 : Math.round(p.out.sampleRate)),
+        running: param('no'),
+      };
+      node.out = { kind: 'sink', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
+      node.label = 'Stream out';
     } else if (op === 'core.pwm_slicer') {
       // estimate from a real window of the parent's output — auto shows its work
       // estimate over a window wide enough to be sure it contains a burst — the
@@ -1670,10 +1891,42 @@ export class MockEngine extends Graph {
       // rest — which is the analytic signal, arrived at without a Hilbert transformer.
       // Half the amplitude, because a real cosine is two phasors and only one survives.
       const onReal = p.out.kind === 'real';
-      const src = onReal ? interleave(this._detectMono(p, tEnd, need), need)
-                         : this._readIQ(p, tEnd, need);
       const offset = onReal ? node.params.centerHz.value
                             : node.params.centerHz.value - p.out.centerHz;
+
+      // **Which input samples become output samples is a property of the capture, not of
+      // the read.** `xlateFilterDecimate` takes every `decim`-th sample counting from the
+      // start of what it is handed, so the answer used to depend on where that started —
+      // and that was `Math.floor(tEnd * parentRate) - need`, whose remainder modulo
+      // `decim` moves with `tEnd`. Two reads ending at different moments therefore landed
+      // on different input samples, which is a sub-sample time shift in the output.
+      //
+      // It hid for a long time because it is harmless until something cares about a
+      // fraction of a sample. Measured on the GRCon26 M17 slot: a 9 kHz selection
+      // decimates by 42, so the shift reaches 41/42 of an output sample — 0.39 of a
+      // symbol at 2.48 samples per symbol, and the symbols came back a fifth of full
+      // scale away from the ones a direct fit produced (mean |difference| 0.56 on
+      // symbols that run ±3; 10 records against 0). The same signal at a 24 kHz
+      // selection decimates by 16 into 6.5 samples a symbol, where the worst case is
+      // 0.14 of a symbol: there the two paths agreed to the bit.
+      //
+      // So the output grid is anchored to the capture: absolute output sample `k` is
+      // always made from the input samples starting at `k * decim`, whatever window
+      // happens to be asking.
+      // The one term that was `Math.floor(tEnd * parentRate)` and is now `endOut * decim`.
+      // Everything else about the window — including the tuner being late by half its
+      // filter, which `delay.js` accounts for and a test pins — is unchanged, because
+      // the two differ by less than one output sample and only in the part that was
+      // making the grid depend on the read.
+      const endOut = Math.floor(tEnd * node.out.sampleRate);
+      const startAt = endOut * decim - need;
+      // Positioned by sample index rather than by a moment: the half-sample keeps the
+      // division and its floor from landing one sample early, which is the rounding
+      // `_readMerged` documents at length.
+      const tRead = (endOut * decim + 0.5) / p.out.sampleRate;
+      const src = onReal ? interleave(this._detectMono(p, tRead, need), need)
+                         : this._readIQ(p, tRead, need);
+
       // The mixer's phase is referenced to the **first sample of the window**, not to its
       // end — which is a different number for every window length, because `need` depends
       // on how many samples were asked for.
@@ -1684,7 +1937,6 @@ export class MockEngine extends Graph {
       // everything downstream looked at magnitudes — a spectrum, a waterfall, an
       // envelope — and it makes a tuner unusable for anything coherent, which is to say
       // for everything ADR-0038 exists for.
-      const startAt = Math.floor(tEnd * p.out.sampleRate) - need;
       const startPhase = (-2 * Math.PI * offset * (startAt / p.out.sampleRate)) % (2 * Math.PI);
       return dsp.xlateFilterDecimate(src, taps, offset, p.out.sampleRate, decim, count, startPhase).samples;
     }
@@ -1815,25 +2067,28 @@ export class MockEngine extends Graph {
         confident: !!est.frameConfident } };
 
     const cols = Math.max(2, Math.round(lineSamples));
-    const folded = dsp.foldRaster(video, span.count, lineSamples, { cols, maxRows: 4096 });
-
-    // Fold the frames on top of each other, when there are frames and averaging is on.
-    let out = folded;
     const lines = est.linesPerFrame;
     const wantAvg = n.params.average.value && est.frameConfident && lines > 2;
-    let frames = 1;
-    if (wantAvg && folded.rows >= lines * 2) {
-      frames = Math.floor(folded.rows / lines);
-      const acc = new Float32Array(lines * cols);
-      for (let f = 0; f < frames; f++) {
-        for (let i = 0; i < lines * cols; i++) acc[i] += folded.data[f * lines * cols + i];
-      }
-      for (let i = 0; i < acc.length; i++) acc[i] /= frames;
-      out = { rows: lines, cols, data: acc };
+    const haveFrames = wantAvg ? Math.floor(span.count / (lineSamples * lines)) : 0;
+
+    // Fold the frames on top of each other, when there are frames and averaging is on.
+    //
+    // Every frame in the capture, not the few a row cap allowed: what is held is one
+    // frame however many go into it, and each is lined up against the ones before it, for
+    // the reason `stackFrames` gives.
+    let out, frames = 1, walked = 0;
+    if (haveFrames >= 2) {
+      const st = dsp.stackFrames(video, span.count, lineSamples, lines, { cols });
+      ({ frames, walked } = st);
+      out = { rows: st.rows, cols: st.cols, data: st.data };
+    } else {
+      // Nothing to average into: stack the lines and let somebody look at them. The cap
+      // is memory, not meaning — a grid is drawn, and nobody reads four thousand lines.
+      out = dsp.foldRaster(video, span.count, lineSamples, { cols, maxRows: 4096 });
     }
 
     n._grid = { key, ...out, sampleRate: fs, centerHz: p.out.centerHz, t0: span.t0,
-                symbolS: lineSamples / fs, spacingHz: 0, frames,
+                symbolS: lineSamples / fs, spacingHz: 0, frames, walked,
                 confident: !!est.confident, kindLabel: 'raster' };
     return n._grid;
   }
@@ -2018,11 +2273,109 @@ export class MockEngine extends Graph {
     if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
     if (node.op === 'core.real') return dsp.realPart(this._readIQ(p, tEnd, count), count);
     if (node.op === 'core.gain') return scaled(this._detect(p, tEnd, count), node.params.gainDb.value);
+    if (node.op === 'core.symbols') return this._readSymbols(node, tEnd, count);
     if (p.out.kind === 'real') {
       return realOp(node.op, this._detectMono(p, tEnd, count), count, fs, node.params).data;
     }
     const iq = this._readIQ(p, tEnd, count);
     return demodulate(node.op, iq, count, fs, node.params).data;
+  }
+
+  /**
+   * The grid for one block of capture time, measured on that block and then remembered.
+   *
+   * A block rather than a read, because two reads that overlap have to agree about which
+   * sample was a symbol or the decoder downstream sees a different grid every frame —
+   * that is what ADR-0040 is protecting, and it is a property of the *block*, not of one
+   * fit held forever. The blocks are anchored at zero, so every read agrees on the edges
+   * however it was positioned.
+   */
+  _symbolGrid(node, block, parent = null, atRate = 0) {
+    if (!node._grids) node._grids = new Map();
+    const hit = node._grids.get(block);
+    if (hit) return hit;
+
+    // The parent by argument when there is one: this is also called from `addNode`,
+    // where the node being measured is not in the graph yet and cannot look its own
+    // parent up.
+    const p = parent || this.node(node.parent);
+    const fsIn = p.out.sampleRate;
+    // `node.out` is written after the parameters are, so on the way in from `addNode`
+    // there is nothing to read the rate off yet and it arrives as an argument instead.
+    const rate = atRate || node.out.sampleRate;
+    const sps = fsIn / rate;
+    const d = this.duration();
+    const t0 = block * SYMBOL_FIT_SECONDS;
+    const t1 = isFinite(d) ? Math.min(d, t0 + SYMBOL_FIT_SECONDS) : t0 + SYMBOL_FIT_SECONDS;
+    const n = Math.max(256, Math.round(Math.max(0, t1 - t0) * fsIn));
+    const fit = dsp.softSymbols(this._detectMono(p, t1, n), n, fsIn, rate);
+    // Absolute, not window-relative. `fit.offset` is an index into the block that was
+    // measured, and that block does not start on a symbol boundary — so the phase a read
+    // can use is the one taken against the capture's own sample zero.
+    const windowStart = Math.floor(t1 * fsIn) - n;
+    const g = {
+      phase: fit.n ? (((windowStart + fit.offset) % sps) + sps) % sps : 0,
+      center: fit.center, gain: fit.gain, eye: fit.eye, n: fit.n, t0, t1,
+    };
+    node._grids.set(block, g);
+    return g;
+  }
+
+  /**
+   * `count` soft symbols ending at `tEnd`, each one on the grid measured where it is.
+   *
+   * The one real-to-real operation whose output rate is not its input's, which is what
+   * makes it the only one that cannot read `count` samples from its parent and be done.
+   * A symbol at 4800 is ten samples at 48k, and the ten it is are decided by an absolute
+   * index rather than by where this window happens to start.
+   *
+   * Which grid, though, is a question the old version answered once for a whole capture,
+   * and wrongly: a phase measured on ten seconds is a measurement *of those ten seconds*.
+   * So the read is cut at the block boundaries it crosses and each part is taken on its
+   * own block's grid. A read inside one block — every display read is — is one pass and
+   * the same pass as before.
+   *
+   * A phase somebody typed is not a measurement and is not second-guessed: `manual` wins
+   * everywhere, which is also what makes `invert` usable as the escape hatch the note
+   * tells people to try.
+   */
+  _readSymbols(node, tEnd, count) {
+    const p = this.node(node.parent);
+    const fsIn = p.out.sampleRate;
+    const rate = node.out.sampleRate;
+    const sps = fsIn / rate;
+    const pr = node.params;
+    const held = pr.phase.mode === 'manual'
+      ? { phase: pr.phase.value, center: pr.center.value, gain: pr.gain.value } : null;
+
+    const endSym = Math.floor(tEnd * rate);
+    const firstSym = endSym - count;
+    const out = new Float32Array(Math.max(0, count));
+    // Half the filter plus a sample of slack for the interpolator.
+    const pad = Math.ceil((SYMBOL_SPAN / 2) * sps) + 2;
+
+    for (let k = firstSym; k < endSym;) {
+      const g = held || this._symbolGrid(node, fitBlock(k / rate));
+      // To the end of this block, or the end of what was asked for.
+      const stop = held ? endSym
+        : Math.min(endSym, Math.ceil((fitBlock(k / rate) + 1) * SYMBOL_FIT_SECONDS * rate));
+      const nsym = Math.max(1, stop - k);
+      const a = Math.floor(k * sps + g.phase) - pad;
+      const b = Math.ceil((k + nsym - 1) * sps + g.phase) + pad + 1;
+      const need = Math.max(1, b - a);
+      // The parent read ends at absolute sample `b`, which is what puts `a` at index 0.
+      const x = this._detectMono(p, b / fsIn, need);
+      const part = dsp.softSymbolsAt(x, need, fsIn, rate, {
+        phase: k * sps + g.phase - a,
+        first: 0, symbols: nsym,
+        center: g.center, gain: g.gain,
+        invert: pr.invert.value === 'yes',
+        span: SYMBOL_SPAN,
+      });
+      out.set(part.subarray(0, Math.min(nsym, count - (k - firstSym))), k - firstSym);
+      k += nsym;
+    }
+    return out;
   }
 
   /**

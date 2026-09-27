@@ -59,6 +59,13 @@ export class Metrics {
       <span>interactions <b>${this.interactions}</b></span>
       <span>last op <b class="${travelOk ? 'ok' : 'bad'}">${Math.round(this.lastOpTravel)} px</b> <i>/ 120</i></span>
       <span>run <b class="${this.totalTravel < 900 ? 'ok' : 'bad'}">${Math.round(this.totalTravel)} px</b> <i>/ 900</i></span>
-      <span>${s.fps.toFixed(1)} fps · jitter <b class="${jitterOk ? 'ok' : 'bad'}">${s.jitter.toFixed(1)} ms</b> <i>/ 4</i></span>`;
+      <span>${s.fps.toFixed(1)} fps · jitter <b class="${jitterOk ? 'ok' : 'bad'}">${s.jitter.toFixed(1)} ms</b> <i>/ 4</i></span>` +
+      // Which build this is, where the other instrumentation already lives (docs/08:
+      // instrumentation is not chrome). Absent on the in-tab engine, which has no
+      // server to have been built — there is nothing to be unsure about there.
+      (this.build
+        ? `<span>build <b>${String(this.build.id).replace(/[^0-9a-f]/g, '')}</b>` +
+          `${this.build.git ? ` <i>git ${String(this.build.git).replace(/[^0-9a-f]/g, '')}</i>` : ''}</span>`
+        : '');
   }
 }

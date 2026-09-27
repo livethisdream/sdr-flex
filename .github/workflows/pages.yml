@@ -1,20 +1,43 @@
-# Deploys the M0 toy model to GitHub Pages.
+# Deploys the browser client to GitHub Pages.
 #
-# Only needed if Pages is set to Settings → Pages → Source → **GitHub Actions**,
-# in which case web/ is published as the site root and no redirect is involved.
+# **The hosted version is the whole tool minus the box.** `web/` is static ES modules
+# with no build step, and the client falls back to its in-tab engine when no websocket
+# answers (ADR-0021) — so Pages serves a working tool rather than a demo. What it cannot
+# have is anything that runs as a process: the external decoders, a radio, the capture
+# library. Everything else — the DSP, the flowgraph, the views, the synthetic scene, a
+# capture you drop on the window — is the same code the server serves.
 #
-# If Pages is instead set to **Deploy from a branch**, this workflow is not used at
-# all: GitHub serves the whole repo, the app lives at /web/, and the root index.html
-# redirects there. That is the current setup, so this stays manual (workflow_dispatch)
-# to avoid failing runs — to switch, pick "GitHub Actions" as the source and
-# uncomment the push trigger below.
+# **`Identify` opens here and says "no decoders available" when it has none.** It used to
+# not be drawn at all, because the button required an installed adapter — so the feature
+# looked as though it had been removed rather than as though it had nothing to run. This
+# comment claimed it "knows this and says so"; it did not, until it did.
+#
+# **The decoders in `web/plugins/` do run here**, because a plugin is a file the tab
+# executes and not a process (ADR-0029). A static host cannot list a directory, so
+# `web/plugins/index.json` names them and the client fetches that. They were deployed and
+# never loaded before it existed; `web/test/plugins.test.mjs` asserts it matches the
+# directory, because the drift is silent — it works on a box, which scans.
+#
+# Pages is set to Settings → Pages → Source → **GitHub Actions**, so this is the deploy:
+# `web/` is published as the site root and the repository's root index.html — which
+# redirects to /web/ for the other mode — is not published at all. The app is therefore
+# at the site root rather than at /web/, and an old bookmark to /web/ will 404.
+#
+# Everything under web/ refers to itself relatively and nothing there starts with an
+# underscore, so it survives being rooted anywhere. The websocket it looks for resolves
+# to wss://<host>/ws, which on Pages closes without opening; the client treats that as
+# "no engine here" and falls back to the in-tab one in well under a second rather than
+# waiting out a timeout.
+#
+# The push trigger is on, which is the point of moving to Actions: the site cannot drift
+# behind `main` the way it did while the trigger named a branch that had stopped moving.
 name: Deploy toy model
 
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [claude/sdr-flex-toolkit-planning-c4ghl1]
-  #   paths: ['web/**', '.github/workflows/pages.yml']
+  push:
+    branches: [main]
+    paths: ['web/**', '.github/workflows/pages.yml']
 
 permissions:
   contents: read

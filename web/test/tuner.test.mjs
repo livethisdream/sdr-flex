@@ -186,3 +186,67 @@ test('a strong flat signal is still not a spectrum', () => {
   // spread. Every bin at -20 dBFS is not a loud signal, it is a broken one.
   assert.equal(dsp.spectrumHasSignal(new Float32Array(1024).fill(-20)), false);
 });
+
+// ── the output grid belongs to the capture, not to the read ─────────────────
+
+test('the same instant reads the same samples whatever window asked for it', async () => {
+  // `xlateFilterDecimate` takes every `decim`-th sample counting from the start of what
+  // it is handed, so where that starts decides *which* input samples become output
+  // samples. It used to start at `Math.floor(tEnd * parentRate) - need`, whose remainder
+  // modulo `decim` moves with `tEnd` — so a read whose end lands between two output
+  // samples came back on a different grid, a shift of up to `(decim - 1) / decim` of an
+  // output sample.
+  //
+  // The moves below are all *within* one output sample, so `Math.floor(tEnd * ownRate)`
+  // does not change: every one of these reads is a request for exactly the same output
+  // samples and must return exactly the same numbers. Ending a read at a moment that is
+  // not on the output grid is the ordinary case — `_readSymbols` positions its reads by
+  // absolute *parent* sample, which is where this was found.
+  //
+  // Harmless until something cares about a fraction of a sample. Measured on the GRCon26
+  // M17 slot, where a 9 kHz selection decimates by 42 into 2.48 samples per symbol: the
+  // symbols a symbol sync node handed over came back a fifth of full scale away from the
+  // ones a direct fit produced from the same seconds, and the decoder read 0 records
+  // against 10. At a 24 kHz selection — decim 16, 6.5 samples a symbol — the worst case
+  // is 0.14 of a symbol and the two paths agreed to the bit, which is why this went
+  // unnoticed for as long as it did.
+  const g = comb();
+  const e = await opened(g);
+  const f = CENTER + g.plan[2].offsetHz;
+  const tu = await e.addNode({ parent: e.root.id, op: 'core.tuner',
+    selection: { f0: f - SPACING / 4, f1: f + SPACING / 4 }, at: 0.1 });
+  const decim = tu.params.decim.value;
+  assert.ok(decim > 1, 'this is only a question when something is decimated');
+
+  const count = 600;
+  // An end that sits exactly on an output sample, then nudged along inside that sample.
+  const k = Math.floor(0.2 * tu.out.sampleRate);
+  const base = e._readIQ(e.node(tu.id), k / tu.out.sampleRate, count);
+  for (let j = 1; j < decim; j++) {
+    const at = (k * decim + j) / RATE;              // j parent samples past the boundary
+    assert.equal(Math.floor(at * tu.out.sampleRate), k, 'the nudge left the output sample');
+    const got = e._readIQ(e.node(tu.id), at, count);
+    for (let i = 0; i < count * 2; i++) {
+      assert.ok(Math.abs(base[i] - got[i]) < 1e-6,
+                `ending ${j}/${decim} of an output sample later moved sample ${i >> 1}: ` +
+                `${base[i]} against ${got[i]}`);
+    }
+  }
+});
+
+test('a longer read of the same instant is the same signal', async () => {
+  // The other half of the same property: the count must not move the grid either.
+  const g = comb();
+  const e = await opened(g);
+  const f = CENTER + g.plan[1].offsetHz;
+  const tu = await e.addNode({ parent: e.root.id, op: 'core.tuner',
+    selection: { f0: f - SPACING / 4, f1: f + SPACING / 4 }, at: 0.1 });
+  const at = 0.25, count = 400;
+  const short = e._readIQ(e.node(tu.id), at, count);
+  const long = e._readIQ(e.node(tu.id), at, count * 3);
+  const skip = (count * 3 - count) * 2;       // both end at `at`, so align on the end
+  for (let i = 0; i < count * 2; i++) {
+    assert.ok(Math.abs(short[i] - long[skip + i]) < 1e-6,
+              `a ${count * 3}-sample read disagrees with a ${count}-sample one at ${i >> 1}`);
+  }
+});

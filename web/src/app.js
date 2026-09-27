@@ -8,7 +8,7 @@ import { Waterfall } from './waterfall.js';
 import { SpectrumTrace, TimeSeries, BitRaster } from './views.js';
 import { ContextMenu } from './menu.js';
 import { IdentifyPanel } from './identview.js';
-import { plan as identifyPlan } from './identify.js';
+import { plan as identifyPlan, runPlugins } from './identify.js';
 import { Strip } from './strip.js';
 import { HOTKEYS, KEY_FOR, opForKey, firstOpNamed } from './keys.js';
 import { delayOf } from './delay.js';
@@ -17,12 +17,55 @@ import { fromFiles, FORMATS } from './capture.js';
 import * as out from './export.js';
 import * as plugins from './plugins.js';
 import { AudioMixer, meterLevel } from './audio.js';
-import { COLORMAPS, cssGradient, floorColor, lut } from './colormap.js';
+import { COLORMAPS, cssGradient, floorColor, lut, DEFAULT_COLORMAP } from './colormap.js';
 import { WINDOWS, spectrumHasSignal } from './dsp.js';
 // Only for its SIGNALS table: the synthetic scene is the one source whose contents are
 // known in advance, so it is the one source that can just say what is in it.
 import * as scene from './scene.js';
 import { CRCS } from './frames.js';
+import * as resume from './resume.js';
+import * as sessions from './sessions.js';
+
+// The stream kinds Identify has anything to say about.
+//
+// `iq` and `real` are where the external decoders read, and `bytes` is where a plugin
+// does — the kind a decoder dropped on the window takes, and the only kind this tool can
+// identify with no box behind it at all.
+const IDENTIFIABLE = ['iq', 'real', 'bytes'];
+
+// How much capture one streamed decode covers.
+//
+// Short enough that a burst shows up while you are still looking at the place it
+// happened, long enough that the cost of starting a process is not most of the work. An
+// M17 packet is about a fifth of a second, so this is the latency between hearing one
+// and reading it — and it divides the symbol sync's ten-second fit blocks, so a block
+// of decoding never needs a grid that is not already measured.
+const STREAM_BLOCK_S = 5;
+
+// The speeds the transport cycles through.
+//
+// Halving each time, because halving is what the ear hears as a step and each one is an
+// octave down: a voice at a quarter speed is two octaves below where it was said, which
+// is about as far as speech stays speech. Nothing faster than real time — this exists
+// for hearing something, and a recording played faster is not easier to hear.
+const SPEEDS = [1, 0.5, 0.25];
+
+// How often a running stream sink is fed, in milliseconds of wall clock.
+//
+// The same trade the audio mixer makes — long enough that a datagram carries useful
+// samples and the round trip is not most of the work, short enough that the far end is
+// not waiting on a buffer — with one number underneath it that was measured rather than
+// picked. Nothing paces the datagrams inside a chunk: `send` on a connectionless socket
+// queues and returns, deliberately, so a sink cannot stall the read loop for something
+// that may not even be listening. The pacing *is* this tick.
+//
+// So a chunk has to fit in what a socket will take at once. On loopback, the most
+// forgiving path there is, 64 kB in one burst arrives whole, 96 kB loses four datagrams
+// and 128 kB loses thirty-six — the receiving buffer saturates a little over ninety.
+// A quarter second of 48 kHz s16 is 24 kB, two dozen datagrams, about 2.5x of headroom
+// on the friendliest link. The loss when it comes is silent, which is why that margin
+// is not thinner. `web/test/streamout.test.mjs` pins it.
+const SINK_CHUNK_MS = 250;
 
 const $ = (s, r = document) => r.querySelector(s);
 
@@ -37,6 +80,11 @@ const fmtRate = (r) => (r >= 1e6 ? (r / 1e6).toFixed(3) + ' MS/s' : (r / 1e3).to
 // costs a third of what 60 does. Waterfall rows keep their own clock on top.
 const SPEC_PERIOD = 1 / 25;
 
+// How often what is on screen is written down for a reload to find. Three seconds is
+// under the time it takes to turn one parameter and look at the result, and the write is
+// skipped entirely when nothing changed.
+const KEEP_PERIOD_MS = 3000;
+
 const VIEWS = {
   iq: ['Spectrum', 'Flow'],
   // A real stream reads two ways — the waveform, and the baseband spectrum the
@@ -48,12 +96,15 @@ const VIEWS = {
   grid: ['Grid', 'Flow'],
   audio: ['Listen', 'Flow'],
   file: ['Export', 'Flow'],
+  sink: ['Stream', 'Flow'],
   bytes: ['Bytes', 'Flow'],
 };
 
 const defaultViewParams = () => ({
   bins: 1024, window: 'Hann', avg: 4,
-  dbMin: -74, dbMax: -18, dbAuto: true, colormap: 'Viridis', speed: 60,
+  // Named in colormap.js, with the reason, because four other places reach for the same
+  // default and one of them used to disagree.
+  dbMin: -74, dbMax: -18, dbAuto: true, colormap: DEFAULT_COLORMAP, speed: 60,
   trigger: 'auto', spanS: 0.12,
   domain: 'time', channel: 'sum',
   zoomLo: 0, zoomHi: 1,
@@ -63,6 +114,19 @@ const defaultViewParams = () => ({
 function shorten(v, max = 22) {
   const s = v == null || v === '' ? 'default' : String(v);
   return s.length <= max ? s : s.slice(0, max - 1) + '\u2026';
+}
+
+/**
+ * A set of choices, on a pill an inch wide.
+ *
+ * Read as text, `POCSAG512 POCSAG1200 POCSAG2400` truncates to the first name and a
+ * half, which says neither which ones nor how many — and how many is the thing about a
+ * set that fits. The membership is read in the popover, where it is also changed.
+ */
+function fmtSet(v) {
+  const on = String(v == null ? '' : v).trim().split(/\s+/).filter(Boolean);
+  if (!on.length) return 'none';
+  return on.length === 1 ? shorten(on[0], 16) : `${shorten(on[0], 12)} +${on.length - 1}`;
 }
 
 class App {
@@ -93,6 +157,29 @@ class App {
     this._specAcc = 0;
     this._specData = null;
     this._lastFrame = performance.now();
+    // Where saved sessions go. This browser until `hello` says the box keeps them,
+    // which is also the final answer for a tab with no server behind it (ADR-0042).
+    this.sessions = sessions.storeFor({ sessions: false });
+    this.sessionId = null;         // the one that is open, if any
+    this.sessionName = '';
+    this._sessionSaved = '';       // the recipe as it was when it was last written
+  }
+
+  /**
+   * Whether the open session has changed since it was written.
+   *
+   * Compared against the same text `keep` compares — nodes and source, not the view —
+   * because moving the playhead is not work somebody would be upset to lose, and a name
+   * that wears an asterisk after every scrub is a name nobody reads.
+   */
+  sessionDirty() {
+    if (!this.sessionId) return false;
+    return this.sessionText() !== this._sessionSaved;
+  }
+
+  sessionText() {
+    const r = resume.recipe(this.engine, { source: this.openedFrom });
+    return r ? JSON.stringify(r.nodes) + JSON.stringify(r.source) : '';
   }
 
   async start() {
@@ -101,6 +188,9 @@ class App {
     let want = true;
     try { want = localStorage.getItem('sdrflex.loop') !== '0'; } catch { /* no store */ }
     this.setLoop(want);
+    let speed = 1;
+    try { speed = Number(localStorage.getItem('sdrflex.speed')) || 1; } catch { /* no store */ }
+    this.setSpeed(speed);
     const root = await this.engine.createSession();
     this.channel = root.id;        // where the breadcrumb is
     this.current = root.id;        // whose result is on screen
@@ -108,7 +198,114 @@ class App {
     this.tabs.set(root.id, 'spectrum');
     this.wire();
     this.refresh();
+    // Written down every few seconds, and asked about on the way out. See resume.js for
+    // what a recipe is and why it is not a snapshot.
+    this._keeper = setInterval(() => this.keep(), KEEP_PERIOD_MS);
+    addEventListener('beforeunload', (e) => {
+      this.keep();
+      if (this.engine.nodes.size <= 1) return;
+      // The browser shows its own wording, and there is no way to say what is at stake.
+      // The point is only the pause: a reload is one key away from a tab close and this
+      // tool has no document to have saved.
+      e.preventDefault();
+      e.returnValue = '';
+    });
+    this.offerResume();
     requestAnimationFrame((t) => this.loop(t));
+  }
+
+  /**
+   * Write down what is on screen, if it has changed.
+   *
+   * On a timer rather than at every call site that mutates the graph. There are a dozen
+   * of those and there will be more; one of them being forgotten is a reload that loses
+   * exactly the work somebody just did, which is the failure this is here to stop. A
+   * recipe is a few kilobytes of JSON and this compares it against the last one written
+   * before touching the store, so the cost of a quiet minute is one `stringify`.
+   *
+   * **An empty graph does not erase what is stored.** A page that has just loaded has an
+   * empty graph, and this timer runs three seconds later — so deleting on empty would
+   * throw away last session's work while the offer to restore it was still on screen.
+   * What is stored is replaced by the next thing worth storing, and cleared by dismissing
+   * the offer; nothing else removes it.
+   */
+  keep() {
+    try {
+      const r = resume.recipe(this.engine, {
+        source: this.openedFrom, current: this.current, channel: this.channel, tabs: this.tabs,
+      });
+      if (!r) return;
+      const text = JSON.stringify(r.nodes) + JSON.stringify(r.source);
+      if (text === this._kept) return;
+      this._kept = text;
+      resume.keep(r);
+    } catch (err) { /* a browser with no store is a browser that does not resume */ }
+  }
+
+  /**
+   * Offer back what was open last time, if it can be put back.
+   *
+   * An offer and not an action. Restoring by itself would be right about nine times out
+   * of ten and infuriating the tenth — somebody who opened the tool to look at something
+   * else would have to undo a chain they did not ask for, and this tool has no undo.
+   */
+  async offerResume() {
+    const bar = $('#resume');
+    if (!bar) return;
+    const saved = resume.saved();
+    if (!saved) return;
+    let captures = [];
+    if (saved.source && saved.source.kind === 'library') {
+      try { captures = await this.engine.listCaptures(); } catch { captures = []; }
+    }
+    const can = resume.canReplay(saved, { captures, remote: !!this.remote });
+    const what = `${saved.nodes.length} node${saved.nodes.length === 1 ? '' : 's'} on ` +
+                 `${saved.source.label || 'a capture'}`;
+    $('#resume-text').textContent = can.ok ? `Last time: ${what}` : `Last time: ${what} — ${can.why}`;
+    $('#resume-go').hidden = !can.ok;
+    bar.hidden = false;
+
+    const close = (forget) => { bar.hidden = true; if (forget) resume.forget(); };
+    $('#resume-no').onclick = () => close(true);
+    $('#resume-go').onclick = async () => {
+      close(false);
+      this.metrics.beginOp();
+      try {
+        if (can.open) {
+          this.mixer.removeAll();
+          await this.engine.openCapture(can.open.id);
+          this.afterOpen();
+          this.openedFrom = { kind: 'library', id: can.open.id, label: can.open.label };
+        }
+        const done = await resume.replay(this.engine, saved);
+        if (done.map.size) {
+          const land = saved.view && saved.view.current && done.map.get(saved.view.current);
+          const chan = saved.view && saved.view.channel && done.map.get(saved.view.channel);
+          if (chan) this.channel = chan;
+          if (land) { this.current = land; this.vp(land); }
+          for (const [id, tab] of saved.view?.tabs || []) {
+            const to = done.map.get(id);
+            if (to) this.tabs.set(to, tab);
+          }
+        }
+        this.refresh();
+        this.notify(done.skipped.length
+          ? `restored ${done.made.length} of ${saved.nodes.length} — ` +
+            `${done.skipped.map((k) => k.op).join(', ')} did not come back`
+          : `restored ${done.made.length} node${done.made.length === 1 ? '' : 's'}`,
+        done.skipped.length ? 12000 : 6000);
+      } catch (err) {
+        this.notify(`could not restore that: ${err.message}`, 9000);
+      }
+      this.metrics.endOp();
+    };
+    // It is an offer about the past, and the moment somebody does something it is about
+    // the past of a different session.
+    addEventListener('pointerdown', function once(e) {
+      if (bar.contains(e.target)) return;
+      removeEventListener('pointerdown', once, true);
+      bar.hidden = true;
+    }, true);
   }
 
   vp(id) {
@@ -230,8 +427,35 @@ class App {
     // — trace over waterfall, one shared axis (ADR-0020). It is the same picture of a
     // different signal, so it is the same view rather than a second one that would
     // have to grow its own zoom, its own dB range and its own colormap.
-    if (n.out.kind === 'real' && this.vp(k).domain === 'frequency') return 'Spectrum';
+    if (n.out.kind === 'real') {
+      // ADR-0036 made which axis a view parameter rather than a node or a second tab,
+      // and ruled out three ways not to do it. Showing both at once was not one of
+      // them: it is still one node, one tab and one set of samples — drawn against two
+      // independent variables instead of one, which is what its own closing line says.
+      //
+      // It earns the room on a demodulator, where the two answer different questions.
+      // Is there a burst here, and where does it start, is a waveform. Whether a station
+      // is in stereo, or carries RDS at all, is a question about *which subcarriers
+      // exist* and a scope cannot answer it.
+      const d = this.vp(k).domain;
+      if (d === 'frequency') return 'Spectrum';
+      if (d === 'both') return 'Both';
+    }
     return VIEWS[n.out.kind][0];
+  }
+
+  /**
+   * Is the spectrum stage on screen?
+   *
+   * `Both` draws it beside the scope, so every question that used to be "is the view
+   * Spectrum" is really this one: the stage exists, it can be dragged on, zoomed and
+   * double-clicked, and its controls belong in the bar. Asking the old way meant the
+   * selection gesture, both zooms and the whole view group quietly stopped working the
+   * moment a second plot appeared next to them — which is how this was found.
+   */
+  hasSpectrum() {
+    const v = this.view();
+    return v === 'Spectrum' || v === 'Both';
   }
 
   /**
@@ -280,6 +504,7 @@ class App {
     this.renderTabs();
     this.renderStrip();
     this.renderStage();
+    this.renderListen();
   }
 
   /**
@@ -608,11 +833,19 @@ class App {
     });
   }
 
-  /** Is there anything here to identify, and anything on the box to do it with? */
+  /**
+   * Is there anything here that could be identified?
+   *
+   * Not "is there anything to identify it *with*". This used to require an installed
+   * adapter, which meant the button did not exist at all on a tab with no box — and a
+   * button that is not drawn cannot say why, which is the one thing ADR-0031 asks of
+   * this feature. Somebody went looking for Identify on the hosted copy and could not
+   * find it. Now it opens and the panel says "no decoders available", which is a
+   * sentence, where absence was not.
+   */
   canIdentify() {
     const n = this.node();
-    if (!n || (n.out.kind !== 'iq' && n.out.kind !== 'real')) return false;
-    return (this.engine.adapters || []).some((a) => a.available);
+    return !!n && IDENTIFIABLE.includes(n.out.kind);
   }
 
   /**
@@ -628,20 +861,42 @@ class App {
     if (!n) return;
     this.metrics.beginOp();
     const kind = n.out.kind;
-    const plan = identifyPlan(this.engine.adapters || [],
-      { kind, sampleRate: n.out.sampleRate, demods: demodsFor(kind) });
+    // One plan, two runners. The adapters are programs and belong to the engine; the
+    // plugins are files dropped on *this window* (ADR-0029) and the engine has never
+    // seen them — on a box it could not run one if it had. So the plan is built here,
+    // where both are visible, and each half is run by whoever can run it.
+    const plan = identifyPlan(this.engine.adapters || [], {
+      kind, sampleRate: n.out.sampleRate, demods: demodsFor(kind), plugins: plugins.loaded(),
+    });
+    const mine = plan.tried.filter((c) => c.plugin);
+    const theirs = plan.tried.filter((c) => !c.plugin);
     const at = this.engine.effectiveTime(n.id);
     const win = this.engine.identifyWindow(n.id, at);
     this.ident.open({ x, y }, plan,
       { windowS: win.t1 - win.t0, kind, sampleRate: n.out.sampleRate },
       (row) => this.buildFromIdentify(n.id, row));
 
-    let report;
-    try {
-      report = await this.engine.identify(n.id, { at, onResult: (r) => this.ident.result(r) });
-    } catch (e) {
-      report = { error: e.message };
+    let report = null;
+    // Only when there is something for it to run. Asking an engine to identify a byte
+    // stream gets "nothing to identify on a bytes stream", which is true of the engine
+    // and false of the report — the plugins below are about to read exactly that.
+    if (theirs.length) {
+      try {
+        report = await this.engine.identify(n.id, { at, onResult: (r) => this.ident.result(r) });
+      } catch (e) {
+        report = { error: e.message };
+      }
     }
+    if (mine.length) {
+      try {
+        const feed = await this.engine.pluginFeed(n.id, at, win);
+        if (feed) runPlugins(mine, feed, plugins.run, (r) => this.ident.result(r));
+        else report = report || { error: `nothing here has produced ${kind} yet` };
+      } catch (e) {
+        report = report || { error: e.message };
+      }
+    }
+    if (!plan.tried.length) report = report || { error: 'no decoders available' };
     if (!this.ident.isOpen) return;            // closed while it ran, which is allowed
     // The final reply carries every row again. Rows that arrived on the progress
     // channel are already in place; this is what catches an engine that answered all at
@@ -651,20 +906,43 @@ class App {
   }
 
   /**
-   * Build what a row describes: the demodulator if it needed one, then the decoder,
-   * configured the way the run that answered was configured.
+   * Build what a row describes: whatever had to run in front of the decoder, then the
+   * decoder, configured the way the run that answered was configured.
+   *
+   * `via` is a list rather than one demodulator, because one decoder here does not read
+   * samples — `m17-packet-decode` wants a symbol sync between the discriminator and it
+   * (ADR-0040). The row already carries the whole chain, so this walks it rather than
+   * knowing which decoders are special.
    */
   async buildFromIdentify(parentId, row) {
     const sel = this.defaultSelection();
+    const chain = [].concat(row.via || []);
     let parent = parentId;
-    if (row.via) {
-      const d = await this.engine.addNode({ parent, op: row.via, selection: sel });
-      parent = d.id;
+    // Building the chain is several round trips and a symbol fit, which measured about
+    // three and a half seconds on a 90 s capture — long enough that a click with nothing
+    // on screen reads as a click that did nothing.
+    this.setStageBadge(`building ${row.name}${chain.length ? ` behind ${row.viaLabel}` : ''}…`);
+    let node = null;
+    try {
+      for (const op of chain) {
+        const d = await this.engine.addNode({ parent, op, selection: sel });
+        parent = d.id;
+      }
+      node = await this.engine.addNode({ parent, op: row.id, selection: sel });
+      for (const [k, v] of Object.entries(row.params || {})) {
+        if (node.params && k in node.params) await this.engine.setParam(node.id, k, v, 'manual');
+      }
+    } catch (err) {
+      // Said, not swallowed. Without this a throw partway left the demodulator on the
+      // graph and no decoder behind it, and nothing anywhere said why — which is a
+      // worse outcome than the click having failed outright.
+      this.notify(`could not build that chain: ${err.message}`, 8000);
+      this.setStageBadge('');
+      this.metrics.endOp();
+      this.refresh();
+      return;
     }
-    const node = await this.engine.addNode({ parent, op: row.id, selection: sel });
-    for (const [k, v] of Object.entries(row.params || {})) {
-      if (node.params && k in node.params) await this.engine.setParam(node.id, k, v, 'manual');
-    }
+    this.setStageBadge('');
     this.vp(node.id);
     this.setTab(node.id);
     this._tsCache = null;
@@ -674,16 +952,23 @@ class App {
 
   renderStage() {
     const v = this.view();
-    $('#pane-spectrum').hidden = v !== 'Spectrum';
-    $('#pane-time').hidden = v !== 'Time';
+    // `Both` is the two panes at once rather than a third pane duplicating either, so
+    // nothing here has a second copy of a waterfall or a scope to keep in step. The
+    // panes stack or sit side by side — `.panes.split` decides which, on width — and
+    // everything inside them is what it already was.
+    const both = v === 'Both';
+    $('#panes').classList.toggle('split', both);
+    $('#pane-spectrum').hidden = v !== 'Spectrum' && !both;
+    $('#pane-time').hidden = v !== 'Time' && !both;
     $('#pane-bits').hidden = v !== 'Bits';
     $('#pane-flow').hidden = v !== 'Flow';
     $('#pane-events').hidden = v !== 'Events';
     $('#pane-audio').hidden = v !== 'Listen';
     $('#pane-export').hidden = v !== 'Export';
+    $('#pane-stream').hidden = v !== 'Stream';
     $('#pane-bytes').hidden = v !== 'Bytes';
     $('#pane-grid').hidden = v !== 'Grid';
-    if (v === 'Spectrum') {
+    if (v === 'Spectrum' || both) {
       // The waterfall holds rows for one node at a time, and this pane no longer belongs
       // to one node: a demodulator's baseband spectrum draws here too. Changing tabs can
       // now change what the rows mean without changing the pane, and old rows under a new
@@ -909,6 +1194,25 @@ class App {
         nodeCells.push({ key: 'radio', label: live ? 'change radio…' : 'listen to a radio…',
                          type: 'action', value: '' });
       }
+      // A session is named by typing its name, and saved by committing it — the same
+      // gesture as naming a node, and for the same reason: this tool has no dialogs.
+      // The asterisk is the document convention and it is doing real work here, because
+      // nothing is written until you ask (ADR-0042).
+      const dirty = this.sessionDirty();
+      nodeCells.push({
+        key: 'session', label: 'session', unit: '', type: 'text', commit: 'enter',
+        placeholder: 'name it to keep it',
+        // The value is the name and nothing else, because it is what the input hands
+        // back when somebody opens the box and presses enter without editing. The
+        // asterisk is display, so it goes where display goes.
+        value: this.sessionName,
+        fmt: (v) => (v ? v + (dirty ? ' *' : '') : 'unsaved'),
+        hint: this.sessionName
+          ? (dirty ? 'changed since it was saved — press enter on the name to save it again'
+                   : `saved in ${this.sessions.where}`)
+          : `type a name and press enter; it is kept in ${this.sessions.where}`,
+      });
+      nodeCells.push({ key: 'sessions', label: 'saved sessions…', type: 'action', value: '' });
       if (live) nodeCells.push({ key: 'stopradio', label: 'stop the radio', type: 'action', value: '' });
     } else {
       const live = !n.params.timeMode || n.params.timeMode.value === 'live';
@@ -979,13 +1283,31 @@ class App {
           // reads as text and says so; the other two are the coin, flipped by hand.
           invert: { label: 'polarity', unit: '', type: 'enum', fmt: String,
                     values: ['auto', 'normal', 'inverted'] },
+          // The network sink's four. `running` is an enum rather than a button because
+          // it is a property of the node — the graph says what is happening, and a sink
+          // that is sending is a different graph from one that is not (ADR-0027).
+          host: { label: 'to', unit: '', type: 'text', placeholder: '127.0.0.1',
+                  hint: 'where the decoder is. In a container 127.0.0.1 is the container, not your machine',
+                  fmt: String },
+          port: { label: 'port', unit: '', type: 'num', step: 1, min: 1, max: 65535,
+                  integer: true, fmt: String,
+                  hint: '7355 is what GQRX uses, so the tools that eat its audio expect it' },
+          running: { label: 'running', unit: '', type: 'enum', values: ['no', 'yes'], fmt: String,
+                     hint: 'sends while the transport plays; stopping leaves the node and closes the socket' },
         // An adapter's parameters come with the node, since the client has no table of
         // somebody else's decoder's knobs and should not need one.
-        }[key] || (n.paramMeta && n.paramMeta[key]
+        }[key] || (n.op === 'core.stream' && {
+          format: { label: 'format', unit: '', type: 'enum', fmt: String,
+                    values: ['s16', 'cs16', 'cu8', 'cf32', 'f32', 'raw'],
+                    hint: 's16 at 48 kHz is the GQRX convention; raw sends the bytes as they are' },
+          rate: { label: 'rate', unit: 'kS/s', type: 'num', step: 20, min: 1000, max: 400_000,
+                  integer: true, fmt: (v) => (v / 1e3).toFixed(1) },
+        }[key]) || (n.paramMeta && n.paramMeta[key]
           // A decoder's own knob, drawn from what the node carries. Long text is
           // summarized here and read in full in the popover — an rtl_433 flex spec is
           // sixty characters and would be the entire bar.
-          ? { unit: '', fmt: (v) => shorten(v), ...n.paramMeta[key] }
+          ? { unit: '', fmt: n.paramMeta[key].type === 'multi' ? fmtSet : (v) => shorten(v),
+              ...n.paramMeta[key] }
           : { label: key, unit: '', fmt: String, type: 'num', step: 1 });
         nodeCells.push({
           key, ...meta, value: pr.value, mode: pr.mode, canAuto: !!pr.auto,
@@ -1004,7 +1326,8 @@ class App {
     // group because it decides what the rest of the group is about.
     const domainCells = n.out.kind === 'real'
       ? [{ key: 'domain', label: 'domain', unit: '', type: 'enum', value: p.domain,
-           values: ['time', 'frequency'] }]
+           values: ['time', 'frequency', 'both'],
+           hint: 'the waveform, the baseband spectrum it is made of, or both at once' }]
       : [];
     // And which channel, where there is a choice. It only appears on a node that
     // produces more than one, because a `channel` pill reading "sum" above a stream that
@@ -1015,21 +1338,26 @@ class App {
       : [];
     const viewCells = domainCells.concat(channelCells);
 
-    if (this.view() === 'Time') {
-      groups.push({
-        key: 'view', title: 'view',
-        cells: viewCells.concat([
-          { key: 'trigger', label: 'trigger', unit: '', type: 'enum', value: p.trigger, values: ['auto', 'free'] },
-          { key: 'spanS', label: 'span', unit: 'ms', type: 'num', value: p.spanS,
-            fmt: (v) => (v * 1e3).toFixed(0), step: 0.0008, min: 0.002, max: 1.0 },
-        ]),
-      });
+    // The scope's controls and the spectrum's, kept apart so `both` can have the two
+    // sets in one group. It folds the overflow behind its `more` chip, which is what
+    // that mechanism is for — and a `both` with no view group at all would be a mode
+    // somebody could enter and not find the control to leave by, since `domain` lives
+    // in this group.
+    const timeCells = [
+      { key: 'trigger', label: 'trigger', unit: '', type: 'enum', value: p.trigger, values: ['auto', 'free'] },
+      { key: 'spanS', label: 'span', unit: 'ms', type: 'num', value: p.spanS,
+        fmt: (v) => (v * 1e3).toFixed(0), step: 0.0008, min: 0.002, max: 1.0 },
+    ];
+    const onTime = this.view() === 'Time' || this.view() === 'Both';
+    const onSpec = this.hasSpectrum();
+    if (onTime && !onSpec) {
+      groups.push({ key: 'view', title: 'view', cells: viewCells.concat(timeCells) });
     }
 
-    if (this.view() === 'Spectrum') {
+    if (onSpec) {
       groups.push({
         key: 'view', title: 'view',
-        cells: viewCells.concat([
+        cells: viewCells.concat(onTime ? timeCells : []).concat([
           { key: 'bins', label: 'fft', unit: 'bins', type: 'enum', value: String(p.bins), values: ['256', '512', '1024', '2048', '4096'] },
           { key: 'colormap', label: 'colormap', unit: '', type: 'enum', value: p.colormap, values: COLORMAPS },
           { key: 'speed', label: 'speed', unit: 'rows/s', type: 'num', value: p.speed, fmt: (v) => String(Math.round(v)), step: 0.35, min: 2, max: 120, integer: true },
@@ -1051,6 +1379,7 @@ class App {
       if (k === 'library') this.openLibrary(x, y);
       if (k === 'radio') this.openRadios(x, y);
       if (k === 'stopradio') this.stopRadio();
+      if (k === 'sessions') this.openSessions(x, y);
     };
   }
 
@@ -1088,9 +1417,21 @@ class App {
       this.renderStrip();
       return;
     }
+    // Not a parameter of anything: the name of the work, which is a property of the
+    // window rather than of a node. It sits on the source because that is where "which
+    // capture is this" already lives.
+    if (key === 'session') { await this.saveSession(value); return; }
     const n = this.node();
     if (!n.params[key]) return;
     if (n.out.kind === 'audio' && key === 'volume') this.mixer.setVolume(n.id, value);
+    // Stopping a sink closes its socket rather than merely not feeding it. A socket
+    // left open on a node that says `no` is the graph lying about what is running,
+    // which is the one thing ADR-0027 makes a sink a node to prevent.
+    if (n.op === 'core.stream' && key === 'running' && value !== 'yes') {
+      this._sinkTold = false;
+      if (this._sinkAt instanceof Map) this._sinkAt.delete(n.id);
+      this.engine.streamStop(n.id);
+    }
     const wasAuto = n.params[key].mode === 'auto';
     if (wasAuto && n.params[key].auto) n.params[key].auto.suggested = n.params[key].value;
 
@@ -1306,6 +1647,31 @@ class App {
     return { lo, hi };
   }
 
+  /**
+   * Hand the dB range back to the measurement.
+   *
+   * `dbAuto` has been here since the beginning and nobody could find it: it lives on the
+   * `min` and `max` controls, which fold away at every width anybody uses, so reaching
+   * it was the fold chip, then a control, then a button inside it. Now a double-click on
+   * the colorbar — the thing you have just dragged the range out of shape with — does
+   * it, and the bar says so.
+   *
+   * Snapped rather than eased. Easing is right when the range is following a signal that
+   * is changing; it is wrong as the answer to somebody asking for it now, where a range
+   * that creeps toward the right answer over two seconds reads as a control that did not
+   * work. The snap is armed even when there is no spectrum in hand yet, so opening a
+   * capture and asking for auto before the first frame still does the right thing.
+   */
+  autoRange() {
+    const p = this.vp(this.current);
+    p.dbAuto = true;
+    this._autoSnap = true;
+    this._autoAcc = 0;
+    if (this._specData) this.applyAutoRange(this._specData, true);
+    this.renderCbarLabels();
+    this.renderStrip();
+  }
+
   applyAutoRange(data, snap) {
     const p = this.vp(this.current);
     if (!p.dbAuto || !data) return;
@@ -1363,6 +1729,107 @@ class App {
     try { localStorage.setItem('sdrflex.loop', on ? '1' : '0'); } catch { /* no store */ }
   }
 
+  /**
+   * The node a speaker would attach to: whatever is in front of you, if it is audio.
+   *
+   * Standing on the Listen block itself counts as standing on its source, so the button
+   * means the same thing from either tab rather than disappearing on the one tab where
+   * somebody is most likely to look for it.
+   */
+  listenTarget() {
+    const n = this.node();
+    if (!n) return null;
+    if (n.out.kind === 'audio') return this.engine.node(n.parent) || null;
+    return n.out.kind === 'real' ? n : null;
+  }
+
+  /** The Listen block already on that node, if it has one. */
+  listenNode(src) {
+    if (!src) return null;
+    return this.engine.children(src.id).find((c) => c.op === 'core.audio') || null;
+  }
+
+  /**
+   * Mute and unmute, which is all anybody wanted.
+   *
+   * Muting leaves the block on the graph and takes the voice out of the mixer, because
+   * those are different statements: removing the block is "I am done with this channel"
+   * and has its own ✕, while this is "not right now". It also means unmuting is instant
+   * and keeps the volume and squelch somebody set.
+   *
+   * The first click is also the gesture a browser requires before it will open an audio
+   * context — which is why this creates the block rather than the block being created
+   * to make the gesture.
+   */
+  async toggleListen() {
+    const src = this.listenTarget();
+    if (!src) return;
+    let sink = this.listenNode(src);
+    if (sink && this.mixer.has(sink.id)) {
+      this.mixer.remove(sink.id);
+      this.renderListen();
+      this.refresh();
+      return;
+    }
+    if (!sink) {
+      this.metrics.beginOp();
+      try {
+        sink = await this.engine.addNode({ parent: src.id, op: 'core.audio' });
+      } catch (err) {
+        this.notify(`could not listen to that: ${err.message}`, 6000);
+        this.metrics.endOp();
+        return;
+      }
+      this.metrics.endOp();
+    }
+    const ok = await this.mixer.add(sink.id, this.engine.effectiveTime(sink.parent),
+                                    sink.params.volume.value);
+    if (!ok) this.setStageBadge('this browser has no audio output');
+    this.renderListen();
+    this.refresh();
+  }
+
+  /** The speaker's two states, and its absence when there is nothing to listen to. */
+  renderListen() {
+    const b = $('#listen');
+    if (!b) return;
+    const src = this.listenTarget();
+    const sink = this.listenNode(src);
+    const on = !!(sink && this.mixer.has(sink.id));
+    b.hidden = !src;
+    b.classList.toggle('on', on);
+    b.title = !src ? 'listen'
+      : on ? `muting stops ${this.tag(src)} without removing it`
+      : `listen to ${this.tag(src)}`;
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  /**
+   * How fast the clock runs, and the one control that says so.
+   *
+   * Cycles rather than opening a menu: there are three of them, the order is obvious,
+   * and a menu for three values is two more clicks than the values are worth. Slower
+   * only — this is for hearing something, and a recording played faster than it
+   * happened is not easier to hear.
+   *
+   * Remembered, like the loop flag, because somebody who wants half speed for a weak
+   * voice wants it for the next weak voice too.
+   */
+  setSpeed(v) {
+    const speed = SPEEDS.includes(v) ? v : 1;
+    this.engine.speed = speed;
+    const b = $('#speed');
+    if (b) {
+      b.textContent = speed === 1 ? '1\u00d7' : `${speed}\u00d7`;
+      b.classList.toggle('slow', speed !== 1);
+      b.title = speed === 1
+        ? 'full speed — click to slow it down'
+        : `${speed}\u00d7 speed, ${(1 / speed).toFixed(0)} octave${speed === 0.5 ? '' : 's'} down` +
+          ' — click again to cycle';
+    }
+    try { localStorage.setItem('sdrflex.speed', String(speed)); } catch { /* no store */ }
+  }
+
   setPlaying(on) {
     this.engine.playing = on;
     this._wasPlaying = on;
@@ -1394,8 +1861,45 @@ class App {
         </div>
         <div class="lstate">${state} \u00b7 ${lvl.toFixed(3)}${sq > 0 ? ` \u00b7 squelch ${sq.toFixed(3)}` : ''}</div>
         <div class="lsrc">${src ? `${this.tag(src)} \u00b7 ${fmtRate(src.out.sampleRate)}` : 'nothing upstream'}</div>
-        <div class="lnote">Volume and squelch are in the bar below. The \u2715 on this tab
+        <div class="lnote">Volume and squelch are in the bar below. The speaker on the
+          transport mutes and unmutes without removing anything; the \u2715 on this tab
           stops the audio and removes the block; the transport's pause stops it too.</div>
+      </div>`;
+  }
+
+  /**
+   * The Stream pane.
+   *
+   * A sink has no picture of its own — what it is doing is *whether* it is doing it, and
+   * where to. The same shape as Listen, for the same reason, with one addition: the far
+   * end of a UDP socket never answers, so the only honest evidence that this is working
+   * is the count of datagrams going out. A number that is not moving is the difference
+   * between "nothing is listening" and "nothing is being sent", and only the second one
+   * is this tool's fault.
+   */
+  renderStream() {
+    const n = this.node();
+    if (!n || n.out.kind !== 'sink') return;
+    const src = this.engine.node(n.parent);
+    const on = n.params.running.value === 'yes';
+    const st = n._sink || {};
+    const where = `${n.params.host.value}:${n.params.port.value}`;
+    const fmt = `${n.params.format.value} at ${fmtRate(Number(n.params.rate.value) || 0)}`;
+    const esc = (x) => String(x).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+    $('#pane-stream').innerHTML = `
+      <div class="listenwrap">
+        <div class="lspk ${st.error ? 'stopped' : on ? 'playing' : 'stopped'}">\u21AA</div>
+        <div class="lstate">${on ? (this.engine.playing ? 'sending' : 'armed \u00b7 paused') : 'stopped'}
+          \u00b7 ${esc(where)}</div>
+        <div class="lsrc">${src ? `${this.tag(src)} \u00b7 ${fmt}` : 'nothing upstream'}</div>
+        ${st.error ? `<div class="everr">${esc(st.error)}</div>` : ''}
+        <div class="lnote">${st.sent
+          ? `${st.sent} datagram${st.sent === 1 ? '' : 's'}, ${(st.bytes / 1024).toFixed(0)} kB sent.
+             UDP does not answer, so this counts what left rather than what arrived —
+             a number that climbs while the far end says nothing means the far end.`
+          : `Nothing sent yet. Set <b>running</b> to yes in the bar below and press play.
+             In a container <code>127.0.0.1</code> is the container; point <b>host</b> at
+             the machine your decoder is on.`}</div>
       </div>`;
   }
 
@@ -1602,6 +2106,24 @@ class App {
       this.hasLibrary = !!hello.captures;
       this.hasRadios = !!hello.radios;
       this.hasPluginDir = !!hello.plugins;
+      // Sessions move to the box when the box keeps them, so the work follows you
+      // between browsers. Until then they are in this browser, which is also the whole
+      // story for a tab with no server (ADR-0042).
+      this.sessions = sessions.storeFor({ sessions: !!hello.sessions });
+      this.build = hello.version || null;
+      this.metrics.build = this.build;
+      // On the console rather than on the screen. "Which build is this" is a question
+      // somebody asks about twice a month, usually right after a deploy, and a line of
+      // permanent chrome answering it is the accretion docs/08 is about. The console is
+      // free, it is where somebody already looks when something is wrong, and it is one
+      // keystroke away. `curl host:8722/version` is the same answer without a browser.
+      if (this.build) {
+        // eslint-disable-next-line no-console
+        console.info(`sdr-flex — build ${this.build.id}` +
+                     `${this.build.git ? ` · git ${this.build.git}` : ''}` +
+                     `${this.build.builtAt ? ` · ${this.build.builtAt}` : ''}` +
+                     `\n  the page and the engine are served by the same process, so this is both.`);
+      }
       remote.onStatus(({ connected }) => {
         if (!connected) this.notify('lost the engine — the page is showing its last frames', 12000);
       });
@@ -1627,6 +2149,13 @@ class App {
         if (got.loaded.length) said.push(`${got.loaded.length} from the server`);
         for (const f of got.failed) this.notify(`${f.filename}: ${f.error}`, 10000);
       } catch (err) { this.notify(`could not read the server's decoders: ${err.message}`, 8000); }
+    } else {
+      // No box to scan a directory, so the client reads the manifest beside the files.
+      // These are the only decoders a hosted tab has, and they were being served and
+      // never loaded.
+      const got = await plugins.loadSite();
+      if (got.loaded.length) said.push(`${got.loaded.length} that ship with the client`);
+      for (const f of got.failed) this.notify(`${f.filename}: ${f.error}`, 10000);
     }
     const mine = await plugins.restore();
     if (mine.loaded.length) said.push(`${mine.loaded.length} you dropped earlier`);
@@ -1654,6 +2183,11 @@ class App {
       try {
         this.mixer.removeAll();
         await this.engine.openCapture(id);
+        // Which capture this is, in the terms it can be opened by again. The engine's
+        // mirror carries a capture's facts and not its library id, because nothing that
+        // draws a spectrum has ever needed one — so the window that asked for it is
+        // where it is remembered (resume.js).
+        this.openedFrom = { kind: 'library', id, label: c.label };
         this.afterOpen(c);
         this.notify(`${c.label} · ${(c.sampleRate / 1e6).toFixed(3)} MS/s · ${c.durationS.toFixed(2)} s` +
                     ` · rate and center from ${c.derived}`);
@@ -1662,6 +2196,126 @@ class App {
       }
       this.metrics.endOp();
     });
+  }
+
+  /**
+   * Keep what is on screen under a name.
+   *
+   * Saving is committing the name, which means the gesture that creates a session and
+   * the gesture that updates one are the same gesture. Changing the name of an open
+   * session renames it in place rather than leaving a copy behind under the old one —
+   * "save as" is a thing a tool with files needs and this does not have files.
+   */
+  async saveSession(name) {
+    const clean = String(name || '').trim();
+    if (!clean) { this.sessionId = null; this.sessionName = ''; this.renderStrip(); return; }
+    const r = resume.recipe(this.engine, {
+      source: this.openedFrom, current: this.current, channel: this.channel, tabs: this.tabs,
+    });
+    const can = sessions.canSave(r);
+    if (!can.ok) { this.notify(can.why, 9000); this.renderStrip(); return; }
+    const rec = sessions.make(clean, r, { id: this.sessionId });
+    try {
+      await this.sessions.save(rec);
+      this.sessionId = rec.id;
+      this.sessionName = rec.name;
+      this._sessionSaved = JSON.stringify(r.nodes) + JSON.stringify(r.source);
+      this.notify(`saved “${rec.name}” — ${rec.nodes} node${rec.nodes === 1 ? '' : 's'}` +
+                  ` in ${this.sessions.where}`);
+    } catch (err) {
+      this.notify(`could not save that: ${err.message}`, 9000);
+    }
+    this.renderStrip();
+  }
+
+  /**
+   * What has been saved, in the same menu everything else opens in.
+   *
+   * Opening and forgetting are two groups rather than two menus. The list is the same
+   * list, the menu is type-filtered, and a second control for the rarer of the two would
+   * be a second control to find.
+   */
+  async openSessions(x, y) {
+    let saved;
+    try { saved = await this.sessions.list(); }
+    catch (err) { this.notify(`could not read saved sessions: ${err.message}`, 8000); return; }
+    if (!saved.length) {
+      this.notify(`nothing saved yet — name this one in the session box to keep it` +
+                  ` (they go in ${this.sessions.where})`, 8000);
+      return;
+    }
+    const ops = [];
+    for (const rec of saved) ops.push({ id: `open:${rec.id}`, name: sessions.describe(rec), group: 'open' });
+    for (const rec of saved) ops.push({ id: `forget:${rec.id}`, name: `forget “${rec.name}”`, group: 'forget' });
+    const px = x != null ? x : innerWidth / 2, py = y != null ? y : innerHeight - 120;
+    this.menu.open(px, py, ops, async (pick) => {
+      const [what, id] = [pick.slice(0, pick.indexOf(':')), pick.slice(pick.indexOf(':') + 1)];
+      if (what === 'forget') {
+        try { await this.sessions.remove(id); } catch (err) { this.notify(`could not forget that: ${err.message}`, 8000); return; }
+        if (this.sessionId === id) { this.sessionId = null; this.sessionName = ''; }
+        this.notify('forgotten');
+        this.renderStrip();
+        return;
+      }
+      await this.loadSession(id);
+    });
+  }
+
+  /**
+   * Put one back.
+   *
+   * The same two steps the resume offer takes — open what it was built on, then replay
+   * the recipe onto it — because it is the same recipe and there is one replayer. What
+   * is different is that this one is asked for rather than offered, so it does not have
+   * to be careful about surprising anybody; it still says what did not come back.
+   */
+  async loadSession(id) {
+    let rec;
+    try { rec = await this.sessions.load(id); }
+    catch (err) { this.notify(`could not read that session: ${err.message}`, 8000); return; }
+    if (!rec || !rec.recipe) { this.notify('that session is not there any more', 8000); return; }
+
+    let captures = [];
+    if (rec.recipe.source && rec.recipe.source.kind === 'library') {
+      try { captures = await this.engine.listCaptures(); } catch { captures = []; }
+    }
+    const can = resume.canReplay(rec.recipe, { captures, remote: !!this.remote });
+    if (!can.ok) { this.notify(`“${rec.name}”: ${can.why}`, 10000); return; }
+
+    this.metrics.beginOp();
+    try {
+      if (can.open) {
+        this.mixer.removeAll();
+        await this.engine.openCapture(can.open.id);
+        this.afterOpen(can.open);
+        this.openedFrom = { kind: 'library', id: can.open.id, label: can.open.label };
+      }
+      const done = await resume.replay(this.engine, rec.recipe);
+      if (done.map.size) {
+        const land = rec.recipe.view && rec.recipe.view.current && done.map.get(rec.recipe.view.current);
+        const chan = rec.recipe.view && rec.recipe.view.channel && done.map.get(rec.recipe.view.channel);
+        if (chan) this.channel = chan;
+        if (land) { this.current = land; this.vp(land); }
+        for (const [was, tab] of rec.recipe.view?.tabs || []) {
+          const to = done.map.get(was);
+          if (to) this.tabs.set(to, tab);
+        }
+      }
+      this.sessionId = rec.id;
+      this.sessionName = rec.name;
+      // What was just rebuilt is what was saved, whatever the ids came back as — the
+      // comparison is on the recipe, and replaying one produces the same recipe.
+      this._sessionSaved = this.sessionText();
+      this.refresh();
+      this.notify(done.skipped.length
+        ? `opened “${rec.name}” — ${done.made.length} of ${rec.recipe.nodes.length} nodes; ` +
+          `${done.skipped.map((k) => k.op).join(', ')} did not come back`
+        : `opened “${rec.name}” — ${done.made.length} node${done.made.length === 1 ? '' : 's'}`,
+      done.skipped.length ? 12000 : 6000);
+    } catch (err) {
+      this.notify(`could not open that session: ${err.message}`, 9000);
+    }
+    this.metrics.endOp();
   }
 
   /**
@@ -1768,6 +2422,10 @@ class App {
       if (!cap.samples) throw new Error('that file has no samples in it');
       this.mixer.removeAll();
       await this.engine.openCapture(cap);
+      // A dropped file has no id to open it by again — the browser will not hand the
+      // same bytes back without somebody choosing the file. Remembered by name, so the
+      // offer after a reload can say that rather than fail halfway through.
+      this.openedFrom = { kind: 'file', label: cap.label };
       this.afterOpen();
       this.notify(
         `${cap.label} · ${FORMATS[cap.format].name} · ${(cap.sampleRate / 1e6).toFixed(3)} MS/s` +
@@ -1871,6 +2529,126 @@ class App {
   }
 
   /**
+   * Feed every running stream sink the seconds that just went by.
+   *
+   * One at a time and never overlapping: the push is a round trip and a second one
+   * launched before the first returns would send the same seconds twice, which to a
+   * decoder on the far end looks like the signal repeating itself.
+   *
+   * The chunk is taken from the node's own playhead rather than the wall clock, so a
+   * pinned clip streams the clip, and slowing the transport down slows what goes out —
+   * which is what somebody who slowed it down meant.
+   */
+  async pumpSinks() {
+    if (this._sinkBusy) return;
+    const sinks = [...this.engine.nodes.values()].filter(
+      (n) => n.op === 'core.stream' && n.params.running.value === 'yes');
+    if (!sinks.length) return;
+    this._sinkBusy = true;
+    try {
+      for (const n of sinks) {
+        const at = this.engine.effectiveTime(n.parent);
+        if (at == null) continue;
+        const last = this._sinkAt instanceof Map ? this._sinkAt.get(n.id) : null;
+        if (!(this._sinkAt instanceof Map)) this._sinkAt = new Map();
+        // Seconds of capture since this sink last sent, clamped: after a scrub the gap
+        // is meaningless, and sending it would dump minutes of audio in one burst.
+        const secs = last != null && at > last && at - last < 2 ? at - last : SINK_CHUNK_MS / 1000;
+        this._sinkAt.set(n.id, at);
+        const out = await this.engine.streamPush(n.id, Math.max(0, at - secs), secs);
+        const live = this.engine.node(n.id);
+        if (live) live._sink = out;
+        if (out && out.error && !this._sinkTold) {
+          this._sinkTold = true;
+          this.notify(`stream out: ${out.error}`, 8000);
+        }
+      }
+    } finally {
+      this._sinkBusy = false;
+    }
+    if (this.view() === 'Stream') this.renderStream();
+  }
+
+  /**
+   * Decode the blocks the playhead has finished crossing, and keep what they said.
+   *
+   * The expectation this exists for: "as we get the bursts, we see the decoded values."
+   * What shipped was one run over the whole capture that answered when it was done, and
+   * on a ninety-second file that is a long wait for a packet that happened at eleven
+   * seconds.
+   *
+   * A *block* rather than a sliding window, for the same reason the symbol sync in front
+   * of it now fits per block: a block is the unit over which a decode is a decode, the
+   * spans are disjoint so records never need de-duplicating, and re-reading the whole
+   * capture every frame would be quadratic in the length of the capture.
+   *
+   * One at a time. An external decoder is a process, and letting the playhead start a
+   * second before the first has answered is how a slow decoder turns into a queue of
+   * them — so a block that is not finished simply is not started, and the next tick
+   * picks it up.
+   */
+  async streamRecords() {
+    const n = this.node();
+    if (!n || n.out.kind !== 'events' || !n.adapter) return;
+    if (this._streamBusy) return;
+    // A whole-capture run already answered this, and its answer covers every block.
+    // Appending to it would double what it found; replacing it would throw away more
+    // than this can put back. Opening the pane while paused runs the capture; opening
+    // it while playing streams. `Run again` clears both and starts over.
+    if (n._records && !n._records.streamed) return;
+    const d = this.engine.duration();
+    const now = this.engine.effectiveTime(n.id);
+    // Only blocks that are wholly behind the playhead: half a block is half a burst,
+    // and a decoder handed half a burst reports nothing and looks broken.
+    const done = Math.floor(now / STREAM_BLOCK_S);
+    if (!(done > 0)) return;
+    const seen = (n._blocks = n._blocks || new Set());
+    let block = -1;
+    for (let b = 0; b < done; b++) if (!seen.has(b)) { block = b; break; }
+    if (block < 0) return;
+    const t0 = block * STREAM_BLOCK_S;
+    const t1 = Math.min(t0 + STREAM_BLOCK_S, isFinite(d) ? d : t0 + STREAM_BLOCK_S);
+    seen.add(block);
+    this._streamBusy = true;
+    let out = null;
+    const began = performance.now();
+    try {
+      out = await this.engine.runRecordsSpan(n.id, t0, t1);
+    } catch (err) {
+      // A block that failed is not a block that is done: drop it from the set so a
+      // later pass can try again rather than leaving a silent hole in the record.
+      seen.delete(block);
+      this.notify(`decoding ${t0.toFixed(0)}–${t1.toFixed(0)} s failed: ${err.message}`, 6000);
+    }
+    this._streamBusy = false;
+    // The node object may have been replaced by a snapshot while that ran (ADR-0029),
+    // so the accumulator is found by id rather than kept.
+    const live = this.engine.node(n.id);
+    if (!live || !out) return;
+    live._blocks = seen;
+    const acc = live._records && live._records.streamed
+      ? live._records : { records: [], note: '', streamed: true };
+    // Appended even when the block said nothing, because the count of blocks read is
+    // what makes an empty list readable: "nothing yet" and "nothing in the twelve
+    // seconds looked at so far" are different claims, and only one of them is true.
+    acc.records = acc.records.concat((out.records || []).map((r) => ({ ...r, at: t0 })));
+    acc.slowest = Math.max(acc.slowest || 0, (performance.now() - began) / 1000);
+
+    // Whether this is keeping up is a question about the backlog, not about any one
+    // block: the first block of a capture also pays for the symbol sync's grid fit, and
+    // calling a whole session slow because of that one would be wrong. What matters is
+    // whether the playhead is pulling away from the decoding.
+    const total = isFinite(d) ? Math.ceil(d / STREAM_BLOCK_S) : 0;
+    const behind = Math.max(0, Math.floor(now / STREAM_BLOCK_S) - seen.size);
+    acc.note = `as it plays · ${seen.size}${total ? ` of ${total}` : ''} block` +
+               `${seen.size === 1 ? '' : 's'} of ${STREAM_BLOCK_S} s` +
+               `${behind > 1 ? ` · ${behind} behind the playhead` : ''}` +
+               `${acc.slowest > STREAM_BLOCK_S ? ` · slowest ${acc.slowest.toFixed(1)} s` : ''}`;
+    live._records = acc;
+    if (this.current === live.id && this.view() === 'Events') this.renderEvents();
+  }
+
+  /**
    * The Events pane.
    *
    * It leads with the count, and that is not decoration. A decoder can return many
@@ -1890,7 +2668,11 @@ class App {
       el.innerHTML = '<div class="empty">This analyzer has nothing to report yet.</div>';
       return;
     }
-    if (!n._records || force) {
+    // A streamed decode fills in as the capture plays, so an empty one is not a decode
+    // that has not run — it is one that has not reached anything yet, and re-running the
+    // whole capture underneath it would throw away what it has.
+    const streaming = !!(n._records && n._records.streamed);
+    if ((!n._records && !this.engine.playing) || force) {
       el.innerHTML = '<div class="empty">running ' + n.label + '…</div>';
       await new Promise((r) => setTimeout(r, 0));
       await this.engine.runRecords(n.id);
@@ -1912,9 +2694,15 @@ class App {
     }
     const r = n._records || { records: [] };
     const rows = r.records.map((rec, i) => {
-      const extra = Object.entries(rec).filter(([k]) => k !== 'text')
+      // `at` is the block a streamed record came out of, and it is a fact about the
+      // capture rather than a field the decoder returned — so it is drawn as the
+      // timestamp it is rather than mixed in with the decoder's own keys.
+      const extra = Object.entries(rec).filter(([k]) => k !== 'text' && k !== 'at')
         .map(([k, v]) => `<span class="evk">${k}</span> ${v}`).join(' ');
-      return `<li><i>${i + 1}</i><span class="evt">${(rec.text ?? JSON.stringify(rec))
+      const when = rec.at != null
+        ? `<span class="evat" title="the ${STREAM_BLOCK_S} s block it came from">${
+            rec.at.toFixed(0)}s</span>` : '';
+      return `<li><i>${i + 1}</i>${when}<span class="evt">${(rec.text ?? JSON.stringify(rec))
         .replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span>${extra}</li>`;
     }).join('');
     el.innerHTML = `
@@ -1925,10 +2713,15 @@ class App {
           <button class="exgo" id="evrun">Run again</button>
         </div>
         ${r.error ? `<div class="everr">${r.error}</div>` : ''}
-        ${r.records.length ? `<ol class="evlist">${rows}</ol>` : this.renderNoDecode(r, n)}
+        ${r.records.length ? `<ol class="evlist">${rows}</ol>`
+          : streaming || (this.engine.playing && n.adapter)
+            ? '<div class="empty">listening — records appear as the playhead crosses them</div>'
+            : this.renderNoDecode(r, n)}
       </div>`;
     const btn = $('#evrun');
-    if (btn) btn.addEventListener('click', () => { n._records = null; this.renderEvents(true); });
+    if (btn) btn.addEventListener('click', () => {
+      n._records = null; n._blocks = null; this.renderEvents(true);
+    });
     const sug = $('#usesug');
     if (sug) {
       sug.addEventListener('click', async () => {
@@ -1977,7 +2770,10 @@ class App {
       `<b>${g.rows} × ${g.cols}</b>` +
       `<span>${raster
         ? `${(g.symbolS * 1e6).toFixed(1)} µs per line` +
-          `${g.frames > 1 ? ` · ${g.frames} frames averaged` : ''}`
+          `${g.frames > 1 ? ` · ${g.frames} frames averaged` : ''}` +
+          // What the frames had to be moved to line up is worth saying: a screen whose
+          // clock is walking is a different situation from one that is holding still.
+          `${g.walked >= 0.5 ? ` · they walked ${g.walked.toFixed(0)} samples apart` : ''}`
         : `${(g.symbolS * 1e6).toFixed(0)} µs per symbol · ${(spacing / 1e3).toFixed(2)} kHz per subcarrier`}` +
       `${g.confident ? '' : ' · <em>not confident</em>'}</span>` +
       '<button class="exgo" id="gridrun">Read again</button>';
@@ -2094,7 +2890,7 @@ class App {
 
   /** Keyboard zoom works about the center, since there is no pointer to anchor to. */
   zoomKey(factor) {
-    if (this.view() !== 'Spectrum') return;
+    if (!this.hasSpectrum()) return;
     const p = this.vp(this.current);
     const width = p.zoomHi - p.zoomLo;
     const center = (p.zoomLo + p.zoomHi) / 2;
@@ -2167,7 +2963,7 @@ class App {
     });
 
     stage.addEventListener('pointerdown', (e) => {
-      if (this.view() !== 'Spectrum') return;
+      if (!this.hasSpectrum()) return;
       if (e.target.closest('#cbar-wrap') || e.target.closest('#markers')) return;
       const r = stage.getBoundingClientRect();
       const wf = $('#wf').getBoundingClientRect();
@@ -2277,7 +3073,7 @@ class App {
     this.resetZoom = resetZoom;
 
     stage.addEventListener('wheel', (e) => {
-      if (this.view() !== 'Spectrum') return;
+      if (!this.hasSpectrum()) return;
       e.preventDefault();
       const r = stage.getBoundingClientRect();
       const at = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
@@ -2285,7 +3081,7 @@ class App {
       else applyZoom(e.deltaY > 0 ? 1.18 : 1 / 1.18, at);
     }, { passive: false });
 
-    stage.addEventListener('dblclick', () => { if (this.view() === 'Spectrum') resetZoom(); });
+    stage.addEventListener('dblclick', () => { if (this.hasSpectrum()) resetZoom(); });
 
     // pinch: two pointers set both the scale and where it is anchored
     const pts = new Map();
@@ -2345,6 +3141,16 @@ class App {
       const up = () => { cb.removeEventListener('pointermove', move); cb.removeEventListener('pointerup', up); };
       cb.addEventListener('pointermove', move);
       cb.addEventListener('pointerup', up);
+    });
+    // Dragging the bar sets the range by hand, so double-clicking it is the obvious way
+    // to give the range back to the measurement — right where somebody has just made a
+    // mess of it, rather than three levels down behind the fold. Auto has always been
+    // there; it was not anywhere you would find it.
+    cb.title = 'drag to set the range \u00b7 double-click for auto';
+    cb.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      this.autoRange();
+      this.metrics.interaction();
     });
 
     const MODES = ['auto', 'light', 'dark'];
@@ -2455,6 +3261,14 @@ class App {
 
     const lb = $('#loop');
     if (lb) lb.addEventListener('click', () => { this.setLoop(!this.engine.loop); this.metrics.interaction(); });
+    const sb = $('#listen');
+    if (sb) sb.addEventListener('click', () => { this.toggleListen(); this.metrics.interaction(); });
+    const sp = $('#speed');
+    if (sp) sp.addEventListener('click', () => {
+      const i = SPEEDS.indexOf(this.engine.speed || 1);
+      this.setSpeed(SPEEDS[(i + 1) % SPEEDS.length]);
+      this.metrics.interaction();
+    });
     $('#play').addEventListener('click', () => {
       // pressing play at the end of a file means "again", not "stay stopped"
       if (this.engine.ended && !this.engine.playing) {
@@ -2517,7 +3331,7 @@ class App {
     const v = this.view();
     const p = this.vp(this.current);
 
-    if (v === 'Spectrum') {
+    if (v === 'Spectrum' || v === 'Both') {
       const pin = this.engine.isPinned(this.channel);
 
       if (pin) {
@@ -2611,7 +3425,11 @@ class App {
           this.waterfall.draw();
         }
       }
-    } else if (v === 'Time') {
+    }
+    // Its own `if` rather than the next link in the chain, so `Both` can run the two of
+    // them. `Bits` stays chained to this one, so every other view still takes exactly
+    // one branch.
+    if (v === 'Time' || v === 'Both') {
       // a triggered display is latched, so it is recomputed a few times a second
       // and simply redrawn in between — free-run still needs every frame
       this._tsAcc = (this._tsAcc || 0) + dt;
@@ -2636,6 +3454,8 @@ class App {
         this.timeSeries.draw(this._tsCache.data, this._tsCache.spanS);
         this.renderTimeAxis(this._tsCache);
       }
+    } else if (v === 'Stream') {
+      this.renderStream();
     } else if (v === 'Bits') {
       // decoded records do not need 60 fps, and a one-second window is expensive
       this._bitsAcc = (this._bitsAcc || 0) + dt;
@@ -2645,6 +3465,22 @@ class App {
         const f = this.engine.frame(this.current, {});
         if (f.kind === 'bits') this.bitRaster.draw(f.groups, f.symbolUs);
       }
+    }
+
+    // Streaming out, on the same cadence and for the same reason as the audio mixer:
+    // the clock is here, so the chunks are taken from here. A sink that is not running
+    // costs one property read per tick.
+    if (this.engine.playing) {
+      this._sinkAcc = (this._sinkAcc || 0) + dt;
+      if (this._sinkAcc > SINK_CHUNK_MS) { this._sinkAcc = 0; this.pumpSinks(); }
+    }
+
+    // Decoding as it plays. Checked a few times a second rather than every frame: the
+    // work is a process per block of capture and the check itself is a comparison, but
+    // sixty of them a second is sixty chances to start one early.
+    if (this.engine.playing && this.view() === 'Events') {
+      this._streamAcc = (this._streamAcc || 0) + dt;
+      if (this._streamAcc > 300) { this._streamAcc = 0; this.streamRecords(); }
     }
 
     // The mixer runs on the AudioContext clock; this only tops its queues up. Each

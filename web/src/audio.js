@@ -36,9 +36,10 @@ export class AudioMixer {
   isMuted(id) { const v = this.voices.get(id); return !!(v && v.muted); }
 
   /**
-   * Browsers only open an AudioContext from a gesture. Adding a Listen node is one,
-   * which is the nicest possible answer: the thing that starts the audio is the same
-   * thing that says audio should exist.
+   * Browsers only open an AudioContext from a gesture. Pressing the speaker on the
+   * transport is one, which is the nicest possible answer: the thing that starts the
+   * audio is the same thing that says audio should exist. (Adding a Listen block by
+   * hand still works and is still a gesture — the button is the short way round.)
    */
   async add(id, atTime, volume = 0.5) {
     if (this.voices.has(id)) return true;
@@ -140,9 +141,22 @@ export class AudioMixer {
 
       const node = this.ctx.createBufferSource();
       node.buffer = buf;
+      // Slowed the way a tape is slowed: the same samples, read out more slowly, so the
+      // pitch comes down with the speed. That is the point rather than a side effect —
+      // a voice at half speed is an octave down and *easier* to follow through noise,
+      // and a pitch-preserving stretch would throw away the thing being listened for.
+      //
+      // `playbackRate` rather than a lower buffer rate, because a buffer's rate has a
+      // floor a browser will refuse below (3 kHz here) and a quarter-speed 8 kHz channel
+      // is under it. This has no floor and is done in the audio thread either way.
+      const speed = Math.max(0.05, engine.speed || 1);
+      node.playbackRate.value = speed;
       node.connect(v.gain);
       node.start(v.next);
-      v.next += buf.duration;
+      // Real seconds this chunk will occupy, which is what the queue is measured in.
+      // `srcT` is *capture* seconds and does not change: the clock is slowed by the same
+      // factor, so the two still advance together and the drift check stays meaningful.
+      v.next += buf.duration / speed;
       v.srcT += frames / got.sampleRate;
     } finally {
       v.busy = false;

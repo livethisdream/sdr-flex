@@ -219,11 +219,14 @@ export class RemoteEngine extends Graph {
     return r.ops.concat(ext.filter((o) => !have.has(o.id)));
   }
 
-  async addNode({ parent, op, selection, at }) {
+  async addNode({ parent, op, selection, at, withNode = null }) {
     const spec = plugins.get(op);
     if (spec) return this._addPluginNode({ parent, op, spec });
     const r = await this.call('addNode', {
-      parent, op, selection,
+      // `withNode` travels. A Math node made from the menu already carries its second
+      // input at creation (ADR-0038) and this call used to drop it, so on a server engine
+      // it arrived with one — which reads as the node having forgotten what you told it.
+      parent, op, selection, withNode,
       at: at != null ? at : this.effectiveTime(parent),
     });
     this._forget();
@@ -362,6 +365,27 @@ export class RemoteEngine extends Graph {
     const live = this.node(nodeId);
     if (r && live) live._records = r;
     return r;
+  }
+
+  /**
+   * Push one chunk of a sink's parent out to the network. Server-side by necessity —
+   * a browser cannot open a UDP socket — and client-driven by choice, because the
+   * clock is the client's (ADR-0029).
+   */
+  async streamPush(nodeId, t0, seconds) {
+    return await this.call('streamPush', { nodeId, t0, seconds });
+  }
+
+  async streamStop(nodeId) {
+    return await this.call('streamStop', { nodeId });
+  }
+
+  /** One block of it. The node keeps nothing: the caller is accumulating. */
+  async runRecordsSpan(nodeId, t0, t1) {
+    const n = this.node(nodeId);
+    if (!n || !(t1 > t0)) return null;
+    if (n.plugin) return this.runPlugin(nodeId);
+    return await this.call('runRecordsSpan', { nodeId, t0, t1 });
   }
 
   /** The decoder runs here; only its input crosses the wire, and that is kilobytes. */

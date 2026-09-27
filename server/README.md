@@ -27,6 +27,7 @@ as they are, and the server is Node's own `http`, `net` and `crypto`. Node 22 or
 | `SDRFLEX_WEB` | `../web` | The client to serve |
 | `SDRFLEX_RINGS` | the system temp directory | Where live recordings are kept |
 | `SDRFLEX_PLUGINS` | `../web/plugins` | Decoders the box offers every tab |
+| `SDRFLEX_SESSIONS` | `<captures>/.sessions` | Saved sessions. Inside the capture directory because that is the directory you mounted — one beside the source tree is one a rebuild deletes. No capture directory, no sessions |
 
 ## In a container, on a tailnet
 
@@ -208,6 +209,146 @@ particular is worth checking first:
   why — and the fix is a scale factor, not a redesign. `iio_attr -u ip:192.168.2.1 -c
   ad9361-phy voltage0` will tell you what the channel actually reports.
 
+## Updating
+
+```sh
+git pull
+SDRFLEX_DOCKERFILE=Dockerfile.full docker compose up -d --build   # whichever image you use
+curl -s localhost:8722/version
+```
+
+**The pull is the step, and leaving it out fails silently.** `docker compose` builds from
+`context: .` — the checkout on the box, not anything on a registry — so a rebuild without
+a pull rebuilds the code that is already there. That succeeds, produces a byte-identical
+image, and compose then has no reason to recreate the container. Nothing is replaced and
+nothing says so: `docker compose ps` still shows the container it showed before, with its
+uptime still counting from whenever it actually started.
+
+That is one of two ways a rebuild appears not to take, and they look nothing alike once
+you know to check:
+
+| | what you see | what happened |
+|---|---|---|
+| **no pull** | no output of note, uptime unchanged | built the same code; nothing to replace |
+| **build failed** | an error, then uptime unchanged | compose leaves the running container alone when the build fails |
+
+Either way the container's age gives it away:
+
+```sh
+docker compose ps                                              # STATUS — "Up 37 hours" is the tell
+docker image inspect sdr-flex:latest --format '{{.Created}}'   # when the image was actually built
+```
+
+And to see a build failure plainly rather than scrolled past, build without starting
+anything:
+
+```sh
+SDRFLEX_DOCKERFILE=Dockerfile.full docker compose build
+```
+
+## Which build is this?
+
+After a rebuild, the question is whether the thing now running is the thing you built.
+The decoder count answers a different question, and answers it the same way before and
+after any change that is not about decoders.
+
+```sh
+curl -s localhost:8722/version
+```
+
+```json
+{ "id": "500de02ecab6", "files": 78, "builtAt": "2026-09-21T01:26:25.742Z", "git": "a77d414" }
+```
+
+The same line is the second thing the server prints at startup, so `docker compose logs`
+has it too, and the browser puts it on the console when the page connects. Press `m` for
+the metrics strip and it is on the end of that row.
+
+**`id` is a hash of the code, not a number somebody bumps.** There is no build step in
+this project and nothing to increment, and a version maintained by hand is wrong exactly
+when it matters — after the change somebody forgot to bump it for. This is a SHA-256 over
+every `.js`, `.mjs`, `.css` and `.html` under `server/` and `web/`, so it changes when and
+only when the code does. Captures and fixtures are data and are not in it: adding a
+capture to the library is not a different build of the tool.
+
+`git` is a hint and not the identity. The image has no `.git` in it at all — it copies
+`web`, `server` and `fixtures` and nothing else — so the field is simply absent there.
+A checkout with uncommitted edits reports a sha describing a tree that is not the one
+running, which is the other reason the hash is what counts.
+
+### If a rebuild seems not to have taken
+
+Ask the machine rather than reasoning about it. On the host, in the checkout that
+`docker compose` builds from:
+
+```sh
+node check-build.mjs                 # or: node check-build.mjs http://box:8722
+```
+
+It checks the three things that have to line up, and says which one is wrong:
+
+| | |
+|---|---|
+| the checkout is current | `git pull` has been the missing step more than once |
+| the build succeeded | `docker compose up -d --build` **leaves the running container alone when the build fails**, so a failed build and a build that did nothing look identical |
+| the container was replaced | an image that rebuilds to the same bytes recreates nothing, which is correct and confusing |
+
+It exits 0 when the running build is this checkout, 1 when it is not, and 2 when nothing
+answered — and when the ids differ it prints the build command to run on its own, so the
+error is the last thing on screen instead of one line in a ten-minute log.
+
+A server with **no `/version` at all** is the same answer in a different shape: it is
+older than the stamp itself, so nothing has replaced it since 2026-09-19.
+
+Then check the decoder line:
+
+```
+[sdr-flex] 9 of 9 external decoders installed: ...
+```
+
+Nine is this version. If it says *of 8*, the container is older than M17 packet mode —
+which is a second, independent way to notice the same thing, and the one that works when
+you only have the log and not a shell.
+
+## Handing a stream to something else
+
+Some programs are not decoders you run, they are places you send things. A ground
+station drawing a drone's flight, a live Wireshark capture, a decoder somebody else
+maintains. Writing a parser for those gets you nothing — their own display is the point.
+
+Add a **Stream out** block to any node and it sends that node's output to a UDP port:
+
+| | |
+|---|---|
+| `to` / `port` | where the decoder is. Default `127.0.0.1:7355` |
+| `format` | `s16`, `cs16`, `cu8`, `cf32`, `f32`, or `raw` |
+| `rate` | what it is resampled to on the way out |
+| `running` | sends while the transport plays |
+
+The defaults are GQRX's — 48 kHz signed 16-bit mono on port 7355 — because that is the
+convention the receiving end already knows:
+
+```sh
+nc -luk 7355 | multimon-ng -t raw -a POCSAG1200 -
+```
+
+**In a container, `127.0.0.1` is the container.** Nothing on your machine is listening
+there. Point `to` at the host: `host.docker.internal` where Docker provides it, or the
+address of the machine running the decoder. This is outbound traffic from the container,
+which the compose file does not restrict — it scopes what can reach *in*, not what can
+go out, so a sink can reach anything the container's network can.
+
+**UDP does not answer**, so the pane counts what left rather than what arrived. A number
+that climbs while the far end stays quiet means the far end. Datagrams are capped under
+a typical MTU so nothing is fragmented, and a chunk is a quarter second, which is two
+dozen datagrams — measured headroom against the ~90 that a receiving socket buffers
+before it starts dropping them silently.
+
+**Nothing comes back.** A sink is where data leaves the graph (ADR-0027), so there is no
+Events pane, no `Identify`, and no golden capture for this path. That is the trade for
+not having to write a parser, and it is why decoders that *are* worth parsing are
+adapters instead.
+
 ## Decoders
 
 Two places a decoder can come from, with deliberately different trust stories:
@@ -245,7 +386,8 @@ program and the decoder appears in the menu wherever its input type fits.
 | dump1090 | IQ | `dump1090`, `dump1090-mutability`, `dump1090-fa` | `dump1090-mutability` | ADS-B |
 | direwolf | audio | `direwolf` | `direwolf` | APRS / AX.25 |
 | minimodem | audio | `minimodem` | `minimodem` | RTTY, Bell 103/202, any N-baud FSK |
-| M17 | audio | `m17-demod` | build it, see below | M17 — 4FSK digital voice and data |
+| M17 | audio | `m17-demod` | build it, see below | M17 stream mode — 4FSK digital voice |
+| M17 packet | symbols | `m17-packet-decode` | build it, see below | M17 packet mode — SMS and data |
 | redsea | the FM composite | `redsea` | build it, see below | RDS — station name, radiotext, program type |
 | LoRa | IQ | a GNU Radio module | see below | LoRa — chirp spread spectrum, SF7 to SF12 |
 
@@ -274,6 +416,40 @@ audio to stdout, and the record says how many seconds of it there were. If you n
 hear it, run `m17-demod` yourself against an exported channel. Carrying decoded audio back
 into the graph is a real gap and not a small one — see
 [ADR-0013](../docs/adr/0013-external-decoders-as-subprocesses.md).
+
+**This is stream mode only.** M17 also has a packet mode — SMS and arbitrary data — and
+nothing in `m17-cxx-demod` reads it. That is the next section, and it is a different
+program from a different upstream.
+
+### M17 packet mode
+
+Two builds, because `m17-packet-decode` links against libm17:
+
+```sh
+sudo apt install libsndfile1-dev cmake gcc make git
+git clone https://github.com/M17-Project/libm17 && cd libm17
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j && sudo cmake --install build && cd ..
+git clone --recursive https://github.com/M17-Project/M17_Implementations
+sudo make -C M17_Implementations/SP5WWP/m17-packet install
+```
+
+**This one does not read samples.** It reads one float per symbol, already on the symbol
+grid, because it correlates for a syncword rather than recovering a clock. So the chain
+has one more node in it than the others do:
+
+> tune the channel → **FM demod** → **Symbol sync** → **M17 packet**
+
+`Symbol sync` is where the sampling instant, the zero level and the scale are decided,
+and it shows all three with the evidence behind them. Its `eye` — quoted in each of
+those — is the number that says whether it worked: near 1 is every symbol dead on a
+level, near 0.5 is a coin toss. If nothing decodes on a burst you can see, try its
+`inverted` first; a receiver that inverts the discriminator turns every symbol upside
+down and M17's syncword does not survive it.
+
+Leave the `Symbol sync` out and nothing errors — the conversion in front of the decoder
+will resample to 4800 S/s and say so — but nothing decodes either, because a resampler
+low-passes and decimates and picks no sampling instant. The decoder says which node is
+missing when that happens.
 
 ### redsea
 
@@ -337,7 +513,8 @@ server starts rather than on the first click. The startup banner says how many d
 are actually here.
 
 The container images do not carry GNU Radio — it is about a gigabyte. A decoder whose
-module is missing is still listed, greyed, naming what to install.
+module is missing is not offered in the operation menu at all; `Identify` names it and
+says what is absent, which is where that belongs (ADR-0039).
 
 An adapter lists more than one binary where the program has more than one name: the
 same dump1090 is `dump1090-mutability` on Debian and `dump1090-fa` from FlightAware, and
@@ -404,7 +581,10 @@ Three things are worth knowing:
   is in `SDRFLEX_ADAPTERS` (below). An adapter is a command line, so a *droppable* one
   would be arbitrary code execution on the box — the same reason dropped plugins run in
   your browser instead.
-- **A missing program is still listed**, greyed, naming what it wants.
+- **A missing program is not in the operation menu** (ADR-0039). `Identify` lists it with
+  the reason, and the startup banner counts it. A *radio driver* whose program is missing
+  is still listed, greyed, naming what it wants — a short explicit list is a different
+  surface from a menu opened over the signal by a gesture.
 
 ### Decoders you added
 
@@ -443,7 +623,7 @@ here:
 SDRFLEX_DOCKERFILE=Dockerfile.full docker compose up -d --build
 ```
 
-Ten to twenty minutes, about 1.9 GB, and the startup banner then says **8 of 8 external
+Ten to twenty minutes, about 1.9 GB, and the startup banner then says **9 of 9 external
 decoders installed**. There are four images and this is the largest of them:
 
 | Image | Has |
@@ -451,7 +631,7 @@ decoders installed**. There are four images and this is the largest of them:
 | `Dockerfile` | Node and this repository, and nothing else |
 | `Dockerfile.decoders` | ...plus the five packaged decoders |
 | `Dockerfile.radio` | ...plus the vendor capture programs |
-| `Dockerfile.full` | ...plus GNU Radio, gr-lora_sdr, m17-cxx-demod, redsea and rx_sdr |
+| `Dockerfile.full` | ...plus GNU Radio, gr-lora_sdr, both M17 builds, redsea and rx_sdr |
 
 Take a smaller one if you know you do not need LoRa, M17, RDS or a Soapy radio — they build
 in seconds, and the four are otherwise the same server.
@@ -469,7 +649,7 @@ Three things about the full image are worth knowing:
   moving a pin is a one-line change and a re-run of `web/test/adapters.test.mjs`.
 - **The build fails rather than the first click.** The last step imports `lora_sdr`, runs
   `m17-demod`, runs `redsea` and looks for `rx_sdr`. A decoder that did not build shows up in this tool
-  as a greyed row in a menu, which is the right behavior at runtime and a terrible way
+  as a decoder that is simply not offered, which is the right behavior at runtime and a terrible way
   to find out that an image is wrong.
 
 The image was checked by running the adapter conformance suite inside it —
@@ -497,6 +677,38 @@ Two things follow that are worth knowing:
   the capture programs above and writing a ring to disk. The driver list is fixed and
   the arguments are built here rather than passed through, so this is not a way to run
   arbitrary commands — but it is a way to use up a dongle and some disk.
+- **Anything that can reach the port can read, write and delete saved sessions.** This is
+  the only thing the server writes on a client's behalf, so it is worth knowing what it
+  is bounded by: one `.json` per session in `SDRFLEX_SESSIONS` and nowhere else, ids that
+  have to match `[a-z0-9-]` before they become a path, and a body over a megabyte refused
+  before it is read. A session holds a graph and a capture's name — no samples.
+
+## Saved sessions
+
+Name the work in the `session` box on the source's parameter bar and press enter, and it
+is kept. `saved sessions…` next to it lists what is there, opens one, or forgets one.
+
+What is stored is a **recipe** and not a result — the nodes, the parameters you turned by
+hand, and which capture — so opening one rebuilds the chain and re-derives every measured
+value against the capture as it is now ([ADR-0042](../docs/adr/0042-a-session-is-a-recipe-somewhere-durable.md),
+[ADR-0017](../docs/adr/0017-auto-manual-parameters.md)). A few kilobytes each. Nothing is
+written until you ask; the name wears an asterisk when the graph has moved since you last
+did.
+
+With this server running they live on the box, so the work follows you between browsers
+and machines. In a tab with no server they live in that browser. Same JSON either way, so
+they are also a `curl` away:
+
+```bash
+curl -s host:8722/sessions | jq                 # what is saved
+curl -s host:8722/sessions/<id> > backup.json   # one of them
+curl -X PUT host:8722/sessions/<id> \
+     -H 'content-type: application/json' -d @backup.json
+```
+
+A live radio cannot be saved — the samples it was reading are gone, and a session that
+can never be opened is worse in a list than one that was refused. Record a ring first and
+save that.
 
 ## Is it working?
 

@@ -25,9 +25,15 @@ export class Strip {
   }
 
   closePop() {
+    // Whatever was waiting to be committed is committed now, because closing is how
+    // somebody says they are finished with it. Cleared first: `commit` re-renders, which
+    // comes back through here, and a draft that commits itself twice renames twice.
+    const p = this._pending;
+    this._pending = null;
     this.pop.hidden = true;
     if (this._openPill) this._openPill.classList.remove('open');
     this._openPill = null;
+    if (p) p.commit(p.value);
   }
 
   render(groups) {
@@ -174,16 +180,50 @@ export class Strip {
         b.addEventListener('click', () => this.openPop(gk, b.dataset.k, anchor));
       }
     }
+    this._place(anchor);
+  }
+
+  /**
+   * Keep an open popover open across a re-render of the strip.
+   *
+   * Two things were wrong here and they compounded.
+   *
+   * **A folded control has no pill**, so looking one up by key found nothing and this
+   * closed the popover. `min` and `max` fold at every width anybody actually uses, so
+   * adjusting either one closed the control that was adjusting it — which is what the
+   * bug looked like from outside: the slider vanishes the moment you move it. The
+   * anchor for a folded control is its group's `more` chip, which is where it was
+   * opened from.
+   *
+   * **And the contents must not be rebuilt.** Re-running `openPop` replaces the range
+   * input the pointer is currently dragging, and a native drag does not survive its
+   * element being swapped: the popover would stay on screen and stop following the
+   * mouse, which is a worse bug than the one being fixed because it looks like the
+   * control working. So this re-anchors and repositions, and nothing else — `commit`
+   * already keeps the readout current, and the only other thing that can change
+   * underneath is the auto button, which is set here directly.
+   */
+  _reopen(k) {
+    const anchor = this.el.querySelector(`.pill[data-g="${k.g}"][data-k="${k.k}"]`)
+                || this.el.querySelector(`.pill.more[data-g="${k.g}"]`);
+    if (!anchor) { this.closePop(); return; }
+    if (this._openPill) this._openPill.classList.remove('open');
+    this._openPill = anchor;
+    anchor.classList.add('open');
+    const spec = this._find(k.g, k.k);
+    const ab = this.pop.querySelector('[data-act=auto]');
+    if (ab && spec) ab.classList.toggle('on', this._mode(spec) === 'auto');
+    const note = this.pop.querySelector('.popnote');
+    if (note && spec && spec.autoNote) note.hidden = this._mode(spec) === 'manual';
+    this._place(anchor);
+  }
+
+  /** Above the thing it belongs to, and on screen. */
+  _place(anchor) {
     const r = anchor.getBoundingClientRect();
     const pr = this.pop.getBoundingClientRect();
     this.pop.style.left = Math.max(8, Math.min(r.left, innerWidth - pr.width - 8)) + 'px';
     this.pop.style.top = Math.max(8, r.top - pr.height - 8) + 'px';
-  }
-
-  _reopen(k) {
-    const pill = this.el.querySelector(`.pill[data-g="${k.g}"][data-k="${k.k}"]`);
-    if (pill) this.openPop(k.g, k.k, pill, true);
-    else this.closePop();
   }
 
   openPop(gk, key, pill, keepPosition) {
@@ -206,6 +246,16 @@ export class Strip {
       const label = (v) => (spec.fmt ? spec.fmt(v) : v);
       body = `<div class="popopts">${spec.values.map((v) =>
         `<button class="opt${String(v) === String(spec.value) ? ' on' : ''}" data-v="${v}">${label(v)}</button>`).join('')}</div>`;
+    } else if (spec.type === 'multi') {
+      // A set, not a choice. The valid members are a fixed list the program itself
+      // publishes, so typing them was asking somebody to remember two dozen
+      // case-sensitive names and a separator — and getting either wrong produced no
+      // decode and a usage message about sample rates.
+      const on = new Set(String(spec.value || '').trim().split(/\s+/).filter(Boolean));
+      body = `<div class="popopts multi">${spec.values.map((v) =>
+        `<button class="opt${on.has(v) ? ' on' : ''}" data-m="${v}">` +
+        `<i class="tick">${on.has(v) ? '✓' : ''}</i>${spec.fmt ? spec.fmt(v) : v}</button>`).join('')}</div>` +
+        (spec.hint ? `<div class="popnote">${spec.hint}</div>` : '');
     } else if (spec.type === 'text') {
       // A sync word is something you know and type, not something you slide to. It
       // had been falling through to the numeric control, which put a range slider
@@ -238,12 +288,40 @@ export class Strip {
       if (out) out.textContent = (s.fmt ? s.fmt(v) : v) + (s.unit ? ' ' + s.unit : '');
     };
 
-    for (const b of this.pop.querySelectorAll('.opt')) {
+    for (const b of this.pop.querySelectorAll('.opt[data-v]')) {
       b.addEventListener('click', () => { commit(b.dataset.v); this.closePop(); });
+    }
+    // A multi-select stays open: picking three of something is three clicks, and a
+    // popover that closed after each one would be three trips back to the pill.
+    for (const b of this.pop.querySelectorAll('.opt[data-m]')) {
+      b.addEventListener('click', () => {
+        const chosen = [...this.pop.querySelectorAll('.opt[data-m].on')].map((x) => x.dataset.m);
+        const next = b.classList.contains('on')
+          ? chosen.filter((v) => v !== b.dataset.m)
+          : chosen.concat(b.dataset.m);
+        // Kept in the order the list offers them rather than the order they were
+        // clicked, so the same set always reads the same way.
+        const ordered = spec.values.filter((v) => next.includes(v));
+        b.classList.toggle('on');
+        b.querySelector('.tick').textContent = b.classList.contains('on') ? '✓' : '';
+        commit(ordered.join(' '));
+      });
     }
     const text = this.pop.querySelector('.poptext input');
     if (text) {
-      text.addEventListener('input', () => commit(text.value));
+      // Two kinds of text, and the difference is whether a half-typed value means
+      // anything. A sync word does: every character narrows the framing and you watch it
+      // happen, so it commits as you type. A *name* does not — committing "t", "th",
+      // "the" saves three times and calls the work "th" twice on the way. So a spec can
+      // ask to be committed when the person says they are finished, which is Enter or
+      // clicking away, and this holds the draft in the meantime.
+      const onEnter = spec.commit === 'enter';
+      if (onEnter) {
+        this._pending = { gk, key, value: text.value, commit };
+        text.addEventListener('input', () => { this._pending.value = text.value; });
+      } else {
+        text.addEventListener('input', () => commit(text.value));
+      }
       text.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.closePop(); });
       // the caret belongs here the moment it opens; there is nothing else to do in it
       setTimeout(() => { text.focus(); text.select(); }, 0);
@@ -275,13 +353,7 @@ export class Strip {
       });
     }
 
-    if (!keepPosition) {
-      const r = pill.getBoundingClientRect();
-      const pr = this.pop.getBoundingClientRect();
-      const left = Math.max(8, Math.min(r.left, innerWidth - pr.width - 8));
-      this.pop.style.left = left + 'px';
-      this.pop.style.top = Math.max(8, r.top - pr.height - 8) + 'px';
-    }
+    if (!keepPosition) this._place(pill);
   }
 }
 

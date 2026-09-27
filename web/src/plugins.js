@@ -91,12 +91,37 @@ export async function restore() {
   return out;
 }
 
+/**
+ * The stream kinds a plugin may read, and the one it may produce.
+ *
+ * `in` is open because the engine can hand over any of these: samples off a `readSpan`,
+ * bytes off a slicer, or whichever the parent happens to be for a plugin that takes `*`.
+ *
+ * `out` is not, and the limit is real rather than cautious. A plugin returns *records* —
+ * that is what `decode` gives back and what the events pane draws. A manifest declaring
+ * `out: 'real'` is declaring itself a stage in the chain, which means everything
+ * downstream would read its samples through `readSpan`, on demand, cached, on the
+ * engine's clock. Nothing routes a read through a JS function today, so such a node
+ * would be built, appear in the menu, and produce nothing — which is the failure this
+ * whole change is fixing, reintroduced one level up. Refused at load, where the author
+ * can read the reason.
+ */
+export const PLUGIN_IN = ['iq', 'real', 'bytes', '*'];
+export const PLUGIN_OUT = ['events'];
+
 function validate(m, where) {
   const bad = (why) => { throw new Error(`${where}: ${why}`); };
   if (!m || typeof m !== 'object') bad('no manifest export');
   if (!m.id || !/^[\w.]+$/.test(m.id)) bad('manifest.id must be a word like "ext.bbc"');
   if (!m.name) bad('manifest.name is required — it is what the menu shows');
   if (!m.in || !m.out) bad('manifest.in and manifest.out name the stream types it sits between');
+  if (!PLUGIN_IN.includes(m.in)) {
+    bad(`manifest.in is "${m.in}"; a plugin reads one of ${PLUGIN_IN.join(', ')}`);
+  }
+  if (!PLUGIN_OUT.includes(m.out)) {
+    bad(`manifest.out is "${m.out}"; a plugin returns records, so it is "events" — ` +
+        'a stage that produces a stream is not something this can run yet');
+  }
   for (const p of m.params || []) {
     if (!p.id) bad('every param needs an id');
     if (p.default === undefined) bad(`param ${p.id} has no default; a plugin has to arrive usable`);
@@ -140,6 +165,53 @@ export async function loadAll(sources) {
   return out;
 }
 
+/**
+ * The decoders that ship with the client, loaded from wherever the client is served.
+ *
+ * A box hands these over on the socket (`listPlugins`) because it can scan its own
+ * directory. A static host cannot: there is no directory listing over HTTP, so the files
+ * are named in `plugins/index.json` next to them and fetched one at a time.
+ *
+ * Without this the hosted copy of the tool served `plugins/bbc.js` to anyone who asked
+ * for it by name and never asked for it — a decoder sitting in the deployed directory,
+ * runnable entirely in the tab, that nothing ever loaded. It is also the only decoder a
+ * tab with no box has, which is what made `Identify` look like it had been removed.
+ *
+ * A manifest that names a file that is not there is one decoder missing, not a failed
+ * load: the rest still come back, and the failure is reported the way a bad drop is.
+ */
+export async function loadSite(base = 'plugins', fetchFn = null) {
+  const f = fetchFn || globalThis.fetch;
+  const out = { loaded: [], failed: [] };
+  if (!f) return out;
+  let names;
+  try {
+    const res = await f(`${base}/index.json`);
+    if (!res.ok) return out;
+    names = (await res.json()).plugins;
+  } catch {
+    // No manifest is the ordinary case for a box, which never looks here, and for a
+    // deployment that ships no decoders. It is not an error and does not get reported
+    // as one.
+    return out;
+  }
+  for (const name of Array.isArray(names) ? names : []) {
+    if (typeof name !== 'string' || name.includes('/') || !name.endsWith('.js')) {
+      out.failed.push({ filename: String(name), error: 'not a plugin filename' });
+      continue;
+    }
+    if ([...registry.values()].some((p) => p.filename === name)) continue;
+    try {
+      const res = await f(`${base}/${name}`);
+      if (!res.ok) throw new Error(`the server answered ${res.status}`);
+      out.loaded.push(await loadSource(await res.text(), name));
+    } catch (err) {
+      out.failed.push({ filename: name, error: err.message });
+    }
+  }
+  return out;
+}
+
 /** Plugins that can sit after a node of this stream kind. */
 export function forKind(kind) {
   return loaded().filter((p) => p.in === '*' || p.in === kind);
@@ -151,12 +223,16 @@ export function forKind(kind) {
  * rather than an exception — a decoder that fails on this packet is a result, not a
  * crash, and the whole point is to try several.
  */
-export function run(id, bytes, params) {
+export function run(id, data, params, info = null) {
   const p = registry.get(id);
   if (!p) return { records: [], error: `plugin ${id} is not loaded` };
   const t0 = performance.now();
   try {
-    const out = p.decode(bytes, params || {}) || [];
+    // A third argument rather than a different signature: `decode(bytes, params)` is
+    // what every plugin written so far takes, and a decoder that does not care what it
+    // is reading should not have to say so. One that does — anything on samples, which
+    // cannot do arithmetic on time without knowing the rate — reads it from here.
+    const out = p.decode(data, params || {}, info || {}) || [];
     const records = (Array.isArray(out) ? out : [out]).map((r) =>
       typeof r === 'string' ? { text: r } : r);
     return { records, ms: performance.now() - t0 };

@@ -67,3 +67,26 @@ export function firstOpNamed(key) {
   const wanted = HOTKEYS[key];
   return wanted ? wanted[0] : null;
 }
+
+/**
+ * With the menu open, does this keystroke belong to a row or to the search box?
+ *
+ * The two features were each right on their own and wrong together. The menu draws the
+ * key on every row it applies to — `press f to add this` — because a shortcut shown on
+ * the row you were about to click is learned by the third time you click it. And every
+ * printable key belonged to the search box, so `f` could not mean both "FM demod" and
+ * "type an f". Between them the menu advertised a key and then swallowed it, which is
+ * indistinguishable from the hotkeys not working, and is what somebody reported it as.
+ *
+ * A row wins only while nothing has been typed. After that the letters are a search
+ * again, which is the case the old rule was protecting and which still holds — and `/`
+ * always asks for the box, because that is the one key whose whole job is to.
+ *
+ * `keys` is what the rows are actually offering, not the whole table: a key for an
+ * operation that is not valid here should reach the search box like any other letter.
+ */
+export function menuTakesKey(key, { filter = '', keys = [] } = {}) {
+  if (typeof key !== 'string' || key.length !== 1) return false;
+  if (key === '/' || filter) return false;
+  return keys.includes(key);
+}

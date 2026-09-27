@@ -1,0 +1,8 @@
+{
+  "name": "A screen leaking, with everything that makes one hard",
+  "why": "The clean raster fixture proves the fold. This one proves the three things a real leak adds and the clean one leaves out: a pixel-clock harmonic folded back into the passband, which correlates with itself better than the picture does; a fractional number of samples in a line; and frames that walk apart, so that stacking them where they are predicted to be makes the picture worse the more of them you add.",
+  "capture": "capture.sigmf-data",
+  "chain": [{ "op": "core.raster" }],
+  "expect": { "noError": true },
+  "note": "The chain ends in a grid, so the assertions live in web/test/tempest.test.mjs. This entry exists so the capture is regenerated, size-checked and licensed with the rest."
+}

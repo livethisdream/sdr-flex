@@ -521,6 +521,69 @@ export function rasterScan(image, {
   return { signal: out, lineN, frameLines, frames, width, height };
 }
 
+/**
+ * The same raster, as a receiver actually sees one.
+ *
+ * `rasterScan` is the clean case: one sample per pixel, a whole number of them per line,
+ * every frame identical. A leak off a real monitor is none of those, and each difference
+ * breaks something different:
+ *
+ * - **The pixel clock is in the envelope.** What leaks is a harmonic of it, and at any
+ *   sane sample rate that harmonic folds back into the passband — on the capture this was
+ *   built to imitate, a 25.175 MHz clock at 20 Msps landed at 5.175 MHz, a quarter of the
+ *   sample rate, about four samples a cycle. It correlates with itself far better than
+ *   the picture correlates with itself, so a period search that does not deal with it
+ *   finds the pixel clock instead of the line.
+ * - **A line is not a whole number of samples.** Nothing locks the monitor's clock to the
+ *   receiver's, so the ratio is whatever it is.
+ * - **The frames walk, and they do not walk straight.** Same reason, one level up: the
+ *   frame period is fractional too, so the error accumulates and the tenth frame is not
+ *   where the first one was. The steady part of that is absorbed by measuring the line
+ *   period across a whole frame — it is the same error, seen from further away. What is
+ *   left is the part no period can absorb: a clock that is not disciplined to anything
+ *   wanders, and `jitter` is how far a frame lands from where the drift said it would.
+ *
+ * Keep the defaults and the sample rate never appears: everything is in samples per
+ * pixel, which is the only ratio that matters.
+ */
+export function rasterLeak(image, {
+  width, height, hBlank = 16, vBlank = 6, samplesPerPixel = 3.77, frames = 10,
+  walkPerFrame = 0.6, jitter = 1.5, harmonic = 14, clockDepth = 1, seed = 0x51ea,
+  noise = 0.08, amplitude = 0.5, pedestal = 0.15,
+}) {
+  const linePixels = width + hBlank;
+  const framePixels = linePixels * (height + vBlank);
+  const frameSamples = framePixels * samplesPerPixel;
+  const n = Math.floor(frameSamples * frames);
+  const rand = rng(seed);
+  const out = new Float32Array(n);
+
+  // Where each frame actually lands: the drift, plus the part of it that is not a drift.
+  const offset = new Float32Array(frames + 1);
+  for (let f = 0; f <= frames; f++) offset[f] = f * walkPerFrame + (rand() - 0.5) * 2 * jitter;
+
+  for (let i = 0; i < n; i++) {
+    // Where this sample falls in the picture, with the frames walking apart as they go.
+    const f = Math.min(frames, Math.floor(i / frameSamples));
+    const pos = (i - f * frameSamples + offset[f]) / samplesPerPixel;
+    const within = ((pos % framePixels) + framePixels) % framePixels;
+    const y = Math.floor(within / linePixels);
+    const x = within - y * linePixels;
+    const on = y < height && x < width ? image[y * width + Math.floor(x)] : 0;
+
+    // The harmonic, phase-locked to the pixel clock because that is what it is a harmonic
+    // of, riding on the video the way an AM envelope does. It is above the sample rate and
+    // folds back, and that is where the trouble comes from: a line is a whole number of
+    // *pixels*, so the harmonic is in step with it in continuous time — but it is a
+    // fractional number of *samples*, so at the integer lags a correlation can look at,
+    // the folded harmonic is not in step with it at all.
+    const clock = 1 + clockDepth * Math.cos(2 * Math.PI * harmonic * pos);
+    out[i] = (pedestal + on * amplitude) * clock + (rand() - 0.5) * noise;
+  }
+  return { signal: out, linePixels, frameLines: height + vBlank, frames, width, height,
+           samplesPerLine: linePixels * samplesPerPixel, samplesPerPixel, offset };
+}
+
 /** The same five-row font, rendered into a bitmap rather than a resource grid. */
 export function bitmapText(text, { width = 96, height = 64, scale = 4 } = {}) {
   const rows = gridText(text, { fftN: width, blank: 0, pad: scale, wide: scale });

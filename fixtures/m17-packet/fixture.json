@@ -1,0 +1,44 @@
+{
+  "name": "M17 packet mode, through a symbol sync",
+  "why": "The only chain whose decoder does not read samples. m17-packet-decode wants one float per symbol, already on the symbol grid, because it correlates for a syncword rather than finding a clock — so between the discriminator and it there has to be a node that decides where in each symbol period to look. Hand it samples instead and the conversion in front of it resamples 48 kS/s down to 4800, which low-passes and decimates and picks no instant at all; the decode then fails by finding nothing, which is the failure mode this whole suite exists to catch. It also pins the other half of M17: stream mode and packet mode are two programs from two different upstreams, and the capture for one decodes as nothing under the other.",
+  "capture": "capture.sigmf-data",
+  "needs": "ext.m17_packet",
+  "chain": [
+    {
+      "op": "core.tuner",
+      "selection": { "f0": 144788000, "f1": 144812000 }
+    },
+    { "op": "core.fm_discriminator" },
+    { "op": "core.symbols" },
+    { "op": "ext.m17_packet", "params": { "callsigns": "decode", "errorfree": "no" } }
+  ],
+  "expect": {
+    "records": 1,
+    "noError": true,
+    "fieldContains": {
+      "text": ["sdr-flex packet mode fixture"],
+      "src": ["AB1CDE"],
+      "dest": ["N0CALL"]
+    },
+    "everyRecord": {
+      "payloadCrc": "^match$"
+    },
+    "note": "One packet, one record. The payload CRC travels on the record rather than being checked and thrown away, because 'decoded' and 'decoded and the CRC agreed' are different claims and ADR-0031 is about not conflating them."
+  },
+  "derive": [
+    {
+      "node": 2,
+      "param": "phase",
+      "mode": "auto",
+      "confident": true,
+      "evidence": "eye"
+    },
+    {
+      "node": 2,
+      "param": "gain",
+      "mode": "auto",
+      "confident": true,
+      "evidence": "±3"
+    }
+  ]
+}

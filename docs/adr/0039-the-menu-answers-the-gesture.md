@@ -14,6 +14,7 @@ earning its space, and this says what replaces both.
 | on `iq` | 18 | 6 | 15 rows, 6 headings, **500 px** |
 | on `real` | 15 | 7 | — |
 | on `iq`, with the eight adapters installed | 19 | 6 | **582 px** |
+| on `iq`, with none installed, once they are hidden | 14 | 6 | — |
 | on `bits` | 2 | 2 | — |
 
 500 px is **69% of the height of a 720 px laptop viewport**, at the cursor, over the
@@ -69,15 +70,64 @@ does it answer a question beside it?**
 - **Second tier — everything else.** An analyzer that draws a picture instead of producing
   a stream (hop map, OFDM grid, raster, burst detector); the arithmetic
   ([ADR-0038](0038-a-node-may-have-two-inputs.md)'s math, gain and conversion, which are
-  deliberate and rarely the answer to a fresh box); export; and anything whose program is
-  not installed.
+  deliberate and rarely the answer to a fresh box); and export.
 
-The last one is worth stating plainly because it looks like a reversal and is not.
-[ADR-0013](0013-external-decoders-as-subprocesses.md) says a decoder whose program is
-missing stays listed, greyed, naming what to install — and that stays true. It says
-nothing about *altitude*. A row you cannot click is information about the box you are on;
-it is not an answer to "what do you want to do with this", and it should not be taking a
-line above one that is.
+## A decoder whose program is not installed is not in the menu at all
+
+Not greyed in the second tier — absent. The menu answers "what do you want to do with
+this", and a decoder that cannot run is not an available answer at any altitude.
+
+**This overturns a convention, not a decision, and the distinction matters.** An earlier
+draft of this ADR said [ADR-0013](0013-external-decoders-as-subprocesses.md) requires a
+missing program to stay listed. It does not — ADR-0013 is about the subprocess mechanism,
+opacity, isolation and licensing, and says nothing about the menu. The greyed-row rule
+lives in `docs/10-adding-a-decoder.md`, `server/README.md` and `docs/04-plugins.md`: three
+pieces of documentation describing a behaviour nobody ever argued for. It is being changed
+here rather than quietly, and those three pages change with it.
+
+**The obligation it was protecting is real and is met elsewhere.** You cannot install what
+you do not know exists, and this tool's coverage story is "250 protocols, through
+`rtl_433`" — a box without `rtl_433` must not silently be a worse tool with no way to find
+out. Two surfaces already carry that, and both are better than a dead menu row:
+
+- **`Identify` names every decoder it could not try**, with the reason, and has since it
+  was written ([ADR-0031](0031-identify-says-what-it-will-not-claim.md)) — "nothing
+  decoded this" and "nothing that could decode this was tried" are different answers, and
+  the report keeps them apart. `identify.js` pushes `<command> is not installed on this
+  machine` onto `skipped`, `identview.js` renders it, and a test pins it. That is the right
+  place: you asked what this signal is, and the honest answer includes what was missing.
+- **The server says so at startup**, as a count of how many of the table it found.
+
+So the discovery path is not being removed. It is being moved off the surface that answers
+a different question.
+
+**The radio picker keeps the old behaviour, and the reason is written down there.**
+`server/README.md` makes the argument for it: a driver whose capture program is missing
+stays listed, greyed, saying what it wants, because "that is a five-second problem, and a
+menu that hides the option instead is a twenty-minute one." That is right, and it is right
+*because of the surface*. Choosing a radio is a short explicit list of eight things you
+are deliberately browsing; "rtl-sdr — needs rtl_sdr" is the sentence you needed. The
+operation menu is eighteen rows over the signal, opened by a gesture, answering a
+different question. The same behaviour is correct in one and clutter in the other, and
+this ADR changes only the second.
+
+**One case is not the same** and is deliberately left as it is: a decoder *you* added,
+through `SDRFLEX_ADAPTERS`, whose program is missing. You wrote that manifest and expected
+it to run, so its absence is a mistake to be told about rather than a capability you have
+not discovered — and silence is the wrong answer to a mistake. The server already reports
+adapter load failures at startup; if a pack that loads but cannot run turns out to be
+silent, that is a gap to close there and not a reason to put dead rows back in the menu.
+
+## "Not installed" and "not built yet" are different, and have been sharing a badge
+
+`palette()` sets `stub: !available` on an adapter whose program is missing, and `OPS` sets
+`stub: true` on `core.burst_detector`, the one built-in operation that is not written. The
+menu renders `<span class="soon">M4</span>` for both — so a machine without `rtl_433` is
+told that rtl_433 arrives in a future milestone.
+
+They are not the same state and they do not have the same remedy. One is `apt install
+rtl-433`; the other is waiting for us. With uninstalled decoders gone from the menu
+entirely, `stub` goes back to meaning only the second, and `M4` becomes true again.
 
 ## Why the order is not derived from the signal
 
@@ -126,8 +176,7 @@ things; the problem is fifteen of them, not their length.
   this shape and also a reason not to over-invest: the fastest path through the menu is
   increasingly not through the menu.
 - **A plugin or a local adapter has no rank**, because it is not in our catalog. It goes in
-  the second tier — the same place an uninstalled decoder goes — with the same reasoning:
-  it may well be what you want, and it is not what you want *by default*.
+  the second tier: it may well be what you want, and it is not what you want *by default*.
 - **The fold does not persist.** An expansion that remembers is a preference nobody set,
   and it would put the menu in a different state depending on what you did five minutes
   ago, which is the muscle-memory problem again in a smaller form.

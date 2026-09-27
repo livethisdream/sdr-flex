@@ -89,6 +89,13 @@ export function ownDelaySamples(node, parentOut) {
     case 'core.gain':
       return 0;
 
+    // Its matched filter is centred, and the sampling instant it then picks is named by
+    // an absolute index rather than by an offset into a window — so a symbol is the
+    // moment it was sampled at and nothing has been shifted. Zero at its own rate, which
+    // is a symbol rate; the resampling is a change of clock, not a delay.
+    case 'core.symbols':
+      return 0;
+
     default:
       // A node that does not carry a stream has no delay worth the word: a slicer emits
       // bits, a decoder emits records, and neither is something anything else lines up

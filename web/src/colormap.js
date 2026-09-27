@@ -7,8 +7,8 @@
 // is the one map built the other way round, for anyone who wants a light plot too —
 // it is the choice, and the plot follows it rather than following the theme.
 const STOPS = {
-  Viridis: [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]],
   Inferno: [[0,0,4],[87,16,110],[188,55,84],[249,142,9],[252,255,164]],
+  Viridis: [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]],
   Magma:   [[0,0,4],[81,18,124],[183,55,121],[252,137,97],[252,253,191]],
   Cividis: [[0,32,76],[60,84,136],[124,123,120],[192,168,98],[255,221,41]],
   Paper:   [[252,252,253],[186,206,222],[104,150,186],[42,80,132],[14,22,46]],
@@ -21,7 +21,7 @@ const STOPS = {
  * waterfall and the rows below it sit on one continuous surface.
  */
 export function floorColor(name) {
-  const c = (STOPS[name] || STOPS.Viridis)[0];
+  const c = (STOPS[name] || STOPS[DEFAULT_COLORMAP])[0];
   return { rgb: `rgb(${c[0]},${c[1]},${c[2]})`, r: c[0], g: c[1], b: c[2],
            // Rec. 709 luma, which is close enough to decide black text or white
            lum: (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255 };
@@ -29,9 +29,25 @@ export function floorColor(name) {
 
 export const COLORMAPS = Object.keys(STOPS);
 
+/**
+ * The one named here, and the one every fallback below reaches for.
+ *
+ * It was a literal in four places — three fallbacks in this file, the waterfall's own
+ * constructor, and the viewport's defaults — and changing "the default colormap" meant
+ * finding all five. One of them was missed, so the waterfall was built Viridis and only
+ * became Inferno when something happened to set it.
+ *
+ * Inferno rather than Viridis, for a reason particular to a waterfall: its dark end is
+ * nearly black, so an empty waterfall reads as empty and the first thing that is not
+ * black is a signal. Viridis starts on a distinctly purple floor that a weak carrier has
+ * to out-shout. Both are perceptually uniform and colorblind-safe, which is what usually
+ * decides this and does not separate them here.
+ */
+export const DEFAULT_COLORMAP = 'Inferno';
+
 /** 256-entry RGB lookup table as Uint8Array(256*3). */
 export function lut(name) {
-  const s = STOPS[name] || STOPS.Viridis;
+  const s = STOPS[name] || STOPS[DEFAULT_COLORMAP];
   const out = new Uint8Array(256 * 3);
   for (let i = 0; i < 256; i++) {
     const x = (i / 255) * (s.length - 1);
@@ -43,6 +59,6 @@ export function lut(name) {
 }
 
 export function cssGradient(name) {
-  const s = STOPS[name] || STOPS.Viridis;
+  const s = STOPS[name] || STOPS[DEFAULT_COLORMAP];
   return `linear-gradient(to top, ${s.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(',')})`;
 }

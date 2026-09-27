@@ -29,6 +29,10 @@ import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { resample } from '../web/src/export.js';
 
+// Color, for a terminal. Two of these programs draw their report rather than print it,
+// and what arrives here is the drawing.
+const ANSI = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g');
+
 /**
  * `wants` is the format and rate the program needs on stdin. `args` builds its command
  * line. `parse` turns its stdout into records. `params` are the knobs worth exposing —
@@ -104,24 +108,56 @@ export const ADAPTERS = {
     blurb: 'POCSAG, FLEX, AFSK, DTMF, ZVEI and more',
     // multimon-ng is fixed at 22.05 kHz signed 16-bit mono, and says so if you disagree
     wants: { format: 's16', rate: 22_050 },
+    // A set chosen from a list, not a string somebody types.
+    //
+    // It was a text field, and the two ways anybody would naturally fill one in both
+    // fail: `DTMF,FLEX` — commas, the obvious separator — and any misremembered name
+    // make multimon-ng exit 2, and what it prints on the way out is the tail of its
+    // usage message, which talks about sample rates. So a typo reads as a rate problem
+    // and the field looks like it does not work. It did work; it was unusable.
+    //
+    // The valid members are fixed, finite, case-insensitive and published by the program
+    // itself, which is the definition of a list to pick from.
     params: [
-      { id: 'modes', type: 'text', default: 'POCSAG512 POCSAG1200 POCSAG2400',
-        label: 'demodulators', placeholder: 'POCSAG1200 FLEX AFSK1200 DTMF MORSE_CW',
-        hint: 'space-separated: POCSAG512/1200/2400, FLEX, AFSK1200/2400, FSK9600, ' +
-              'DTMF, MORSE_CW, ZVEI1/2/3, EAS, X10. Each one costs CPU, so it is a ' +
-              'list rather than everything' },
+      { id: 'modes', type: 'multi', default: 'POCSAG512 POCSAG1200 POCSAG2400',
+        label: 'demodulators', values: () => multimonDemods(),
+        hint: 'each one costs CPU, so this is a list rather than everything' },
     ],
     // What "try everything" means here. `Identify` asks each adapter for the settings
     // that make it cast the widest net it usefully can, because only the adapter knows:
     // for multimon-ng that is a long -a list, each entry costing CPU, which is exactly
     // the trade a speculative pass should make and a default should not.
-    sweep: { modes: 'POCSAG512 POCSAG1200 POCSAG2400 FLEX AFSK1200 AFSK2400 FSK9600 ' +
-                    'DTMF MORSE_CW ZVEI1 EAS X10' },
-    args: ({ params }) => [
-      '-t', 'raw',
-      ...String(params.modes || 'POCSAG1200').trim().split(/\s+/).filter(Boolean).flatMap((m) => ['-a', m]),
-      '-',
-    ],
+    //
+    // Not everything the binary has, though the control above now offers everything.
+    // A speculative pass is judged on its false positives, and the tone demodulators
+    // multimon-ng ships (the ZVEI/EEA/EIA/CCIR selcall family) emit a record per tone
+    // they think they heard, so they print on noise. Measured: with the full list, the
+    // `manchester-crc` fixture — a single symbol out of noise, nothing multimon-ng
+    // decodes — came back with four non-thin records. Curated, it comes back empty,
+    // which is the true answer. The list below is the demodulators that need a framed,
+    // checksummed packet before they will say anything, plus DTMF and MORSE_CW, which
+    // are the two tone decoders worth the risk because a person actually sweeps for
+    // them. Intersected with what this build has, so it never names one the binary
+    // lacks.
+    sweep: () => {
+      const have = new Set(multimonDemods());
+      return { modes: SWEEP_DEMODS.filter((m) => have.has(m)).join(' ') };
+    },
+    args: ({ params }) => {
+      const have = new Set(multimonDemods());
+      // Filtered against what the binary actually has. It cannot come from the control
+      // any more, but a graph saved on a box with a newer multimon-ng can still name
+      // FLEX_NEXT at one that has not got it — and losing that one demodulator is a
+      // better outcome than the alternative, which is multimon-ng exiting 2 and decoding
+      // none of the others either.
+      const want = String(params.modes || 'POCSAG1200').trim().split(/\s+/)
+        .filter((m) => have.has(m.toUpperCase()));
+      return [
+        '-t', 'raw',
+        ...(want.length ? want : ['POCSAG1200']).flatMap((m) => ['-a', m]),
+        '-',
+      ];
+    },
     // multimon-ng prints an AX.25 packet as two lines — "AFSK1200: fm N0CALL-0 to
     // APRS-0 UI  pid=F0" and then the payload on its own. Read as plain lines that is
     // two records, one of which is a header with no message and one a message with no
@@ -323,7 +359,7 @@ export const ADAPTERS = {
   'ext.m17': {
     name: 'M17', group: 'Decode', in: 'real', out: 'events',
     command: ['m17-demod'],
-    blurb: 'M17 — 4FSK digital voice and data',
+    blurb: 'M17 stream mode — 4FSK digital voice',
     // M17 is 4FSK at 4800 symbols a second, and its decoder wants the discriminator
     // output rather than IQ — so this goes after an FM demod, the way direwolf does.
     wants: { format: 's16', rate: 48_000 },
@@ -360,16 +396,148 @@ export const ADAPTERS = {
       }
       // A transmission with no link setup in the span is still a transmission, and an
       // empty report would say the opposite.
+      //
+      // `outBytes` is decoded *voice*, 8 kHz signed 16-bit, so this is seconds of speech
+      // and nothing else. It used to be quoted whether or not any came out, which on a
+      // packet-mode burst read "0.0 s of voice decoded" — a true statement about the
+      // wrong mode, and a confident one, which is the worst way to be unhelpful. M17
+      // packet mode is `ext.m17_packet` and a different program entirely; this one
+      // cannot read it, so it says so rather than measuring voice that was never there.
       const seconds = (meta.outBytes || 0) / 2 / 8000;
-      if (!out.length && seconds > 0.05) {
-        return { records: [], note: `${seconds.toFixed(1)} s of voice decoded, but no link ` +
-                                    'setup frame in this span — widen it to catch the start' };
+      if (!out.length) {
+        return { records: [], note: seconds > 0.05
+          ? `${seconds.toFixed(1)} s of voice decoded, but no link setup frame in this ` +
+            'span — widen it to catch the start'
+          : 'nothing decoded. This reads M17 stream mode; a packet-mode burst (SMS or ' +
+            'data) is M17 packet, which reads symbols and needs a Symbol sync in front of it' };
       }
       if (out.length && seconds > 0.05) {
         // Said rather than dropped: the voice is real and this node does not carry it.
         out[0].voiceS = +seconds.toFixed(2);
       }
       return out;
+    },
+    title: ['text'],
+  },
+
+  // M17 again, and the half `ext.m17` cannot do.
+  //
+  // M17 has two modes and they are decoded by two different programs from two different
+  // upstreams. Stream mode carries voice and `m17-demod` (mobilinkd/m17-cxx-demod) reads
+  // it. Packet mode carries SMS and arbitrary data, and nothing in m17-cxx-demod reads it
+  // at all — `m17-packet-decode` is from M17-Project/M17_Implementations, which is a
+  // separate build. The blurb on the other node said "voice and data" and the data half
+  // was never there.
+  //
+  // What makes this one different from every other adapter here: it does not take
+  // samples. It takes one float per symbol, already on the symbol grid, because its
+  // syncword correlator expects them that way — which is why `core.symbols` exists and
+  // why this is the one decoder with a node it has to sit behind. Given samples instead,
+  // the conversion in front of it will resample 48 kS/s down to 4800 and say so, and the
+  // decode will find nothing: a resampler low-passes and decimates, it does not pick a
+  // sampling instant.
+  'ext.m17_packet': {
+    name: 'M17 packet', group: 'Decode', in: 'real', out: 'events',
+    command: ['m17-packet-decode'],
+    blurb: 'M17 packet mode — SMS and data, from symbols',
+    // One float per symbol at M17's 4800 symbols a second. Not a preference: the program
+    // reads a symbol per sample and correlates for the syncword, so a different rate is
+    // a different protocol as far as it is concerned.
+    wants: { format: 'f32', rate: 4800 },
+    // What has to be in front of it, and what that thing wants in front of *it*.
+    //
+    // `wants.rate` has always meant "the rate of the stream handed to this program's
+    // stdin", and for this one that is a symbol rate — 4800 symbols a second, not 4800
+    // samples. Nothing else here reads a stream whose rate is not a sample rate, and the
+    // difference is not cosmetic: `Identify` sizes the shared decimation from
+    // `wants.rate`, so taken as a sample rate it would narrow the channel to a few
+    // kilohertz and destroy the very signal the symbols are in. `after` says both halves
+    // — the stage, and the rate the stage wants ahead of it.
+    after: [{ op: 'core.symbols', rate: 48_000 }],
+    // 4FSK at 4800 symbols a second with M17's ±2.4 kHz deviation occupies about 9.6 kHz
+    // by Carson (2 × (2400 + 2400)), and that is the number rather than a round one above
+    // it. Rounding up to 12 kHz was wrong in a way worth recording: a tuner sized to the
+    // GRCon26 composite's own declared 9 kHz M17 slot lands at 11.9 kS/s, so `Identify`
+    // skipped the decoder on the exact selection the signal's own metadata describes.
+    // Erring low costs a decode attempt that fails; erring high costs the answer, silently.
+    minRate: 9_600,
+    params: [
+      { id: 'callsigns', type: 'enum', default: 'decode', values: ['decode', 'raw'],
+        label: 'callsigns',
+        hint: 'decoded from M17’s base-40 packing, or left as the six bytes on the wire' },
+      // On by default, which is the opposite of what "show me everything" instinct says
+      // and is what the numbers ask for. Measured on the GRCon26 composite: 90 seconds
+      // containing a 0.2 s packet at 21% duty returns **362 records** with this off —
+      // one of them the flag and the rest the dead air between bursts, where demodulated
+      // noise happens to correlate with a syncword. Every one of those carries a failed
+      // CRC and is marked `suspect`, so nothing is hidden and nothing is ranked as a
+      // decode; but a pane you have to scroll 361 rows of garbage to read is not a pane.
+      // Turn it off to see what the decoder rejected.
+      { id: 'errorfree', type: 'enum', default: 'yes', values: ['yes', 'no'],
+        label: 'error-free only',
+        hint: 'drop any frame the Viterbi decoder had to correct, rather than reporting it' },
+    ],
+    args: ({ params }) => [
+      ...(params.callsigns !== 'raw' ? ['-c'] : []),
+      ...(params.errorfree === 'yes' ? ['-f'] : []),
+    ],
+    // Like `m17-demod`, and for the same reason: what it prints is a running report on a
+    // terminal rather than a data stream, so it goes to stderr.
+    recordsOn: 'stderr',
+    // It draws a box. Every line is a branch of a tree with a colored label, which is a
+    // pleasant thing to watch in a terminal and four escape sequences per line to read
+    // here — so the color comes off first and the tree characters are what separates a
+    // field name from its value.
+    parse: (stdout, stderr, spec, meta) => {
+      const plain = String(stderr).replace(ANSI, '');
+      const out = [];
+      let cur = null;
+      const push = () => { if (cur && (cur.text || cur.src)) out.push(cur); cur = null; };
+      for (const raw of plain.split('\n')) {
+        const line = raw.replace(/^[\s─-╿]+/, '').trim();
+        if (!line) continue;
+        if (/Packet received/.test(line)) { push(); cur = { fields: 0 }; continue; }
+        if (!cur) continue;
+        const kv = /^([A-Za-z][A-Za-z ]*):\s*(.*)$/.exec(line);
+        if (!kv) continue;
+        const key = kv[1].trim().toLowerCase(), val = kv[2].trim();
+        cur.fields++;
+        if (key === 'source') cur.src = val;
+        else if (key === 'destination') cur.dest = val;
+        else if (key === 'text') cur.text = val;
+        else if (key === 'type') cur.kind = cur.kind || val;   // the LSF type, then the content's
+        else if (key === 'lsf crc') cur.lsfCrc = val;
+        else if (key === 'payload crc') cur.payloadCrc = val;
+      }
+      push();
+      for (const r of out) {
+        delete r.fields;
+        // A packet whose payload is not text still happened, and a record with no `text`
+        // would be drawn as an empty row. Say what it was instead.
+        if (!r.text) r.text = `${r.kind || 'packet'} from ${r.src || 'somebody'}`;
+        // Said rather than dropped: a CRC that did not match means the fields above it are
+        // a guess, and a decoder that reports a guess as a decode is the thing ADR-0031
+        // is about.
+        //
+        // *Both* checksums, and the link setup one matters more than it first looks.
+        // Measured on the envelope of an M17 burst rather than its frequency: five
+        // records came back with plausible callsigns — `QJ.I67040`, `FJDX1-RLK` — and a
+        // failed LSF CRC on every one. Those never reached a payload at all, so a rule
+        // that only watched the payload CRC called all five clean.
+        const bad = [r.lsfCrc && r.lsfCrc !== 'match' ? 'link setup' : null,
+                     r.payloadCrc && r.payloadCrc !== 'match' ? 'payload' : null].filter(Boolean);
+        if (bad.length) r.suspect = `${bad.join(' and ')} CRC mismatch`;
+      }
+      if (out.length) return out;
+      // The failure this adapter is most likely to hit, named rather than left as
+      // silence: it was handed samples, something resampled them, and there was never a
+      // symbol grid to find.
+      const resampled = /resampled/.test(meta && meta.inputNote ? meta.inputNote : '');
+      return { records: [], note: resampled
+        ? 'nothing decoded — this was handed samples and they were resampled to 4800 S/s. ' +
+          'It reads one float per symbol, so put a Symbol sync between the demodulator and this'
+        : 'nothing decoded — if there is a burst in this span, try the Symbol sync node’s ' +
+          'invert, and check its eye' };
     },
     title: ['text'],
   },
@@ -381,6 +549,226 @@ export const ADAPTERS = {
   // it you can hear. That is why the chain in front of it is a wide tuner and an FM demod
   // and nothing else — a channel narrow enough to listen to has already filtered away the
   // thing being decoded, silently, and the decode then fails by finding nothing.
+  // HD Radio. The digital sidebands either side of an FM broadcast carrier.
+  //
+  // What makes this worth a row rather than a curiosity: an NRSC-5 station carries a
+  // station name, the title and artist of what is playing, and — through its Advanced
+  // Application Services — *files*. Album art arrives as a LOT file over the air, which
+  // is a whole channel of content that no amount of listening to the audio reveals.
+  //
+  // It reports its own link quality, which is the honest kind of evidence: MER in dB
+  // for each sideband and a bit error rate. A decode with a stated MER can be argued
+  // with, which is what every derived number here owes the person reading it
+  // (ADR-0017). A station that is merely synchronized and carrying nothing is a
+  // different answer from silence, so that is a record too.
+  'ext.nrsc5': {
+    name: 'HD Radio', group: 'Decode', in: 'iq', out: 'events',
+    command: ['nrsc5'],
+    blurb: 'NRSC-5 — station name, song, and the files a station sends',
+    // Its own native rate. The program accepts `cu8` at twice this and decimates, which
+    // is the same bytes either way; handing it cs16 at the rate it actually works in
+    // means one conversion here rather than one here and one there.
+    wants: { format: 'cs16', rate: 744_188 },
+    // The digital sidebands sit either side of the analog carrier, out to about
+    // ±200 kHz, so the whole signal is roughly 400 kHz across. A channel narrower than
+    // that has the sidebands filtered off, and the decoder then finds nothing in a
+    // signal that was there — the failure ADR-0031 is about, and the reason redsea
+    // carries the same floor for a different subcarrier.
+    minRate: 400_000,
+    params: [
+      { id: 'program', type: 'num', default: 0, min: 0, max: 7, step: 1, integer: true,
+        label: 'program',
+        hint: 'a station carries several — HD1 is 0, and the extra channels are 1 and up' },
+    ],
+    // One positional argument when the input is a file, not two: with `-r` set it wants
+    // the program number alone, and the frequency it would otherwise need is a property
+    // of the tuner rather than of the samples. Read out of its own argument handling
+    // rather than guessed — `main.c` counts `optind + (!input_name + 1)`.
+    args: ({ params }) => [
+      '--iq-input-format', 'cs16',
+      // `-` is stdin: `fp = strcmp(input_name, "-") == 0 ? stdin : fopen(...)`.
+      '-r', '-',
+      // The audio is not what this is for. A decoder that also wanted to be a speaker
+      // would be two blocks pretending to be one, and there is already a Listen sink.
+      '-o', '/dev/null',
+      String(Math.max(0, Math.min(7, Math.round(Number(params.program) || 0)))),
+    ],
+    // Everything it says goes to stderr, timestamped `HH:MM:SS ` — its logger writes
+    // there unconditionally and nothing else is on stdout but audio.
+    recordsOn: 'stderr',
+    parse: (stdout, stderr) => {
+      const out = [];
+      let mer = null, ber = null, synced = false, name = null;
+      for (const raw of String(stderr).split('\n')) {
+        // The logger's own timestamp, which is wall clock at decode time and says
+        // nothing about the capture — so it comes off rather than being reported as if
+        // it were a time in the signal.
+        const line = raw.replace(/^\d{2}:\d{2}:\d{2}\s+/, '').trim();
+        if (!line) continue;
+
+        const m = /^MER:\s*([-\d.]+)\s*dB \(lower\),\s*([-\d.]+)\s*dB \(upper\)/.exec(line);
+        if (m) { mer = { lower: Number(m[1]), upper: Number(m[2]) }; continue; }
+        const b = /^BER:\s*([\d.]+)/.exec(line);
+        if (b) { ber = Number(b[1]); continue; }
+        if (/^Synchronized/.test(line)) { synced = true; continue; }
+
+        const kv = /^(Station name|Title|Artist|Album|Genre|Slogan|Message):\s*(.+)$/.exec(line);
+        if (kv) {
+          if (kv[1] === 'Station name') name = kv[2].trim();
+          out.push({ kind: kv[1].toLowerCase(), text: `${kv[1]}: ${kv[2].trim()}` });
+          continue;
+        }
+        const c = /^Country:\s*(\S+),\s*FCC facility ID:\s*(\d+)/.exec(line);
+        if (c) { out.push({ kind: 'station', text: `${c[1]}, FCC facility ${c[2]}` }); continue; }
+        // A file sent over the air. Named rather than summarized, because the name and
+        // the type are how somebody decides whether they want it — and `--dump-aas-files`
+        // is how they get it, which the note says.
+        const lot = /^LOT file: .*\blot=(\d+)\s+name=(\S+)\s+size=(\d+)/.exec(line);
+        if (lot) {
+          out.push({ kind: 'file', text: `${lot[2]} (${lot[3]} bytes)`, lot: Number(lot[1]) });
+          continue;
+        }
+      }
+      // The evidence for all of it, attached to every record rather than reported once
+      // and scrolled away.
+      const quality = {};
+      if (mer) quality.merDb = `${mer.lower.toFixed(1)} / ${mer.upper.toFixed(1)}`;
+      if (ber != null) quality.ber = ber.toFixed(4);
+      for (const r of out) Object.assign(r, quality);
+
+      if (out.length) return out;
+      if (synced) {
+        return { records: [], note: 'locked onto an HD Radio signal but it sent no metadata in ' +
+          `this span${mer ? ` (MER ${quality.merDb} dB)` : ''} — a longer span usually carries one` };
+      }
+      return { records: [], note: 'never synchronized — HD sidebands sit out to about ±200 kHz ' +
+        'either side of the carrier, so a channel narrower than 400 kHz has already filtered ' +
+        'them off' };
+    },
+    title: ['text'],
+  },
+
+  // Speech, which is the one decoder here whose failure mode is being *convincing*.
+  //
+  // Every other program in this table either decodes a frame or does not: a CRC agrees
+  // or it does not, a syncword correlates or it does not. Whisper always produces
+  // fluent, well-punctuated English. Given silence it produces fluent, well-punctuated
+  // English — "Thank you." and "Thanks for watching!" are its two most famous
+  // hallucinations, and on a quiet channel it will write them with every appearance of
+  // confidence. A transcript of static that reads like a sentence is the worst thing
+  // this tool could hand anybody, and it is exactly what ADR-0031 is about.
+  //
+  // So three of whisper's own gates are turned up from their defaults rather than left
+  // where a podcast transcriber would want them, the per-token probabilities come back
+  // with every record as the evidence for it (ADR-0017), and anything under the
+  // confidence floor is marked `suspect` the way a failed CRC is. Nothing is hidden —
+  // a suspect record still appears, it just does not get to be the headline.
+  //
+  // PocketSphinx was measured first, because it is in the Ubuntu archive *with* its
+  // model and would have needed no download at all. On real broadcast speech it
+  // returned "have a hand fed is you too soon to use it to the punches". A general
+  // language model will always emit fluent word salad; the difference is only whether
+  // it is fluent enough to fool you.
+  'ext.whisper': {
+    name: 'Speech', group: 'Decode', in: 'real', out: 'events',
+    command: ['whisper-cli'],
+    blurb: 'Speech to text — voice traffic, transcribed',
+    // Whisper's own rate. It resamples anything else internally, so converting here
+    // instead is one resample rather than two and the note says which one happened.
+    // WAV rather than raw: it reads through miniaudio, which wants a container.
+    wants: { format: 's16', rate: 16_000, container: 'wav' },
+    // Voice is not a narrow channel and a decoder handed 3 kHz of a 12 kHz FM channel
+    // has been given the part somebody can hear rather than the part that was sent.
+    // Below about this there is not enough of a voice left to be worth the CPU.
+    minRate: 6_000,
+    params: [
+      { id: 'model', type: 'text', default: '', label: 'model',
+        placeholder: 'leave empty for the installed one',
+        hint: 'path to a ggml model file; the image installs one and SDRFLEX_WHISPER_MODEL points at it' },
+      { id: 'language', type: 'text', default: 'en', label: 'language',
+        placeholder: 'en, de, auto',
+        hint: "a two-letter code, or `auto` to let it guess — guessing costs a pass and is wrong more often on short, noisy audio" },
+      // The floor under which a segment is called a guess rather than a decode. 0.6 is
+      // a judgment: whisper's token probabilities on clean speech sit well above it and
+      // on invented text sit below, but the two distributions overlap and no single
+      // number separates them cleanly. It is a parameter because it is a judgment.
+      { id: 'confidence', type: 'number', default: 0.6, min: 0, max: 1, step: 0.05,
+        label: 'confidence floor',
+        hint: 'segments whose mean token probability is under this are marked as guesses, not dropped' },
+      { id: 'quiet', type: 'enum', default: 'strict', values: ['strict', 'default'],
+        label: 'silence handling',
+        hint: 'strict raises whisper’s own no-speech and log-probability gates, which is what stops a quiet channel being transcribed as speech' },
+    ],
+    args: ({ params }) => [
+      '-m', String(params.model || process.env.SDRFLEX_WHISPER_MODEL
+                   || '/usr/local/share/whisper/model.bin'),
+      // `-` is a filename it understands: it reads the WAV off stdin, so nothing is
+      // written to disk for a decode and two decodes cannot read each other's audio.
+      '-f', '-',
+      // Full JSON to stdout. `-of -` also turns off the segment callback and the
+      // progress printing, so stdout carries the JSON and nothing else.
+      '-ojf', '-of', '-',
+      '-l', String(params.language || 'en').trim() || 'en',
+      // Deterministic. A decoder that answers differently on the same samples is not
+      // something anybody can debug, and temperature fallback is where whisper does
+      // most of its inventing.
+      '-tp', '0',
+      ...(params.quiet === 'default' ? [] : [
+        // Its own gates, turned up. `-nth` is how sure it must be that there *is* no
+        // speech before it gives up on a window; `-lpt` is the average log probability
+        // under which it rejects a decode outright. Both default to values chosen for
+        // podcasts, where the audio is known to contain speech. Here it very often
+        // does not.
+        '-nth', '0.3',
+        '-lpt', '-0.7',
+        // Suppress the non-speech tokens whisper otherwise spends its confidence on:
+        // music notes, bracketed sound effects, and the subtitle furniture it learned
+        // from its training data.
+        '-sns',
+      ]),
+    ],
+    // The JSON goes to stdout; the model banner and timings go to stderr.
+    parse: (stdout, stderr, spec_, meta) => {
+      const params = (meta && meta.params) || {};
+      let doc = null;
+      try { doc = JSON.parse(String(stdout)); } catch { doc = null; }
+      if (!doc || !Array.isArray(doc.transcription)) {
+        // A model that would not load is the likely cause and it says so on stderr,
+        // which is a far more useful thing to report than "nothing decoded".
+        const why = /error: (.+)|failed to (.+)/i.exec(String(stderr));
+        return { records: [], note: why ? why[0].trim()
+          : 'no transcription came back — whisper writes JSON to stdout with `-ojf -of -`, ' +
+            'so this usually means the model did not load' };
+      }
+      const floor = Number(params.confidence ?? 0.6);
+      const out = [];
+      for (const seg of doc.transcription) {
+        const text = String(seg.text || '').trim();
+        if (!text) continue;
+        // Mean probability over the real tokens. The specials — `[_BEG_]` and the
+        // timestamp tokens — are whisper's own punctuation and carry a probability
+        // that says nothing about whether the words are right.
+        const toks = (seg.tokens || []).filter((t) => t && typeof t.p === 'number' &&
+                                                      !/^\[_.*_\]$/.test(String(t.text || '')));
+        const p = toks.length ? toks.reduce((a, t) => a + t.p, 0) / toks.length : null;
+        const at = seg.offsets && typeof seg.offsets.from === 'number' ? seg.offsets.from / 1000 : null;
+        const rec = { text };
+        if (at != null) rec.fromS = +at.toFixed(2);
+        if (p != null) rec.confidence = +p.toFixed(3);
+        // Said rather than dropped, which is the same rule the CRCs get: a decoder that
+        // reports a guess as a decode is the thing ADR-0031 exists to prevent, and one
+        // that silently withholds what it found is no better.
+        if (p != null && p < floor) rec.suspect = `mean token probability ${p.toFixed(2)}, under ${floor}`;
+        out.push(rec);
+      }
+      if (out.length) return out;
+      return { records: [], note: 'no speech in this span — ' +
+        (params.quiet === 'default'
+          ? 'its own gates are at their defaults here, which are set for audio known to contain speech'
+          : 'the no-speech and log-probability gates are raised, which is what keeps a quiet channel from being transcribed') };
+    },
+    title: ['text'],
+  },
   'ext.redsea': {
     name: 'redsea', group: 'Decode', in: 'real', out: 'events',
     command: ['redsea'],
@@ -666,6 +1054,46 @@ function commandNames(a) {
   return (Array.isArray(a.command) ? a.command : [a.command]).join(' / ');
 }
 
+/**
+ * What this build of multimon-ng can actually demodulate.
+ *
+ * Asked, not assumed. It prints `Available demodulators: …` in its banner on any
+ * invocation, and the list has grown over the years — FLEX_NEXT, AFSK2400_2 and
+ * AFSK2400_3 are not in older builds, and a menu offering something the installed binary
+ * rejects is the same failure this control was rewritten to remove.
+ *
+ * Probed once and cached beside the other probes. `DUMPCSV` and `SCOPE` come out: they
+ * are debugging sinks rather than demodulators, and neither produces a record.
+ */
+const NOT_DEMODS = new Set(['DUMPCSV', 'SCOPE']);
+let MULTIMON_DEMODS = null;
+
+/**
+ * What a speculative pass asks multimon-ng for. See the note on `ext.multimon`'s
+ * `sweep`: this is deliberately shorter than what the binary has.
+ */
+const SWEEP_DEMODS = ['POCSAG512', 'POCSAG1200', 'POCSAG2400', 'FLEX', 'AFSK1200',
+                      'AFSK2400', 'FSK9600', 'DTMF', 'MORSE_CW', 'EAS', 'X10'];
+
+export function multimonDemods() {
+  if (MULTIMON_DEMODS) return MULTIMON_DEMODS;
+  const fallback = ['POCSAG512', 'POCSAG1200', 'POCSAG2400', 'FLEX', 'EAS', 'UFSK1200',
+                    'CLIPFSK', 'AFSK1200', 'AFSK2400', 'HAPN4800', 'FSK9600', 'DTMF',
+                    'ZVEI1', 'ZVEI2', 'ZVEI3', 'DZVEI', 'PZVEI', 'EEA', 'EIA', 'CCIR',
+                    'MORSE_CW', 'X10'];
+  const command = resolve('ext.multimon');
+  if (!command) return fallback;
+  try {
+    const r = spawnSync(command, ['-h'], { timeout: 10_000, encoding: 'utf8' });
+    const line = /Available demodulators:([^\n]*)/.exec(`${r.stdout || ''}${r.stderr || ''}`);
+    const found = line ? line[1].trim().split(/\s+/).filter((d) => d && !NOT_DEMODS.has(d)) : [];
+    MULTIMON_DEMODS = found.length ? found : fallback;
+  } catch {
+    MULTIMON_DEMODS = fallback;
+  }
+  return MULTIMON_DEMODS;
+}
+
 /** Every adapter, with whether it could actually run here. */
 export function list() {
   return Object.entries(all()).map(([id, a]) => {
@@ -675,10 +1103,20 @@ export function list() {
       // The name it will actually run under, when there is one — a box with
       // dump1090-mutability should say so rather than claim a binary it does not have.
       command: a.module ? commandNames(a) : (found || commandNames(a)),
-      blurb: a.blurb, params: a.params,
-      sweep: a.sweep || null, wants: wants(a, defaults(a)),
+      // A parameter whose choices depend on what is installed asks for them here, the
+      // same way `wants` is asked rather than read — the client has no way to run a
+      // program and must never need one (ADR-0029).
+      blurb: a.blurb, params: (a.params || []).map(
+        (pm) => (typeof pm.values === 'function' ? { ...pm, values: pm.values() } : pm)),
+      sweep: (typeof a.sweep === 'function' ? a.sweep() : a.sweep) || null,
+      wants: wants(a, defaults(a)),
       // The narrowest stream this decoder could possibly read, when it has an opinion.
       ...(a.minRate ? { minRate: a.minRate } : {}),
+      // And the stages that have to sit between a demodulated stream and it, for the one
+      // kind of decoder that does not read samples (ADR-0040). Data, like everything else
+      // here: the client builds the chain and must not have to know which decoders are
+      // special.
+      ...(a.after ? { after: a.after } : {}),
       available: available(id),
       // Yours or ours. The UI says so, because a decoder you added behaving oddly and
       // one that shipped behaving oddly are different problems.
@@ -695,6 +1133,20 @@ export function list() {
  * given 2 MS/s does not fail, it just decodes worse, and "why does rtl_433 find nothing
  * here but everything in the same signal saved to a file" is a bad afternoon.
  */
+/**
+ * The sample formats an adapter may ask for — which is to say, the ones `convert` below
+ * can actually produce.
+ *
+ * Exported because `adapterdir.js` validates operator-supplied packs against it, and it
+ * had its own copy of this list. The two drifted in both directions and each way was a
+ * different bug: `f32` was convertible but rejected, so nobody could write a pack that
+ * reads one float per symbol — which is what the M17 packet decoder that ships here
+ * does. And `cs8` was accepted but had no branch, so such a pack loaded cleanly at
+ * startup and threw `no conversion to cs8` at the first click, which is the exact
+ * failure validating a pack at startup exists to prevent.
+ */
+export const FORMATS = ['cu8', 'cs8', 'cs16', 'cf32', 'f32', 's16'];
+
 export function convert(data, kind, fromRate, want) {
   const note = [];
   let out = data;
@@ -726,12 +1178,19 @@ export function convert(data, kind, fromRate, want) {
     for (let i = 0; i < out.length; i++) {
       bytes.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(out[i] * 32767))), i * 2);
     }
+  } else if (want.format === 'cs8') {
+    bytes = Buffer.allocUnsafe(out.length);
+    for (let i = 0; i < out.length; i++) {
+      bytes.writeInt8(Math.max(-128, Math.min(127, Math.round(out[i] * 127))), i);
+    }
   } else if (want.format === 'cs16') {
     bytes = Buffer.allocUnsafe(out.length * 2);
     for (let i = 0; i < out.length; i++) {
       bytes.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(out[i] * 32767))), i * 2);
     }
-  } else if (want.format === 'cf32') {
+  } else if (want.format === 'cf32' || want.format === 'f32') {
+    // The same bytes either way — the name says whether the floats are pairs. A decoder
+    // that reads one float per symbol is not reading IQ and should not have to say it is.
     bytes = Buffer.from(out.buffer, out.byteOffset, out.byteLength);
   } else {
     throw new Error(`no conversion to ${want.format}`);
@@ -752,14 +1211,14 @@ export function convert(data, kind, fromRate, want) {
 
 /** 44 bytes of canonical RIFF, mono, with a truthful data length. */
 function wavHeader(dataLen, rate, format) {
-  const bits = format === 'cf32' ? 32 : format === 's16' || format === 'cs16' ? 16 : 8;
+  const bits = format === 'cf32' || format === 'f32' ? 32 : format === 's16' || format === 'cs16' ? 16 : 8;
   const h = Buffer.alloc(44);
   h.write('RIFF', 0);
   h.writeUInt32LE(36 + dataLen, 4);
   h.write('WAVE', 8);
   h.write('fmt ', 12);
   h.writeUInt32LE(16, 16);
-  h.writeUInt16LE(format === 'cf32' ? 3 : 1, 20);     // 3 is IEEE float, 1 is PCM
+  h.writeUInt16LE(format === 'cf32' || format === 'f32' ? 3 : 1, 20);  // 3 is IEEE float, 1 is PCM
   h.writeUInt16LE(1, 22);                             // mono
   h.writeUInt32LE(Math.round(rate), 24);
   h.writeUInt32LE(Math.round(rate) * (bits / 8), 28);
@@ -905,7 +1364,15 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
       done = true;
       clearTimeout(timer);
       if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* it is a temp dir */ } }
-      const { records, note: parseNote } = readRecords(a, stdout, stderr, { outBytes });
+      // `inputNote` is what the conversion said it did, so a parser can tell "nothing was
+      // there" from "something in front of this changed what it was looking at" — the
+      // difference between a signal that is absent and one that was resampled away.
+      const { records, note: parseNote } =
+        // `params` as well, because a parser can have a judgment of its own to apply and
+        // the setting for it belongs to the node rather than to the program's flags —
+        // whisper's confidence floor decides which segments are called guesses, and that
+        // is a decision about the report rather than about the decode.
+        readRecords(a, stdout, stderr, { outBytes, inputNote: input.note, params });
 
       // Nothing recognized is a result, not a failure — but a result with no account of
       // itself is a dead end, and "I ran a decoder and it said nothing" is the least

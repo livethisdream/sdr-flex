@@ -2,7 +2,7 @@
 // the dB range and colormap are free to change every frame. Falls back to a 2D
 // canvas so the page is never blank.
 
-import { lut } from './colormap.js';
+import { lut, DEFAULT_COLORMAP } from './colormap.js';
 
 const VS = `#version 300 es
 in vec2 p; out vec2 uv;
@@ -47,7 +47,7 @@ export class Waterfall {
     this.gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
     if (this.gl) { try { this._initGL(); } catch (e) { this.gl = null; } }
     if (!this.gl) this._initFallback();
-    this.setColormap('Viridis');
+    this.setColormap(DEFAULT_COLORMAP);
   }
 
   _initGL() {

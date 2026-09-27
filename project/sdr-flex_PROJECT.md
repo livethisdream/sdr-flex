@@ -10,9 +10,14 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-27 (the interface study: four measuring pages on a branch, nothing in `web/` touched) · on `claude/interface-simplification-mockups-xmvu2g`
+**Last updated:** 2026-09-27 (the parked chrome, unparked: the layout built and in `web/`, plus four measuring pages on a branch) · on `claude/interface-simplification-mockups-xmvu2g`
 
-Previous: 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built; the stereo decode drawn as a graph; ADR-0039 on the menu) · merged to `main`
+Previous: 2026-09-21 (`/version` and `check-build.mjs`: a rebuild that did not take is now answerable in one command)
+
+Previous: 2026-09-18 (multimon's demodulators as a multiselect; the menu scrolls; M17 packet mode and the symbol sync it needs, ADR-0040; a reload no longer loses everything; the chrome measured and the layout parked) · merged to `main`
+
+Previous: 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built; the stereo decode drawn as a graph; ADR-0039 on the menu)
+Previous: 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBFM in the scene; the tuner derives its tap count)
 
 **`main` is the default branch**, as of this session. It was
 `claude/sdr-flex-toolkit-planning-c4ghl1` — the branch this project happened to be
@@ -21,15 +26,13 @@ history and nothing was rebased or dropped, so the old branch is an ancestor of 
 rather than a fork of it; it is left in place and is not written to any more. Work from
 a branch off `main`.
 
-Previous: 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBFM in the scene; the tuner derives its tap count)
-
 ---
 
 ## Where it is
 
 MVP in the browser, the same tool with its engine in a container, and live radio into a
 ring recording. Static ES modules, no build step, no dependencies on either side.
-39 ADRs.
+40 ADRs.
 
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
@@ -57,9 +60,9 @@ Working end to end:
   the page picks the server engine when one answers and the in-tab engine otherwise
 - Live radio: a capture program writes a ring recording, the engine reads it exactly as
   it reads a file, and you can scrub back into what already went past
-- Eight external decoders — rtl_433, multimon-ng, dump1090, direwolf, minimodem, M17,
-  redsea, and LoRa as a GNU Radio flowgraph — each checked against the real program, not
-  its docs
+- Nine external decoders — rtl_433, multimon-ng, dump1090, direwolf, minimodem, M17
+  stream mode, M17 packet mode, redsea, and LoRa as a GNU Radio flowgraph — each checked
+  against the real program, not its docs
 - `Identify`: one button runs every decoder that could read this stream and says what
   each found, what it declined to try, and what it decoded but refuses to count
 - Decoders you add yourself: a directory of manifests in `SDRFLEX_ADAPTERS`, badged
@@ -91,7 +94,7 @@ Working end to end:
   Radio implementation
 - `Dockerfile.full`: one command for Node, the five packaged decoders, the vendor capture
   programs, GNU Radio, gr-lora_sdr, m17-cxx-demod and rx_sdr. 1.9 GB, and the banner then
-  reads **7 of 7 external decoders installed**
+  reads **9 of 9 external decoders installed**
 - The **baseband spectrum**: a `domain` pill on any demodulated stream swaps the waveform
   for a one-sided spectrum, DC to `fs/2`, in the same pane the IQ spectrum uses
   (ADR-0036). This is what makes wideband FM readable — the pilot at 19 kHz, whether
@@ -111,8 +114,22 @@ Working end to end:
   mono sum, which in FM stereo is the mono signal. The speaker grew a second channel.
   Measured separation is 54–62 dB in the browser on a synthetic station; a good receiver
   off the air manages thirty to forty. De-emphasis lives here too, and nowhere upstream
+- **M17 packet mode**, which is a different program from a different upstream than the
+  stream-mode decoder that was already here — and the first decoder that reads *symbols*
+  rather than samples. `core.symbols` is the node in front of it: one sampling instant for
+  the whole span, found by trying all of them, with the instant, the zero level and the
+  scale carrying their evidence (ADR-0040)
+- **multimon-ng's demodulators are a list you pick from**, probed out of the binary
+  itself, rather than a text field where a comma made the program exit 2 and print a
+  usage message about sample rates
+- **A reload no longer loses everything.** The window asks on the way out when there is a
+  chain to lose, and what is on screen is written down as a recipe every three seconds
+  and offered back on the next load (`web/src/resume.js`)
+- **Work outlives the tab.** The same recipe, named, listed and kept — on the box when
+  there is one, in the browser when there is not, and the same JSON either way
+  (`web/src/sessions.js`, ADR-0042)
 
-Tests: 366 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
+Tests: 404 Node tests across `web/test/*.test.mjs` for pure logic, the wire format, the
 socket, mock-versus-server parity, and every external decoder against the real program;
 plus Playwright suites driving the real DOM. Headless `requestAnimationFrame` is unreliable, so the
 browser suites step `app._frame(t)` by hand through `window.sdrflex`.
@@ -258,7 +275,8 @@ M4.5, and the roadmap was right that it is the best ratio in the plan.
 
 - **An adapter is a table row** in `server/adapters.js`: what to run, what samples it
   wants on stdin, how to read its output. `rtl_433`, `multimon-ng`, `dump1090`,
-  `direwolf`, `minimodem`, `m17-demod`, `redsea` and a LoRa flowgraph — eight rows.
+  `direwolf`, `minimodem`, `m17-demod`, `m17-packet-decode`, `redsea` and a LoRa
+  flowgraph — nine rows.
 - **Format negotiation is derived and reported.** The engine resamples and converts the
   span to what the program wants, and the record pane says which, because it changes
   what the decoder sees.
@@ -487,6 +505,169 @@ spectrum → tuner → discriminator → decoder, so it fails the way a user wou
 
 `Identify` finds it behind the FM demod and ranks it first, in 862 ms.
 
+## M17 packet mode, and the symbol sync (ADR-0040)
+
+Reported from the field: `ext.m17` cannot decode an M17 SMS packet, and the reason is not
+a flag. **M17's two modes are read by two programs from two different upstreams.** Stream
+mode (voice) is `m17-demod`, from `mobilinkd/m17-cxx-demod`, which is what
+`Dockerfile.full` built. Packet mode (SMS and data) is `m17-packet-decode`, from
+`M17-Project/M17_Implementations`, which it did not. The blurb said "voice and data" and
+the data half had never existed. Both halves of that are now true: the blurb says stream
+mode, the empty-result note names packet mode instead of quoting "0.0 s of voice decoded"
+— which on a packet burst is a true statement about the wrong mode, and a confident one.
+
+**The new shape: a decoder that reads symbols.** `m17-packet-decode` does not take
+samples. It takes one float per symbol, already on the symbol grid, because it correlates
+for a syncword rather than recovering a clock. Nothing here produced that, and the
+tempting answer — twenty lines inside the adapter — is the one this tool is against: the
+sampling instant and the level fit are the two numbers that decide whether a decode
+happens. So `core.symbols`, a node, which maps onto `symbol_sync_ff`.
+
+It finds **one** instant for the whole span and holds it — right for a burst that is over
+in a fifth of a second, wrong for hours of live radio, and a tracking loop is a second
+mode on this node if that day comes. Thirty-two candidates across the symbol period,
+scored by how tightly the symbols land on ±1/±3 once centered and scaled.
+
+Three things measurement settled, each of which the obvious implementation gets wrong:
+
+- **Percentiles, not the mean.** On `m17-packet-encode`'s own baseband the mean of the
+  span is 0.43 where the signal's center is 0, because the symbol alphabet is not used
+  evenly. Subtracting it turned a symmetric ±9.49 preamble into 2.25 against −3.00 and
+  cost 12% of the eye — 0.997 down to 0.569.
+- **Gate the fit to the burst.** A span is chosen by dragging on a spectrum, so it is
+  wider than the signal in it. Fitted over everything, a burst padded with silence had its
+  outer levels fitted to the noise and decoded nothing.
+- **Derive over the whole span, not a peek window.** Every other auto parameter here is a
+  property of a carrier and a quarter second tells you. A symbol grid is a property of a
+  *burst*. Derived from a peek, the fixture reported an eye of 0.475 with complete
+  confidence — the wrong answer, arrived at honestly.
+
+Also settled: samples per symbol need not be a whole number. The tuner's own derivation
+puts the fixture at 32 kS/s, so 6.67 samples a symbol, and the matched filter is built
+for whatever it is handed with an odd tap count so its peak lands on a tap. Overriding
+the tuner to suit a decoder would have been the wrong way round.
+
+The RRC taps agree with `libm17/math/rrc.c` to 2.2e-5 across all 81, worst at the centre
+tap where the closed form and their table differ; every other tap is better than a part
+in ten thousand. That agreement is the evidence it is the same filter.
+
+`fixtures/m17-packet` is `m17-packet-encode`'s own baseband, FM-modulated, with a quarter
+second of quiet in front and half behind — the padding is the test, not scenery. Chain:
+tuner → FM demod → **symbol sync** → decode. Eye 0.957 end to end, and the SMS comes back
+with both CRCs matching.
+
+**The trap, stated because it is quiet:** leave the symbol sync out and nothing errors.
+`convert()` resamples 48 kS/s to 4800 and says so — but a resampler low-passes and
+decimates and picks no instant, so the decoder reads a signal with no symbol grid in it.
+The adapter now checks the conversion note and names the missing node when that happens.
+
+### `Identify` can find it (and the M17 stream path is now exercised)
+
+Two follow-ups, both reported after the node landed.
+
+**The button could not find what the node made findable.** `Identify` demodulates a span
+speculatively and hands the result to every decoder that could read it — samples, not
+symbols. So `ext.m17_packet` was findable by hand and invisible to the one button whose
+whole job is finding a decoder for you. `via` is a **chain** now rather than a single
+demodulator, and the adapter declares what has to sit in front of it:
+
+```js
+after: [{ op: 'core.symbols', rate: 48_000 }],
+minRate: 12_000,
+```
+
+The `rate` is not decoration. `Identify` narrows the IQ once and shares it, sized from
+`wants.rate` — which for this decoder is 4800 **symbols** a second. Taken as a sample
+rate it would have decimated a 96 kS/s capture to about 19 kS/s with a filter to match,
+removing the 4FSK before the symbol sync saw it, and reported "nothing decoded" with
+complete confidence. `minRate` is the floor from Carson: 4FSK at 4800 Bd with ±2.4 kHz
+deviation is about 9.6 kHz occupied, so under 12 kS/s the signal is not in the channel.
+
+Intermediate stages are cached by **prefix**, so one discriminator is shared between the
+decoders that read it and the ones that read a symbol sync on top of it.
+
+**And it produced a real false positive, which is the more interesting half.** Pointed at
+the *envelope* of an M17 burst rather than its frequency — which `Identify` tries, because
+which demodulator is right is the question it is asking — `m17-packet-decode` returned
+**five packets** with plausible callsigns (`QJ.I67040`, `FJDX1-RLK`) and a failed link
+setup CRC on every one, and outranked the one real decode five to one. Two fixes:
+
+- `sweep: { errorfree: 'yes' }` — the program's own `-f`, and exactly what `sweep` is for.
+  A person who wants to see the guesses can still turn it off.
+- A general rule, since the next decoder may have no such flag: a row where *every* record
+  failed its own checksum carries `suspect` and ranks with the thin ones — shown, never
+  the headline. ADR-0031 applied to the rank rather than to a single decode. A rule
+  watching only the payload CRC would have called all five clean; they never reached a
+  payload, because the link setup failed first.
+
+**The stream-mode path had never run here.** `m17-cxx-demod` built in a couple of minutes
+against `libcodec2-dev` and `libboost-program-options-dev`; `fixtures/m17-lsf` passes, so
+the `ext.m17` changes above did not break it. That it was silently untested is the real
+finding, and it now has a guard: the conformance suite reports which decoders were not
+exercised on this run, and **fails if every decoder fixture skipped** — a green suite that
+tested nothing is the failure mode that looks like success. There is also a coverage test
+that every adapter has a golden capture or is named in a short list of why not
+(`ext.multimon` and `ext.minimodem` are the two, both covered in `adapters.test.mjs` but
+not pinned as a chain).
+
+### What a real capture found that a synthetic one could not
+
+Two reports against the merged build, both reproduced, both mine.
+
+**"Hotkeys aren't working — it just enters text into the search box."** Exactly right, and
+the cause was two features that were each defensible alone. The menu draws the key on
+every row it applies to (`press f to add this`) because a shortcut shown on the row you
+were about to click is learned by the third time you click it. And every printable key
+belonged to the menu's search box, so `f` could not mean both "FM demod" and "type an f".
+Together: the menu advertised a key and then swallowed it. Since the drag that opens the
+menu is the *main gesture*, that is the common path, not a corner. A row now answers to
+the key it advertises while nothing has been typed; after that letters are a search again.
+The rule lives in `keys.js` as `menuTakesKey` so it is written down once and testable
+without a DOM.
+
+**"M17 still doesn't decode the sigid M17 section."** Also right, and the fixture could
+never have caught it. The slot is `m17.cf32`: 4FSK at 4800 sym/s, ±2.4 kHz deviation,
+declared 9 kHz wide, at +170 kHz in a 500 kS/s composite, **13 dB SNR**, a 0.2 s burst
+tiled across 90 s at 21% duty. Rebuilt here from the challenge's own `gen_m17.py` and
+`fdm_combine.py` and measured. Three things were wrong:
+
+- **Through an FM discriminator the burst is the *quiet* part.** Measured: 0.153 RMS in
+  the burst, 0.51 in the dead air between bursts. Demodulated noise swings across the
+  whole channel because there is no carrier holding it anywhere; a constrained ±3-unit
+  signal does not. The gate kept the loud part — right on a baseband recording, backwards
+  here — so it fitted the levels to the noise. Eye 0.508 where the answer is 0.78, and
+  nothing decoded. Now the span is split into two populations by level (Otsu, the same
+  split the slicers use) and *both* sides are fitted, along with the whole span; whichever
+  lands on the levels best wins. Which part of a span is the burst is measured, not
+  assumed. The per-symbol gate stays — the two catch different things, and taking it out
+  regressed the clean fixture while fixing the composite.
+- **`minRate: 12_000` was a round number above the real one.** Carson for this signal is
+  9.6 kHz. A tuner sized to the slot's *own declared* 9 kHz width lands at 11.9 kS/s, so
+  `Identify` skipped the decoder on the exact selection the metadata describes. Erring low
+  costs an attempt that fails; erring high costs the answer, silently.
+- **`after[0].rate` was being used as a floor as well as for sizing.** It is the rate the
+  symbol sync would *like* in front of it, 48 kS/s, and testing 11.9 kS/s against it
+  rejected the stream for being 4.03× short of a number that was never a requirement.
+  `minRate` is the floor; the preference only sizes the shared decimation.
+
+And one usability finding that only a long capture shows: with `errorfree` off, 90 seconds
+containing a 0.2 s packet returned **362 records** — one the flag, the rest dead air where
+demodulated noise correlates with a syncword. All carry a failed CRC and are marked
+`suspect`, so none is ranked as a decode, but a pane you scroll 361 rows to read is not a
+pane. The default is now `-f`; turn it off to see what was rejected.
+
+End to end on the rebuilt composite the packet's text comes back intact — 95 records, one
+per tiled burst, at 16 and 24 kHz selections, and 12 at the natural 9 kHz one. The text
+itself is not written down here: it is a CTF flag, this repository is public, and
+`.githooks/pre-commit` stopped the first draft of this paragraph for saying it. Which is
+the control working, so the paragraph changed rather than the hook.
+
+The regression test took two attempts and the first one is the lesson: a synthetic quiet
+burst in *white* noise passes against the buggy code, because the matched filter throws
+white noise away and the burst comes back out as the loud part. Real discriminator noise
+has already been through the tuner's channel filter, so it lives in the same few kilohertz
+the symbols do. With band-limited noise the separation is 0.996 against 0.590.
+
 ## Frequency hopping, as built
 
 ADR-0033. Two nodes over one capability: **Hop map** (`iq` → `events`) reports the
@@ -649,7 +830,48 @@ browser.
 Also this pass: American spelling fixed throughout, including in files that predate the
 house rule.
 
+## Both axes at once, as built
+
+`domain: both` on any `real` node draws the waveform and the baseband spectrum together
+— side by side above 900px, stacked below it. ADR-0036 ruled out three ways to give a
+real stream two readings: a WBFM node, a `Spectrum of` node, and a second tab. Showing
+both at once was not among them, and it contradicts none of them: still one node, one
+tab, one set of samples, drawn against two independent variables instead of one, which
+is what that ADR's own closing line describes.
+
+No third pane. The two existing panes stop being `position:absolute` and share the
+space, so there is no second waterfall or second scope to keep in step. Side by side is
+preferred over stacked because the two are read against different axes and stacking
+halves the waterfall, which is the one that needs the pixels.
+
+**Two regressions it caused, found by driving it rather than by looking at it.** Five
+places asked `view() === 'Spectrum'`, and in `both` the view is `Both`:
+
+- The selection drag, both zooms and the double-click reset all stopped working. The
+  stage was on screen and inert. Measured against `domain: frequency` as a control — the
+  same drag there selected 36–62.4 kHz and opened the menu; under `both` it did nothing.
+- Worse: neither view group was pushed to the strip, so there was no `domain` control at
+  all. `both` was a mode you could enter and not leave by the bar you entered it from.
+
+Both now go through one `hasSpectrum()` rather than five string comparisons that can
+drift apart again.
+
+**And a flake the suite caught on the way out.** The whole suite started hanging — not
+failing, hanging, twice past a five-minute timeout. Serial it was green; parallel without
+`streamout.test.mjs` it was green; parallel with it, green *sometimes*. Node's test runner
+waits for each file's process to exit and an open socket keeps an event loop alive, so a
+listener still holding one at the end of a test does not fail the run, it wedges it — and
+only when the machine is busy enough for the timing to line up. The test listeners are
+`unref`'d now, so such a handle can never be the last thing holding the loop open, and
+they close from `t.after` so it happens even when an assertion throws first. Four
+consecutive parallel runs afterwards: 450 passing in 28–33 s each.
+
 ## Wanted later
+
+- ~~**Persistent sessions.**~~ Built (ADR-0042). The question it was waiting on —
+  recipe written somewhere durable, or a live engine held open — is settled below, and
+  the deciding argument was not effort.
+
 
 - **The CTF's remaining modulations.** The 2026 challenge list is NBFM, WBFM, USB/LSB, CW,
   FHSS, OFDM, FSK, M17, AFSK1200, APRS, ADS-B, BBC (gr-bbc), the AOL handshake, CDMA,
@@ -721,8 +943,28 @@ house rule.
   [ADR-0039](../docs/adr/0039-the-menu-answers-the-gesture.md) decides the shape: two
   tiers with the fold in place, and what is in the first tier decided by *which gesture
   opened the menu* — which the code already knows, because `openMenu` has always taken the
-  selection or null. Nothing is built; the scroll is a one-line bug fix that should go
-  first regardless.
+  selection or null. **The tiering is still not built.**
+
+  **The scroll is fixed.** Re-measured after the hiding below: the largest palette this
+  can draw is 17 rows and 6 headings, 534 px, and opened 40 px from the bottom edge it ran
+  44 px off screen at a 500 px-tall window and 154 px at 390 px — a phone held sideways.
+  `.ctx` now has `max-height: calc(100vh - 1rem)` (the space the positioner has to place
+  it in) with `overflow-y: auto` and a sticky search box, so it scrolls only when the list
+  genuinely does not fit: at 600 px of viewport and above nothing changed.
+
+  **Built already:** a decoder whose program is not on the box is not in the menu at all.
+  18 entries on `iq` became 15 here, and 12 on `real`. `Identify` still names every one it
+  could not try, which is where "what could this box do that it cannot" belongs. A
+  decoder from *your* pack is the exception and stays, because you wrote that manifest
+  expecting it to run. And `M4` means M4 again — it had been shared with "not installed",
+  so a machine without rtl_433 was told rtl_433 arrives in a future milestone.
+
+  **A correction worth keeping:** the greyed-row rule was never in ADR-0013. It lived in
+  three documentation pages describing a behaviour nobody argued for. The one place it
+  *was* argued — `server/README.md`, about radio drivers — makes a good case that turns on
+  the surface: a short explicit list of eight radios you are deliberately browsing is not
+  an eighteen-row menu opened over the signal by a gesture. The radio picker keeps its
+  behaviour.
 
   The part worth remembering from writing it: **ADR-0017 derives values, not intentions.**
   Ranking the menu by what the signal looks like is the obvious next thought and it is
@@ -772,110 +1014,538 @@ house rule.
   speaking (anything AD936x now is), and `rx_sdr` for everything else. Worth revisiting
   when a board turns up that `rx_sdr` handles badly.
 
-## The interface study, on a branch
+## The tuner's output grid, as fixed
 
-Lives on `claude/interface-simplification-mockups-xmvu2g`, entirely under
-`docs/mockups/`. **Nothing in `web/` has changed.** Four pages, each of which measures
-rather than asserts, because "measure before adjusting anything visual" turned out to
-overturn three confident guesses in a row.
+The root cause under the symbol-grid bug, found by chasing the last of it: the tuner's
+output samples were anchored to the read rather than to the capture.
+`xlateFilterDecimate` takes every `decim`-th sample counting from the start of what it is
+handed, and that start was `Math.floor(tEnd * parentRate) - need` — whose remainder
+modulo `decim` moves with `tEnd`. A read ending between two output samples therefore came
+back on a different grid, shifted by up to `(decim - 1) / decim` of an output sample.
 
-Read them in order: `layout/` → `surfaces/` → `menu/` → `threshold/`.
+It is invisible until something cares about a fraction of a sample, which is why it
+survived this long. On the M17 slot a 9 kHz selection decimates by 42 into 2.48 samples
+per symbol: worst case 0.39 of a symbol, and the symbols a `core.symbols` node handed
+over were a fifth of full scale from the ones a direct fit gave for the same seconds —
+0 records against 10. The same signal at 24 kHz decimates by 16 into 6.5 samples a
+symbol, worst case 0.14, and the two paths agreed to the bit.
 
-### What the numbers say
+Fixed by anchoring output sample `k` to input sample `k * decim` whatever window is
+asking. Everything else about the window is unchanged, including the tuner being late by
+half its filter. After: every fit window over the slot decodes 95 records where it used
+to give 0–96 depending on where the fit landed, and the phases cluster at 2.39–2.48
+instead of scattering across 1.46–2.31.
 
-- **Chrome is a flat 174 px at every width** — 19% of 1440×900, **25% of 1024×700**.
-  Four full-width rows, two of them about **11% full**: the breadcrumb fills 150 px of
-  1385, the tab strip 152 px of 1440. The dock stacks two pills that together are
-  952 px wide inside a 1440 px window.
-- Merging the two top rows and putting the two dock pills side by side gets it to
-  **90 px**. Floating the path in the spectrum's headroom gets it to **60 px** and is
-  the only scheme that also wins on a phone (60 px against today's 201).
-- **Travel, not clicks.** `docs/08` already said clicks are the wrong metric and the
-  first pass led with them anyway. Changing the colormap costs **386 px today and
-  234 px in the proposal with one *more* click**. Swept across four cursor positions,
-  one column does not move: the menu costs 234 px from anywhere because it arrives at
-  the cursor. Everything anchored to a bar slides with the cursor — which indicts the
-  map popunder specifically, at a flat **~260 px worse** at every start point.
+**This is also why the per-block symbol fit now looks like belt and braces.** With the
+tuner fixed, one grid for a whole capture would probably have worked on this capture.
+Keeping the blocks anyway: a real signal can drift where a synthesized one does not, and
+a block is the unit the streamed decode is built on. It costs a fit per ten seconds.
 
-### Ported, and in `web/`
+**A reasoning error worth keeping.** The float round trip in `_readSymbols`' sample index
+was dismissed earlier on the grounds that 31250 S/s — which worked — had *more* of those
+errors than 11904.76, which failed. That compared how often the error happened instead of
+what it cost, and one sample is 0.15 of a symbol at sps 6.51 against 0.40 at sps 2.48.
+The conclusion happened to be right (the round trip is exact at both rates, measured),
+but the argument was not, and the same "it cannot be that, the working case has more of
+it" shape is what nearly hid the real bug.
 
-**The layout, as of this session.** The two top rows are one `.path` row and the dock is
-one row. Measured in the real app, not the mockup:
+## Decoding as it plays, as built
 
-| | chrome before | after | spectrum + waterfall |
-|---|---|---|---|
-| 1440x900 | 174 px (19%) | **90 px (10%)** | 705 → **789** |
-| 1280x800 | 174 px (22%) | **90 px (11%)** | 605 → **689** |
-| 1024x700 | 174 px (25%) | **90 px (13%)** | 505 → **589** |
-| 390x844 | 201 px (24%) | **136 px (16%)** | 619 → **687** |
+A decoder used to answer once, for the whole capture, when it finished. On a 90 s file
+that is a long wait for a packet that happened at eleven seconds. Now, while the Events
+pane is open and the clock is running, each five-second block of capture is decoded as
+the playhead finishes crossing it and its records are appended, each tagged with the
+block it came from.
 
-Nothing clips at any width; below 640 px the dock stacks again, which is the one case
-where the two pills genuinely do not fit. `#topbar`, `#tabs` and `#strip` kept their ids,
-so `renderTopbar`, `renderTabs` and the strip did not change — the whole port is markup
-and CSS. 351 tests pass.
+Blocks rather than a sliding window, and the reasons are the same ones that fixed the
+symbol grid: they are disjoint so nothing needs de-duplicating, fixed so the same seconds
+always decode the same way, and five divides the sync's ten-second fit blocks so a
+decoding block never needs a grid that is not already measured. One at a time — an
+external decoder is a process, and starting a second before the first answers is how a
+slow decoder becomes a queue of them.
 
-One behavior did change and is worth watching: the crumb run **scrolls rather than
-wraps**. Wrapping would let a deep chain grow the path row taller, which is the height
-the change exists to reclaim; a chain deep enough to need it has not been tried.
+A whole-capture run and a streamed one do not fight: opening the pane while paused runs
+the capture, opening it while playing streams, and `Run again` clears both. The header
+says `8 of 18 blocks of 5 s`, so an empty list is readable — "nothing yet" and "nothing
+in the forty seconds looked at so far" are different claims. It also reports the slowest
+block and how far behind the playhead it is, because whether this keeps up is a real
+question: measured on the M17 slot, blocks that also pay for a grid fit took 6.8 s to
+cover 5 s, and the ones after 0.1 s.
 
-### What is settled
+## The speaker on the transport, as built
 
-- One "where you are" bar on top; transport stays at the foot; the dock is one row.
-- **One menu, three gestures.** `openMenu(x, y, selection)` already exists, already
-  filters by stream type and by whether a selection is present; a third answer is a
-  one-line change. A drag asks about the signal, a bare click about the picture, a
-  right-click about the node.
-- **A summoned surface must arrive at the cursor, not under a crumb.** That is the
-  single correction that turns the popunder from a loss into a win.
-- **A numeric parameter goes on the plot of its *input*, never its output.** Built and
-  verified in `threshold/`, which imports the production `otsuThreshold` and `pwmSlice`
-  — three bursts of sixteen bits matching the generator, auto inside a 0.139–0.343
-  working window. This is why Bits, Bytes and Events having nothing to draw on does not
-  matter: a slice threshold belongs over the envelope, one pane up.
+Listening used to cost a node: out to the menu, add `Listen`, land on its own tab, come
+back. The block still exists and is still on the graph — a sink is a node (ADR-0027) and
+hiding it would make the flowgraph a lie — but the speaker beside the loop button creates
+it, and clicking does not move you off the tab you are on. Muting takes the voice out of
+the mixer and leaves the block, because "not right now" and "I am done with this channel"
+are different statements and the ✕ already means the second one. The button is hidden
+when what is in front of you is not audio, and standing on the `Listen` tab itself means
+the same thing as standing on its source.
 
-  **Decided, on looking at it: the line is the thing.** The prior art is Universal Radio
-  Hacker, which puts the slice threshold on the signal exactly this way, and it is the
-  right call for the same reason it is there — you are choosing a cut through a
-  waveform, and a number in a bar at the foot of the screen is a description of that
-  choice rather than the choice itself. This is the first thing in the study that is
-  settled by preference rather than by measurement, and it does not need a measurement.
+Measured, because a button on that bar is not free: at 1440 it costs the scrub track
+nothing, but at 430 it took the track from 112px to 76px and at 390 from 77px to 44px —
+two seconds a pixel on a 90 s capture. Below 560px the track now gets its own row, which
+puts it at 326px at phone width, better than the 77px it had before the speaker existed.
+The pill is 64px tall there instead of 40px; that is the trade, and a usable scrubber is
+worth 24px.
 
-### What is still open
+## Slowing the audio down, as built
 
-- **The strip's remaining eighteen numeric parameters.** Threshold and symbol period
-  work on the object; a de-emphasis constant, a BFO offset and a volume are numeric too
-  and have **no natural axis**. Two of twenty is the honest score.
-- **Does a mixed menu read as one list?** `menu/` is a timed drill for exactly this,
-  with a "do not merge" null on the ladder. Not yet run by a person. Building it shrank
-  the question: view parameters belong to the *view*, and only **Spectrum (7) and Time
-  (2)** have any — the other seven views have none, and a node menu never carries them.
+`0.5×` and `0.25×` on the transport, beside the clock. Slowing a recording down is the
+oldest trick in listening to radio — a weak voice through noise, or fast Morse, is
+legible at half speed when it is not at full — and halving is the step the ear hears,
+because each one is an octave down.
 
-  The page's first version buried the drill's own button two screens below the menu it
-  was timing, which is a fair description of why nobody ran it. Controls, button and
-  menu now sit together above the fold and every word of reasoning is below it. If it
-  still goes unrun, take the hairline: it is the cheapest marking that cannot be badly
-  wrong, and it is reversible.
-- **Hotkeys do not relieve that question, they scope it.** Only **8 of 22** operations
-  carry a key, so the key badge cannot mark the seam; and the rule that makes `s` safe
-  (SSB on `iq`, Stereo on `real` — never both at once) does not extend to parameters,
-  because colormap and CW demod are both valid on an `iq` node simultaneously.
-- **Inventory.** Folding the block tabs into the map hides the list of what you built.
-  `08-ui-principles` and ADR-0018 already contradict each other here — "siblings stay
-  visible" against "each segment a menu of its siblings" — and the proposal has to pick
-  a side. A count on the crumb would answer most of it; untested.
-- **The rest of the port.** The layout is in. Next is the picture menu on a
-  **right-click**, which the code makes easy: canvas `contextmenu` is entirely unclaimed
-  (the only binding is `wireNodeMenu` on crumbs and tabs), while a bare left click is
-  already `clearSelection()` at `app.js:2215` and cannot be taken. Splitting the two
-  menus by button **retires the merge question** the `menu/` drill was built to answer —
-  operations on the drag, the picture on right-click, and they never share a list. What
-  survives is the fold: the operations menu alone is 14 rows on `iq` against 6 slots.
+It is on the **clock**, not on the speaker. Everything here follows the clock: the
+waterfall, the playhead, the decoders reading blocks as the capture plays. Audio that
+slowed down on its own would drift away from the picture of it and then fight the
+mixer's own drift resynchronizer. So `Graph.speed` scales the tick and the mixer sets
+`playbackRate` on each chunk to match — `playbackRate` rather than a lower buffer sample
+rate, because a browser refuses a buffer below 3 kHz and a quarter-speed 8 kHz channel is
+under that. The pitch comes down with the speed, which is the point rather than a side
+effect: a pitch-preserving stretch would throw away the thing being listened for.
 
-### Two published copies
+Measured in a browser: 60 ms of wall clock advances the playhead 60.0 / 30.0 / 15.0 ms.
+The control is a readout you click rather than another icon — the transport is fixed-size
+buttons and one elastic track, so an icon costs the track about 36px on a phone. Below
+400px the gaps tighten, because with the speaker *and* the speed the buttons wrapped to a
+third row and the pill went from 64px tall to 94px at 360 wide; it is 65px at every
+narrow width now.
 
-`menu/` and `threshold/` are also published as private artifacts so they can be opened
-without serving the repo. The published copies differ from the branch in one respect
-only: the stylesheet and `dsp.js` paths, since an artifact cannot reach `../../../web/`.
+## Speech recognition, as built (decode unexercised here)
+
+`ext.whisper`: `real` audio in, `events` out, so a transcript rides the streamed decode
+and appears as the capture plays. whisper.cpp, CPU only, built in `Dockerfile.full` with
+`ggml-base.en.bin`.
+
+**Its failure mode is being convincing, and that is the whole design problem.** Every
+other program in the table either decodes a frame or does not — a CRC agrees or it does
+not. Whisper always produces fluent, well-punctuated English, including from silence,
+where "Thank you." and "Thanks for watching!" are its two famous inventions. So three of
+its own gates are raised from their defaults (`-nth 0.3`, `-lpt -0.7`, `-sns`), the
+temperature is pinned at 0 so the same samples answer the same way, the per-token
+probabilities come back as the evidence for each record, and anything under the
+confidence floor is marked `suspect` the way a failed CRC is — shown, not withheld, and
+not allowed to be the headline.
+
+**PocketSphinx was measured first and rejected.** It is in the Ubuntu archive *with* its
+model, so it needed no download at all. On real broadcast speech it returned `have a hand
+fed is you too soon to use it to the punches`; on synthesized speech it turned "control
+this is dispatch requesting your position over" into `to truly is the new trick where the
+a as the shoot old law`. A general language model emits fluent word salad; the only
+question is whether it is fluent enough to fool you.
+
+**What is not verified.** The weights live on huggingface.co, which this environment's
+proxy denies by policy, so the decode has never been run here. What *is* verified: the
+flags are real (`whisper-cli -m /nonexistent -f - -ojf -of - -nt` was run and fails only
+on the missing model), the JSON shape is read out of whisper.cpp's own `output_json`
+rather than guessed, and nine tests cover the parse, the confidence rules and the command
+line. The gap is closed where it can be: `Dockerfile.full` pipes a synthesized WAV
+through the real binary and the real model at build time and fails the image unless a
+`transcription` array comes back — so the three things most likely to break silently (a
+WAV on stdin via `-f -`, the model path, JSON on stdout via `-of -`) cannot ship broken.
+`conformance.test.mjs` lists it under `NO_FIXTURE` with that reason.
+
+## The dB range, as fixed
+
+**The control closed itself when you used it.** The strip re-renders on every parameter
+change, which rebuilds its pills, so an open popover has to be re-anchored afterwards —
+and that looked up the pill belonging to the control. A *folded* control has no pill; it
+lives behind its group's `more` chip. So the lookup found nothing and closed the popover.
+`min` and `max` fold at every width anybody uses, so adjusting either one closed the
+control doing the adjusting: the slider vanished the moment it moved.
+
+Re-anchoring now falls back to the group chip. It deliberately does **not** rebuild the
+popover: re-running `openPop` would replace the range input under the pointer, and a
+native drag does not survive its element being swapped — the popover would stay on screen
+and stop following the mouse, which looks like the control working and is worse. Four
+tests drive the method against stub elements; two of them fail against the old version.
+
+**Autoscale was there and unreachable.** `dbAuto` has existed since the beginning, on the
+`min` and `max` controls — behind the fold chip, then a control, then a button inside it.
+Double-clicking the colorbar now does it, which is the thing you have just dragged the
+range out of shape with, and the bar's tooltip says so. Snapped rather than eased: easing
+is right when the range is following a signal that is changing, and wrong as the answer
+to somebody asking for it now.
+
+**Inferno is the default colormap**, and now in one place. Both it and Viridis are
+perceptually uniform and colorblind-safe, so that does not separate them; Inferno's dark
+end is nearly black, so an empty waterfall reads as empty and a weak carrier is the first
+thing that is not, where Viridis starts on a purple floor a faint signal has to
+out-shout.
+
+"The default colormap" was a literal in five places — three fallbacks in `colormap.js`,
+the waterfall's own constructor, and the viewport defaults — and the first pass at this
+changed one of them. The waterfall was still *built* Viridis and only became Inferno when
+something happened to set it afterwards. There is one exported `DEFAULT_COLORMAP` now,
+every fallback reaches for it, and it leads the picker's list, since the order of that
+list is `Object.keys` on the table.
+
+## Operator flowgraphs: built, and two holes closed
+
+Asked whether GNU Radio plugin capability still needed building. It does not — ADR-0032
+made a flowgraph an adapter and ADR-0026's packs let an operator supply one
+(`SDRFLEX_ADAPTERS`, a directory with `adapter.json` and a `.py` beside it). What was
+missing was that nobody had ever *run* one: the tests checked that a manifest compiles
+and that its flowgraph path resolves, and both holes below lived in the seam between the
+validator and `convert`, where a compile-time check cannot see them.
+
+- **`f32` was convertible and rejected.** So an operator could not write a pack that
+  reads one float per symbol — which is exactly what the M17 packet decoder that ships
+  here does. A pack for it would have been refused with "not one of cu8, cs8, cs16,
+  cf32, s16".
+- **`cs8` was accepted and unimplemented.** Such a pack passed validation at startup and
+  threw `no conversion to cs8` at the first click. Validating a pack at startup exists to
+  stop exactly that, so this was the worse of the two. `cs8` is now implemented rather
+  than dropped, since it is a real format a real radio produces.
+
+Both came from `adapterdir.js` keeping its own copy of the format list. There is now one
+exported list and a test asserting every entry can actually be produced and that every
+shipped adapter asks for one of them.
+
+The end-to-end test needs no GNU Radio, which is the point of ADR-0032: a flowgraph is a
+program that reads samples and prints JSON, and a short Python script satisfies that
+contract exactly. So the operator-facing path is now exercised on any machine with a
+python3 rather than only on one with a full GNU Radio install.
+
+## The hosted client
+
+**It needs nothing ported.** `web/` is static ES modules with no build step, and the
+client falls back to its in-tab engine when no websocket answers — so whatever is on the
+deployed branch *is* the hosted version. Checked the way Pages actually serves it (a dumb
+file server with no `/ws`, and no `?engine=mock`): it comes up in 0.8 s, Inferno is the
+default, the speaker and the playback speed work, autoscale works, and `Identify`
+correctly reports that it has nothing to run.
+
+So everything client-side from the last two sessions is already there once the branch is
+right: the symbol-grid and tuner-grid fixes, the reload recipe, the menu hotkeys, the
+speaker, half and quarter speed, the dB popover fix, autoscale and Inferno.
+
+What it cannot have is anything that runs as a process — the external decoders, a radio,
+the capture library, and the streamed decode that drives them. That is not a gap to close;
+it is what the two deployments are for.
+
+**Deployed by Actions, on every push to `main` that touches `web/`.** The trigger used
+to name `claude/sdr-flex-toolkit-planning-c4ghl1` — trunk by accident until `main` took
+over, and unmoved since — which is a site that silently stops updating, the same shape as
+the container that ran for 37 hours.
+
+`web/` is the site root in this mode, so the app is at `/sdr-flex/` and **an old bookmark
+to `/sdr-flex/web/` will 404**; the repository's root `index.html`, which redirects there
+for the branch-serving mode, is not published at all. Checked before switching: everything
+under `web/` refers to itself relatively, nothing there starts with an underscore, and the
+websocket resolves to `wss://<host>/ws`, which closes without opening — the client reads
+that as no engine and falls back to the in-tab one in about half a second rather than
+waiting out a timeout.
+
+## The network sink, as built
+
+ADR-0027 named it three years of commits ago — "the audio sink, and later the file
+writer, the network sink, the recorder" — so this implements a decision rather than
+making one. `core.stream` on any node sends that node's output to a UDP port, GQRX's
+defaults: 48 kHz s16 mono on 7355, which is what the tools that eat GQRX's audio expect.
+
+**Why a sink and not another adapter.** An adapter is a *function*: reads a span, prints
+records, exits, and the records come back with timestamps, a pane, `Identify` and a
+golden capture. Some programs are *destinations* — a ground station drawing a drone's
+flight is not a `parse()` anybody wants to write, its map is the point. Nothing comes
+back, which is the trade, and it is why decoders worth parsing stay adapters.
+
+Client-driven, one chunk per tick, exactly like the audio mixer and for the same reason:
+the clock is the client's (ADR-0029), and a server-side send loop would be a second clock
+disagreeing with the first. So a pinned clip streams the clip, and slowing the transport
+slows what goes out.
+
+**A measurement that decided a constant.** Nothing paces datagrams within a chunk —
+`send` queues and returns, so a sink cannot stall the read loop for something that may
+not be listening — so a chunk has to fit what a socket takes at once. On loopback, the
+most forgiving path there is: 64 kB in one burst arrives whole, 96 kB loses 4 datagrams,
+128 kB loses 36. The receiving buffer saturates a little over ninety. A quarter second of
+48 kHz s16 is 24 kB, about 2.5x of headroom, and the loss when it comes is silent — which
+is why the margin is not thinner. Found by a test that failed at 96 kB before the number
+was chosen.
+
+**The trap worth knowing**: in a container `127.0.0.1` is the container, and nothing on
+your machine is listening there. `server/README.md` says so.
+
+## HD Radio, as built (decode unexercised here)
+
+`ext.nrsc5`: IQ in, events out. An NRSC-5 station carries more than audio — a station
+name, the title and artist of what is playing, and through Advanced Application Services
+*files*, which is a whole channel of content no amount of listening reveals. It reports
+its own MER per sideband and a bit error rate, which ride every record as the evidence
+for it (ADR-0017).
+
+Its own receiver rather than gr-nrsc5: what this needs is the receiving half, and that is
+a self-contained C program. gr-nrsc5 is the transmitter side and drags in a patched
+fdk-aac to encode audio nothing here encodes.
+
+**Read out of its source rather than guessed**, which is what the M17 `-h` line taught.
+`-r -` reads stdin (`main.c:1060`). With `-r` set it wants the program number as its
+*only* positional argument, not a frequency as well (`main.c:926` counts
+`optind + (!input_name + 1)`) — passing both is a usage error and no decode at all. Its
+logger writes to stderr with a wall-clock `HH:MM:SS` prefix, which is when the decode ran
+rather than a time in the signal, so it comes off.
+
+**What is verified**: eight tests over the parse, and the adapter run end to end against
+the real binary — converting to cs16 at 744.2 kS/s, feeding stdin, coming back in 0.4 s
+with the honest "never synchronized" note. **What is not**: a successful decode.
+Synthesizing NRSC-5 needs gr-nrsc5 and argilo's patched fdk-aac, and building a
+transmitter to test a receiver is a bigger dependency than the fixture is worth here.
+`NO_FIXTURE` says so.
+
+One thing the image would have shipped broken: nrsc5 links `libao` and `libfftw3f`, and a
+binary copied out of the build stage does not bring its shared libraries. The runtime
+stage now installs both, and the verification line runs noise through the real binary on
+stdin so a rejected argument list fails the build rather than the first click.
+
+## TEMPEST, as built — the raster against a real leak
+
+The node existed; it could not read a real one. Tried against a 0.667 s synthetic capture
+of a monitor's HDMI leak at 20 MS/s (640×480@59.94, pixel clock 25.175 MHz +3 ppm,
+harmonic 11, 800×525 raster → **635.55 samples a line**, 525 lines, 40 frames). The
+capture is not in the repository and is not going in it: a TEMPEST capture is a picture of
+a screen. It lives in the scratchpad.
+
+The first run returned a picture two lines wide with no frame found, in **86 seconds**.
+Four things were wrong and each was measured before it was changed.
+
+**The autocorrelation was done by hand.** One multiply-add per sample per lag, forty
+thousand lags, half a million samples: 86 s. Through the FFT — power spectrum, transform
+again — it is 1.1 s and agrees to four decimal places at every lag checked. The transform
+runs forward twice rather than forward-then-inverse, because the power spectrum is real
+and non-negative so its transform is real and even; reversal does not matter and the scale
+cancels. `dsp.autocorrelate`.
+
+**The folded pixel clock beat the picture.** 25.175 MHz sampled at 20 MS/s lands at
+5.175 MHz — 3.86 samples a cycle — and the envelope correlates with *that* at 0.71 against
+0.37 with its own line structure. So the line came out 1271.03 samples, exactly twice the
+truth, and the frame search settled on two lines. Averaging the signal over a quarter of
+the shortest line the search will consider removes it: 635.67, and a 525-line frame.
+Measured across windows: 10 still fails, 16 is marginal, 20 and up are solid.
+
+**A parabola through one correlation peak is not precise enough.** 635.67 against 635.55
+is 180 ppm — 60 samples of shear from the top of a frame to the bottom. Taking the line
+period back *out* of the frame lag, which is 525 lines away, gives 635.5489: **2 ppm**,
+and less than one sample of shear across the frame. Same peak, measured from 525 times
+further away.
+
+**And the frames walk.** Nine samples from the first to the fortieth, because the
+monitor's clock is not the radio's. A 4096-row cap meant only seven frames were being
+averaged; lifting it to use all forty made the picture *smoother and blurrier*, and the
+half-against-half measure used to check it said 0.85 against 0.51 — it could not see the
+smear, because both halves were smeared the same way. Measuring horizontal detail instead
+showed it plainly: forty frames stacked blind are **ninety times** less sharp than forty
+aligned, and worse than seven on their own.
+
+So each frame is now aligned against the stack before being added — and then the synthetic
+fixture built to pin that down showed the opposite, because its folded harmonic lands near
+two samples a cycle and the column correlation used to measure alignment has a peak every
+two samples. Both results are real. The node builds the stack both ways and keeps the
+sharper, which is **ADR-0041**.
+
+Result: the screen reads, with its text legible, in about 5 s end to end through
+`core.raster` with nothing told to it.
+
+**`fixtures/tempest-leak`** (193 kB, synthesized) is the regression test: a fractional
+number of samples a line, a pixel-clock harmonic folded into the passband, and frames that
+walk and jitter. `mod.rasterLeak` generates it. Every one of the four fixes was checked to
+fail against the code that came before it. `fixtures/tempest-raster` stays as the clean
+case and its README now points next door rather than claiming the hard case is untested.
+
+**What is still not claimed.** A harmonic that folds to within roughly twenty times the
+line rate is not separable by smoothing and will still win — at that point it is
+indistinguishable from the line's own twentieth harmonic. Interlace is not handled. A
+moving picture has no frame to average and the node says so rather than smearing three
+pictures together.
+
+**Two of my own measurements were worthless and were replaced.** Half-against-half
+agreement rewarded smoothness and picked the wrong branch. And smoothing the
+autocorrelation inside the frame search — the obvious next idea — was tried across four
+widths and made every case worse; it is not in the code.
+
+## Persistent sessions, as built
+
+Asked for as "Todo: persistent sessions" and then "Tempest and then persistent". A graph
+already survived a reload as a *recipe* — `resume.js`, one `localStorage` slot,
+overwritten every three seconds. What it did not have was a name. Close the tab for good
+and come back on Tuesday and there is nothing to come back to.
+
+**The open question was recipe-versus-live-engine, and it is not close.** Holding a
+session open on the server loses on the first argument and three more behind it:
+
+- **This tool runs with no server at all** — `index.html` off a disk, the hosted copy,
+  `?engine=mock`. A session living in a server process is a feature the primary
+  deployment cannot have.
+- It inverts ADR-0029. A held session holds a playhead, and the client owns the clock.
+- It stores derived values, which ADR-0017 exists to prevent. A recipe re-derives them
+  with fresh evidence; a held engine brings back a measurement of a capture that may
+  have been replaced.
+- Lifetimes, eviction, a memory budget, two clients on one session — all of it to avoid
+  re-running a chain that rebuilds in under a second.
+
+What a live session would genuinely buy is a long decode you do not want to repeat.
+Nothing here is one. Written up as **ADR-0042**.
+
+**So: the same recipe, named, in a place that is not one slot.** `web/src/sessions.js`
+adds no new description of a graph — it is a record (`{id, name, at, nodes, source,
+recipe}`), two stores with one shape, and a replay that is `resume.replay`.
+
+- **With a box**, sessions are `.json` files in `.sessions` *inside the capture
+  directory*. That is the directory somebody mounted; a sessions directory beside the
+  source tree is one inside the image, and the first `--build` after a week's work would
+  delete the thing the feature exists to keep. Asserted that the library's scan cannot
+  see it.
+- **Without one**, they are in the browser. Same JSON, so moving between the two is a
+  copy rather than a conversion, and `curl host:8722/sessions/<id>` is a backup.
+- **Over HTTP, not the socket.** The socket's dispatch table is deliberately the calls
+  `MockEngine` already had — the whole point of that exercise, and only meaningful if the
+  calls do not grow to make it true. A session is a document; it goes where `/version`
+  goes.
+- **`hello` says whether the box keeps them** rather than the client probing. A probe
+  cannot tell "no session directory" from "not a box": on a static host `GET /sessions`
+  answers with a 404 *page*.
+- **Nothing autosaves under a name.** No undo here, and a session that wrote itself down
+  continuously would eventually overwrite what you meant to keep with what you were
+  about to abandon. The name wears an asterisk when the graph has moved. The
+  three-second slot stays, doing the job it was built for.
+- **A live radio is refused with a reason.** `canReplay` already declined to restore one;
+  this declines at save time, where somebody can still do something about it.
+
+**The server now writes on a client's behalf for the first time**, which with no
+authentication in front of it is worth bounding out loud: one `.json` per id in one
+directory, ids matched against `[a-z0-9-]` *on the server* and not merely generated
+safely on the client, writes through a rename so a full disk cannot leave a truncated
+session where a whole one was, and a body over a megabyte refused before it is read.
+
+**Found by smoke-testing rather than by the suite, which is the note worth keeping.**
+Twenty-one tests passed against a server that kept no sessions at all. They each built a
+server by naming a few options; `start()` hands over `CONFIG` whole, and `CONFIG` carried
+an explicit `sessionDir: null` — which is a different thing from leaving the key out, and
+took the destructuring default away. Four `curl` calls against the real binary found it in
+a minute. There is now a test that constructs the server the way `start` does.
+
+**One UI change went with it.** The strip's text control committed on every keystroke,
+which is right for a sync word — each character narrows the framing and you watch it
+happen — and wrong for a name: typing "work" saved four times and called it "wor" on the
+way. `commit: 'enter'` holds the draft until the popover closes, and clears it before
+committing, because committing re-renders and a draft that survives that renames twice.
+
+**Not verified here.** There is no browser in this environment and the Playwright suites
+are not in this checkout, so the click path — the `session` box, the `saved sessions…`
+menu — is exercised only as far as its parts. The stores, the routes, the id safety and
+the replay round trip are tested; the wiring between the strip and those is not.
+
+## Identify, as fixed — it had gone missing on the hosted copy
+
+Reported: "I was looking at the new web version, and it's working very well. Where did the
+'identify' capability go?" It had not gone anywhere; it had never been drawn there. Three
+separate faults, found while answering:
+
+**The button required an installed adapter.** `canIdentify` returned false unless some
+adapter was `available`, and adapters are processes the box owns (ADR-0013) — `MockEngine`
+never sets `this.adapters` at all. No box, no adapters, no button. **A button that is not
+drawn cannot say why it is not there**, which is the one thing ADR-0031 asks of this
+feature. The panel now opens on any `iq`, `real` or `bytes` node and says **"no decoders
+available"** when it has none.
+
+**The doc claimed the fix that was not there.** The Pages workflow comment said
+"`Identify` knows this and says so rather than offering a decoder that cannot run." It did
+not. Written last session, by me, about behavior that did not exist. Corrected in place.
+
+**The one decoder that could have run there was never loaded.** `web/plugins/bbc.js` is
+deployed to the site and executes entirely in the tab (ADR-0029), but `loadPlugins` only
+fetched plugins when a *server* advertised a plugin directory. A static host cannot list a
+directory, so there is now `web/plugins/index.json` naming them and `plugins.loadSite()`
+fetching it. The drift this invites is silent — add a decoder, it works on a box because
+the box scans, and is simply absent from the hosted copy — so a test asserts the manifest
+and the directory agree, and it was checked to fail when they do not.
+
+**And Identify could not have run it anyway.** `identifyPlan` only ever saw
+`engine.adapters`. Plugins are now planned too, marked `plugin: true`, and skipped *with a
+reason* when they take a different kind rather than being left out of the report. Two
+things fell out of doing it:
+
+- **The plugin half runs in the client, always.** A plugin is a file dropped on this
+  window; on a box the server has never seen it. So `app.openIdentify` builds one plan and
+  hands each half to whoever can run it, and calls `engine.identify` only when there are
+  adapter candidates — asking an engine to identify a byte stream answers "nothing to
+  identify on a bytes stream", which is true of the engine and false of the report.
+- **Identify now works on a `bytes` node**, which is where a plugin reads. That is the
+  only kind this tool can identify with no box at all. `runPlugin` has always been
+  bytes-only regardless of what a manifest declares, so this is the honest scope rather
+  than the advertised one.
+
+`MIN_DECODE_CHARS` and `textLength` moved from `engine.js` into `identify.js`, because a
+plugin row and an adapter row sit in the same sorted list and a threshold that differed
+between them would rank rows by which code path produced them.
+
+**Not verified here.** No browser in this environment and the Playwright suites are not in
+this checkout, so the button appearing and the panel filling are tested only as far as
+their parts: the planner, the runner, the loader, and the engine's message. The click path
+is not.
+
+## Plugins are fed what they declare, as built
+
+Asked as "what's the difference between plugin and decoder?", which turned into a real
+finding. The vocabulary answer: **adapter** is the subprocess kind (`server/adapters.js`,
+ADR-0013), **plugin** in the code means the JS kind (`web/src/plugins.js`), and
+**decoder** is a *category* in `docs/04-plugins.md` — while ADR-0028 says all of them are
+plugins and the category is defined by the stream types it sits between. The code had
+drifted back into the conflation ADR-0028 was written to end.
+
+**And the decision had only ever been half-implemented.** The manifest declared `in`, the
+palette filtered on it, `Identify` planned on it — and `runPlugin` fetched bytes whatever
+it said. A plugin declaring `real` was offered in the menu, built a node, and then
+reported "nothing upstream has produced bytes yet". Invisible, because the only plugin
+that existed read bytes.
+
+**The "just convert it in the plugin" option did not exist.** The bytes a plugin received
+are the *output of a slicer*, several nodes downstream of the audio — not a serialized
+form of it. There was never a buffer to reinterpret, so the choice was never
+engine-converts versus plugin-converts; it was fed versus cannot run. Worth writing down
+because it looked like a genuine fence for a while.
+
+Built:
+
+- **`Graph.pluginFeed(nodeId, at, span)`** — reads the node's output by its kind:
+  `readSpan` for `iq`/`real`, `sliceBytes` for `bytes`. On `Graph` rather than in either
+  engine, because `Identify` runs the plugin half in the client (ADR-0029) whichever
+  engine is behind it. Whole span or the pinned clip, the same rule an adapter gets.
+- **`decode(data, params, info)`** — a third argument carrying `{kind, sampleRate,
+  centerHz, count, t0, t1}`. Backward compatible; the two-argument plugins still work.
+  Anything on samples needs the rate, and a decoder that assumed 8 kHz and was handed 48
+  would report every digit as a different one.
+- **`out` bounded where `in` was widened.** A manifest declaring `out: 'real'` is
+  declaring itself a stage, and everything downstream would read it through `readSpan`,
+  cached, on the engine's clock — nothing routes a read through a JS function, so that
+  node would build, appear in the menu and produce nothing. Refused at load, with the
+  reason. The general block is a different piece of work.
+- **`Identify` passes its own bounded window** to the plugin half. A plugin runs
+  *synchronously in the tab*; handed a hundred seconds it would lock the window, and the
+  report would be claiming something about a span it never read.
+- **`web/plugins/dtmf.js`** — the second shipped plugin, and the first that reads `real`,
+  so the path has a test that is not hypothetical. Eight Goertzel filters on a 12 ms grid.
+  All sixteen digits at 8/22.05/44.1/48 kHz; rejects noise, a single tone, and a sweep
+  through the band; decodes at −12 dB wideband SNR (unsurprising — eight narrow filters
+  is about 25 dB of processing gain — but measured, and the number to argue with if it
+  regresses).
+
+**One thing measured and corrected on the way.** A 36 ms tone passed a 40 ms floor,
+because `round(40/12)` happens to be 3. The fix was not to round differently — a tone is
+only seen on the block grid, so a real 40 ms tone measures as 36 or 48 depending on where
+it starts, and requiring the larger count would reject a legal tone on alignment alone.
+The rule is now stated: keep it if it *could* have been long enough, and report the
+measured length so the doubt is visible.
+
+**The test suite found one of my own errors too.** The graph test encoded its `cu8`
+fixture as though zero were byte zero, ignoring the 127.5 offset — so the "envelope" came
+back centred on zero, the detector rectified it, and nothing decoded. Written out
+longhand in the test now rather than folded into a constant.
+
+**Not verified here.** No browser, so the palette offering a `real` plugin and the panel
+filling are tested through the engine and the planner rather than by clicking.
 
 ## Open, needs a decision
 
@@ -904,6 +1574,143 @@ only: the stylesheet and `dsp.js` paths, since an artifact cannot reach `../../.
 - **The `view` group label** on the parameter bar may want a more generic name, since
   its contents change with context.
 
+## The chrome is too tall, and it is parked (measured, not built)
+
+Reported: "the bottom pills are stacked and are different sizes, there's lots of wasted
+space around them. Same with the top bar — a ton of wasted space up and to the right."
+
+Measured in Chromium with a tuner and an FM demod on screen, which is the shallowest
+chain anybody actually has:
+
+| | 1440 x 900 | 1280 x 720 |
+|---|---|---|
+| crumb row | 38 px, **8% covered**, 1214 px of nothing to the right of it | 38 px, 9% |
+| tab row | 30 px, 18% covered, all of it in the first 240 px | 30 px, 20% |
+| dock | 105 px: a 588 px transport pill above a 552 px strip pill, both centred | 105 px |
+| **total chrome** | **173 px = 19% of the window** | **173 px = 24%** |
+
+So both halves of the report are right, and the "different sizes" is literal. One thing
+in the report is not: the 2 px the two strip groups sit apart is not a misalignment. The
+strip shares a baseline across its groups on purpose, and the two group *boxes* round to
+26 and 28 px around it. The only real problem at the bottom is that there are two pills.
+
+**A prototype was built and thrown away**, deliberately, because the decision is the
+user's and a half-agreed layout in the tree is worse than none. What it did, and what it
+measured, so it does not have to be rediscovered:
+
+- **One top row.** The tabs become a run inside `.topbar` — no background, no border of
+  their own — with `flex:1 1 20rem` and the whole row `flex-wrap:wrap`. That basis is the
+  entire responsive story: below it the tabs take a line of their own, which is today's
+  layout, so a phone degrades to what it already has.
+- **One bottom bar.** A `.deck` pill holds the transport and the strip as two runs with
+  the same hairline the strip already puts between its own groups; the strip loses its
+  own border, shadow and blur. `flex-wrap` again, and the rule hides under 860 px because
+  a vertical rule between two stacked runs points the wrong way.
+- Chrome came to **92 px (10%) at 1440**, 157 px at 430. A full-width variant — square,
+  no shadow, spanning the window like the axis — came to **74 px (8%)** and 139 px, and
+  buys noticeably more room for cells before the fold, at the cost of reading like a
+  status bar rather than a floating control (docs/08: "chrome sits beside the signal").
+
+Parked at the user's request to keep working on function. The open question is which of
+those two the bar should be, or a third thing; the measurements above are the input to
+that, and nothing else is blocked on it.
+
+### Unparked, 2026-09-27 — and the same numbers found twice
+
+Picked up again without knowing this section existed, from the same report, and
+re-derived it from scratch: **174 px, 19% at 1440x900 and 25% at 1024x700**, against the
+173 px / 19% / 24% above. Two independent measurements of the same screen agreeing to a
+pixel is worth more than either of them alone, so the number is not in doubt.
+
+**This time it is built rather than thrown away** — at the user's word, "ok, let's port
+it — start with the layout". The top row went in as this section describes: the tabs are
+a run inside the path row with no background or border of their own.
+
+What the earlier prototype got right and the port did not, at first: *"the only real
+problem at the bottom is that there are two pills."* The first port put the transport and
+the strip side by side as **two** pills and called it done, which halves the height and
+leaves the thing actually complained about. Corrected to one pill holding two runs,
+separated by the same hairline the strip already puts between its own groups.
+
+**Still open, and still the user's:** floating pill at ~90 px versus the full-width
+square variant at **74 px (8%)**. Nothing is blocked on it; the floating one is in the
+tree because it is the smaller change from what was there, not because it won.
+
+### The rest of the study, on a branch
+
+Four measuring pages under `docs/mockups/` — `layout/`, `surfaces/`, `menu/`,
+`threshold/` — none of which touch `web/`. Read them in that order. What they settle
+beyond the layout:
+
+- **Travel, not clicks.** `docs/08` already said clicks are the wrong metric. Changing
+  the colormap costs 386 px today and 234 px in the proposal *with one more click*.
+  Swept across four cursor positions, one column does not move: a menu that arrives at
+  the cursor costs 234 px from anywhere. Everything anchored to a bar slides with the
+  cursor.
+- **A numeric parameter goes on the plot of its input, never its output.** Built in
+  `threshold/` against the production `otsuThreshold` and `pwmSlice`. That is why Bits,
+  Bytes and Events having nothing to draw on does not matter — a slice threshold belongs
+  over the envelope, one pane up. Decided by looking at it: the line is the thing, and
+  the prior art is Universal Radio Hacker.
+- **Right-click, not a merged menu.** Canvas `contextmenu` is entirely unclaimed — the
+  only binding is `wireNodeMenu` on crumbs and tabs — while a bare left click is already
+  `clearSelection()` at `app.js:2215` and cannot be taken. Operations stay on the drag,
+  the picture goes on right-click, and they never share a list. This **retires** the
+  question of whether one menu can hold two kinds of row, which `menu/` was built to
+  answer.
+- **What survives of that is the fold.** "+ 15 more" says nothing, so the only move is to
+  open it. The fold row should name what it holds, and by ADR-0039's rank it was hiding
+  an entire category: a bare click on `iq` folded all fourteen operations. The candidate
+  is to fold by *depth* — one row per group, variants folded — which on `iq` is 5 groups
+  plus Export, exactly the budget. Not decided.
+- **Eighteen of twenty numeric node parameters still have no home.** See
+  `docs/mockups/surfaces/parameter-census.md`. Threshold and symbol period work on the
+  object; a de-emphasis constant, a BFO offset and a volume have no natural axis.
+
+## A build says which build it is
+
+Asked for after a rebuild that did not take: "how do i know if it worked? i think we need
+a version somewhere". Right, and nothing here could answer it — the banner's decoder
+count is a good functional check and a bad identity check, since it reads the same before
+and after any change that is not about decoders.
+
+**The version is a hash of the code, not a number somebody bumps.** There is no build step
+in this project and nothing to increment, and a hand-maintained version is wrong exactly
+when it matters: after the change somebody forgot to bump it for. `server/version.js`
+takes a SHA-256 over every `.js`, `.mjs`, `.css` and `.html` under `server/` and `web/` —
+77 files today — so it changes when and only when the code does. Captures and fixtures
+are data and stay out of it.
+
+A git sha rides along when there is a `.git` to read one from, and it is a hint rather
+than the identity for two reasons that are both real: the image has no `.git` in it (it
+copies `web`, `server`, `fixtures` and nothing else), and a checkout with uncommitted
+edits reports a sha describing a tree that is not the one running.
+
+Four surfaces, no new chrome:
+
+- `curl -s localhost:8722/version` — the check that needs no browser and no websocket.
+- The second line of the startup banner, so `docker compose logs` has it.
+- `console.info` when the page connects. "Which build is this" gets asked about twice a
+  month and a permanent line on screen answering it is the accretion docs/08 warns about.
+- The metrics strip (`m`), where the rest of the instrumentation already lives.
+
+The page and the engine are served by the same process, so one number covers both.
+
+Two ways a rebuild appears not to take, and neither announces itself:
+
+- **`docker compose up -d --build` leaves the running container alone when the build
+  fails.** A failed build and a build that changed nothing look identical from outside.
+- **A rebuild without a `git pull` is a silent no-op.** `build: context: .` is the
+  checkout on the box, so rebuilding unchanged source produces a byte-identical image and
+  compose has no reason to recreate anything. This one prints nothing at all.
+
+The second was ours to fix and it was a documentation hole: `git pull` appeared nowhere
+in `server/README.md`, which said `docker compose up -d --build` in three places and left
+the reader to know that it builds local files. There is an *Updating* section now, with
+the two failure shapes side by side and `docker compose ps` as the tell — a container's
+uptime is the one indicator that works on every version, including the ones too old to
+have `/version`.
+
 ## Loose ends
 
 - ~~Plugins do not survive a reload.~~ Fixed: the box serves every `.js` in
@@ -923,8 +1730,24 @@ only: the stylesheet and `dsp.js` paths, since an artifact cannot reach `../../.
   re-pointing at a fixture that can live in a public repo.
 - One capture in the set is 0.1 s long, which the author believes is a packaging bug
   on their side.
+- ~~A reload lost everything.~~ Fixed, in two halves, because it is two problems.
+  `beforeunload` asks when there is a chain to lose, which stops the mis-click; and
+  `web/src/resume.js` writes what is on screen down every three seconds and offers it
+  back on the next load, which covers the ones a prompt cannot stop — a crash, a closed
+  tab, a container restart. What is written is a **recipe**: nodes, operations, the
+  parameters somebody turned by hand, and which capture. Not samples, not spectra, and
+  *not one derived value* — re-deriving gives the same answer with fresh evidence, and a
+  stored copy of a measurement is a copy that can go stale against the signal it
+  measured. An offer rather than an action, since there is no undo. Measured: the bar
+  clears the dock at every window height down to 360 × 500.
+
+  Found on the way: `withNode` was being dropped by `remote.addNode`, so a Math node
+  built from the menu on a **server** engine arrived with one input instead of two
+  (ADR-0038). Never noticed because the mock engine, which the tests mostly drive,
+  passes it straight through.
 - The remote engine has no reconnect. If the socket drops the page says so and keeps
-  showing its last frames, but recovering means a reload.
+  showing its last frames, but recovering means a reload. Less painful now that a reload
+  brings the chain back, but still a gap.
 - `readSpan` on a long channel still builds the whole span in the tab's memory. The
   server chunks it over the wire, but export is the one path that still wants all of it
   at once.
@@ -1028,3 +1851,35 @@ only: the stylesheet and `dsp.js` paths, since an artifact cannot reach `../../.
   and is the tool for this. Two rounds were lost to guessing.
 - **Auto parameters must show their evidence** (ADR-0017). Twice, an estimator was
   confidently wrong in a way only its own stated reasoning exposed.
+- **A contract honored in three places out of four is a contract that lies.** The plugin
+  manifest's `in` was read by the palette, the planner and the type filter, and ignored
+  by the runner. Every consumer agreeing except the one that does the work is worse than
+  no declaration at all, because everything upstream of it says the thing will work.
+- **A capability that hides itself when it cannot run reads as a capability that was
+  removed.** `Identify` required an installed decoder before it would draw its own
+  button, so on the hosted copy it did not exist — and the person looking for it had no
+  way to tell "nothing to run" from "gone". Four words in a panel beat an absence.
+  The same applies to a file that ships and is never loaded.
+- **A comment describing behavior is a claim, and claims rot.** The Pages workflow said
+  `Identify` "knows this and says so" about behavior that was never written. Nothing
+  tests a comment. When one describes what the code does rather than why, it is worth
+  asking whether it still does.
+- **A default that is `null` is not a default that is missing.** Twenty-one passing
+  tests each named their own options; the shipped `CONFIG` passed `sessionDir: null`,
+  which is present, so the destructuring default never ran and the real server kept no
+  sessions. Tests that construct a thing by hand do not test the way it is constructed
+  for real — build it the way `start` does, at least once.
+- **Pick the measure before you pick the winner, and check the measure can see the
+  failure.** Stacking forty TEMPEST frames scored 0.85 on half-against-half agreement
+  against 0.51 for seven — and looked visibly blurrier. The measure rewarded smoothness,
+  which is what the failure produces. Horizontal detail showed a 90× difference in the
+  other direction. A metric that cannot distinguish the two outcomes is not evidence.
+- **"The rebuild did not take" is three separate questions, and guessing picks the wrong
+  one.** A container ran 37 hours across a dozen `docker compose up -d --build` runs.
+  Three theories were wrong in order — the build is failing, `git pull` is missing, the
+  checkout is on a stale branch — before the timeline placed the image's birth *before*
+  the commit that broke the build, which had been failing at one line at the end of a
+  ten-minute log ever since. **`docker compose up -d --build` leaves the running
+  container alone when the build fails**, so a failed build and a no-op build are the
+  same picture. `/version` and `node check-build.mjs` exist so the next one is a
+  question asked of the machine rather than reasoned about.

@@ -85,16 +85,18 @@ Everything required, with `rtl_433` as the example:
 | `id` | starts with `ext.`; defaults to `ext.<directory name>` |
 | `in` / `out` | `iq`, `real`, `bits`, `bytes`, `events` — decides where it appears in the menu |
 | `command` | candidate binaries, in preference order. Several because one program has several names: `dump1090`, `dump1090-mutability`, `dump1090-fa` |
-| `wants.format` | `cu8`, `cs8`, `cs16`, `cf32`, `s16` |
-| `wants.rate` | what the program needs on stdin |
+| `wants.format` | `cu8`, `cs8`, `cs16`, `cf32` for IQ; `s16`, `f32` for a real stream |
+| `wants.rate` | what the program needs on stdin. For a decoder that reads symbols this is the **symbol** rate — see below |
 | `wants.container` | `wav`, for a program that reads through libsndfile and will not take headerless samples on a pipe |
 | `params` | the knobs. The parameter strip draws one it has never heard of |
+| `params[].type` | `text` (the default), `enum` with `values`, or `multi` with `values` — a set, several of which can be on at once, kept as a space-separated string |
 | `args` | the command line. `{rate}`, `{centerHz}`, `{dir}`, `{param:id}` are substituted |
 | `parse` | `jsonl` — one JSON object per line — or `lines` |
 | `title` | which field is the headline of a record, in order of preference |
 | `sweep` | what "try everything" means for this decoder, used by **Identify** |
 | `recordsOn` | `"stderr"`, for a program whose stdout is not records — see below |
 | `minRate` | the narrowest stream that could contain what this decodes — see below |
+| `after` | the stages that must run between a demodulated stream and this decoder, each `{ op, rate }` — only for a decoder that does not read samples, see below |
 
 **A flag whose value is empty is left out, with its flag.** That is what the `if` form is
 for: "restrict to one protocol" and "restrict to no protocol" are different command
@@ -140,6 +142,57 @@ parse: (stdout, stderr, spec, meta) => {
 "there were two seconds of voice here and this node does not carry it" is useful and
 silence is not. Carrying decoded audio back into the graph is a real gap; an adapter
 produces records today.
+
+## When the program reads symbols rather than samples
+
+Most decoders take samples and find their own clock. A few take one value per symbol,
+already on the symbol grid — `m17-packet-decode` is the one here — because they correlate
+for a syncword rather than tracking a clock.
+
+Say so with the symbol rate and a float format:
+
+```js
+wants: { format: 'f32', rate: 4800 },   // one float per symbol, not per sample
+```
+
+and then **put a `core.symbols` node in front of it**. That node is where the sampling
+instant, the zero level and the scale are decided, and it shows all three with the
+evidence behind them (ADR-0040). Doing it inside your adapter would work and would hide
+the only numbers that explain a failure.
+
+Getting this wrong is quiet, which is why it is worth a section. Hang the decoder
+straight off an FM discriminator and nothing errors: the conversion in front of it
+resamples 48 kS/s down to 4800 and says so in the node's note. But a resampler
+low-passes and decimates — it picks no sampling instant — so the decoder reads a signal
+that has no symbol grid in it and reports nothing at all. Write the "nothing decoded"
+note to name that case; `ext.m17_packet` checks `meta.inputNote` for the word `resampled`
+and says which node is missing.
+
+**And say it in the manifest too, so `Identify` can build the chain for you.** A
+speculative pass demodulates a span and hands the result to every decoder that could read
+it — which produces samples, not symbols, so without this a decoder like yours is
+findable by hand and invisible to the button:
+
+```js
+after: [{ op: 'core.symbols', rate: 48_000 }],
+minRate: 12_000,
+```
+
+Two numbers, and they mean different things. `rate` is what the stream *in front of the
+stage* should be: `Identify` narrows the IQ once and shares it, and it sizes that from
+`wants.rate` unless you say otherwise — which for a symbol decoder would decimate the
+channel to a few kilohertz and remove the signal before the stage ever saw it.
+`minRate` is the floor: 4FSK at 4800 symbols a second with ±2.4 kHz deviation occupies
+about 9.6 kHz, so under about 12 kS/s the signal is not in the channel at all and the
+report says that instead of trying.
+
+**A speculative pass should refuse to guess.** `sweep` is where that goes. Measured on
+`fixtures/m17-packet`: pointed at the *envelope* of an M17 burst rather than its
+frequency — which `Identify` tries, because which demodulator is right is the question —
+`m17-packet-decode` returns five packets with plausible callsigns and a failed link setup
+CRC on every one. `sweep: { errorfree: 'yes' }` turns on the program's own `-f`. Where a
+program has no such flag, mark the record instead: a record with a `suspect` field is
+shown, is never the headline, and sorts with the thin ones (ADR-0031).
 
 ## When a manifest is not enough
 
@@ -261,7 +314,13 @@ merely missing a fixture, when in fact no chain ending in a plugin could be buil
 - **Identify** runs it along with everything else, and will say why it was skipped if it
   cannot read the stream in front of it
   ([ADR-0031](adr/0031-identify-says-what-it-will-not-claim.md)).
-- A missing program is still listed, greyed, naming what to install.
+- A decoder whose program is not on the box is **not in the menu**
+  ([ADR-0039](adr/0039-the-menu-answers-the-gesture.md)) — the menu answers "what do you
+  want to do with this", and one that cannot run is not an answer. `Identify` still names
+  it, with the reason, which is where "what could this box do that it cannot do yet"
+  belongs. One from *your* pack is the exception and stays listed, greyed, naming what it
+  wants: you wrote that manifest expecting it to run, so its absence is a mistake to be
+  told about.
 - The node is **opaque** — you cannot drill into somebody else's decoder, and the tab is
   drawn differently to say so. That is the trade for hundreds of protocols you did not
   write; the native chain is there for when you need to *understand* a decode rather than

@@ -189,6 +189,7 @@ One manifest each ([ADR-0013](adr/0013-external-decoders-as-subprocesses.md),
 | 4 | **direwolf** | APRS, AX.25 | KISS over TCP rather than stdout: the first adapter with a socket transport |
 | 5 | **dsd / dsd-fme** | DMR, P25, NXDN, D-STAR | audio in, audio + metadata out — the first adapter that returns a *stream* as well as records |
 | 6 | **redsea**, then **acarsdec**, **AIS** | RDS, ACARS, AIS | copies of patterns already proven — except that redsea forced one new thing, below |
+| 7 | **m17-packet-decode** | M17 packet mode: SMS and data | the first adapter that reads *symbols* rather than samples, which is what `core.symbols` exists for — see below |
 
 Each entry above names the *new mechanism* it forces, which is the real reason for the
 order: by the sixth adapter, adding one is a manifest and a fixture.
@@ -204,6 +205,16 @@ baseband spectrum ([ADR-0036](adr/0036-a-domain-is-a-view-parameter.md)), so the
 the narrowest stream that could physically contain what this decoder reads, so `Identify`
 skips it with a reason rather than demodulating a wide span on every capture to look for
 something that is provably not in it (ADR-0031).
+
+**M17 packet mode's, which was not predicted either:** it is the first adapter whose
+input is not samples. `m17-packet-decode` reads one float per symbol, already on the
+symbol grid, because it correlates for a syncword rather than recovering a clock — and
+nothing in the chain produced that. The answer is a node rather than twenty lines inside
+the adapter ([ADR-0040](adr/0040-a-decoder-may-read-symbols.md)): the sampling instant
+and the level fit are the two numbers that decide whether a decode happens, so they
+belong somewhere you can see them. It also turned up the thing the M17 entry above got
+wrong — M17's two modes are two programs from two different upstreams, and the adapter
+that read one had been claiming both.
 
 Then **gr-satellites** as a single dependency (~100 decoders) and **Identify** over
 everything installed.
