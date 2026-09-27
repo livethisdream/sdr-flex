@@ -122,7 +122,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 /* The crumbs are as wide as the path is; the tab run is the thing with slack, so it is
    the thing that scrolls — the same treatment the parameter strip already has. */
 .crumbs {
-  display:flex; align-items:center; gap:.15rem;
+  display:flex; align-items:center; gap:.3rem;
   flex:0 1 auto; min-width:0; align-self:center;
   overflow-x:auto; scrollbar-width:none;
 }
@@ -172,7 +172,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tabs {
   /* Same gap and the same centring as the crumbs, so the two runs sit on one line
      rather than each on its own idea of one. */
-  display:flex; align-items:center; gap:.15rem; padding:0;
+  display:flex; align-items:center; gap:.3rem; padding:0;
   flex:1 1 auto; min-width:0;
   overflow-x:auto; scrollbar-width:none;
 }
@@ -193,7 +193,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    and it only turns dangerous-colored under the pointer. */
 .x {
   display:inline-flex; align-items:center; justify-content:center;
-  width:20px; height:20px; margin:-4px -6px -4px .28rem; vertical-align:middle;
+  width:20px; height:20px; margin:-4px -2px -4px .3rem; vertical-align:middle;
   font-style:normal; font-size:.62rem; line-height:1; color:var(--dim); border-radius:4px;
 }
 .x:hover, .x:focus-visible { background:var(--crit); color:#fff; outline:none; }
@@ -797,7 +797,17 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tab.ext .tk { color:var(--warn); }
 
 /* siblings stay on screen at the current level, grouped so they read as a set */
-.sibs { display:inline-flex; gap:.1rem; padding:.1rem; border-radius:4px; background:var(--panel); }
+/* The tray that says "these are the channels off this one, pick one". It kept its own
+   gap and its own 4 px corners, so the siblings sat 1.6 px apart inside a rectangle
+   while every other chip on the row was 4.8 px apart inside nothing — the row's last
+   square edge, and the reason two filled ovals looked jammed together. */
+.sibs {
+  display:inline-flex; align-items:center; gap:.3rem;
+  /* Horizontal only. Vertical padding on a tray buys no separation between the chips
+     inside it and costs the row 3 px of height, which is the height this whole exercise
+     was about reclaiming. */
+  padding:.1rem .3rem; border-radius:999px; background:var(--panel);
+}
 
 
 /* a pinned channel says so where you look for what the radio is doing */
