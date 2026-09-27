@@ -142,7 +142,10 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .themebtn:hover { background:var(--panel); color:var(--bright); }
 .dev {
   display:inline-flex; align-items:center; gap:.45rem;
-  padding:.2rem .6rem; border-radius:999px;
+  padding:.3rem .7rem; border-radius:999px; border:1px solid transparent;
+  /* Mono, because a device id is a machine string and not a word. Optically a touch
+     smaller than the sans beside it so the two read as the same size — which is the
+     only thing about them that should differ by family. */
   font-family:var(--mono); font-size:.72rem; color:var(--bright); white-space:nowrap;
 }
 .dev:hover { background:var(--panel); }
@@ -156,7 +159,10 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    A source chip is a dot and a name inside an oval, which is the shape every status
    indicator reaches for because the dot is what you read and the oval is what stops it
    colliding with the text beside it. */
-.crumb { padding:.16rem .55rem; border-radius:999px; color:var(--body); font-size:.8rem; white-space:nowrap; }
+.crumb {
+  padding:.3rem .7rem; border-radius:999px; border:1px solid transparent;
+  color:var(--body); font-size:.76rem; white-space:nowrap;
+}
 .crumb:hover { background:var(--raised); }
 .crumb.cur { background:var(--accent-lo); color:var(--bright); font-weight:600; }
 .crumb.dim { color:var(--dim); }
@@ -164,7 +170,9 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .sepc { color:var(--rule); padding:0 .1rem; }
 
 .tabs {
-  display:flex; gap:0; padding:0;
+  /* Same gap and the same centring as the crumbs, so the two runs sit on one line
+     rather than each on its own idea of one. */
+  display:flex; align-items:center; gap:.15rem; padding:0;
   flex:1 1 auto; min-width:0;
   overflow-x:auto; scrollbar-width:none;
 }
@@ -174,7 +182,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    Same shape, different question. */
 .tab {
   padding:.3rem .7rem; font-size:.76rem; color:var(--dim);
-  border:1px solid transparent; border-radius:999px; margin:.12rem .08rem;
+  border:1px solid transparent; border-radius:999px;
 }
 .tab:hover { color:var(--body); background:var(--raised); }
 .tab.on { color:var(--bright); background:var(--view-lo); border-color:var(--view-mid); }
