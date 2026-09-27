@@ -29,6 +29,11 @@
   --accent-mid:rgba(255,122,92,.45);
   --accent-veil:rgba(255,122,92,.07);
   --accent-ring:rgba(255,122,92,.22);
+  /* A view is not a thing you placed, so it must not wear the accent — that is what
+     the accent means, and spending it on "which picture am I looking at" would make
+     the one mark that says "you did this" mean nothing. Cool against the coral, low
+     enough to read as a tint rather than a color. */
+  --view:#8FB8DC; --view-lo:rgba(143,184,220,.13); --view-mid:rgba(143,184,220,.32);
   --on-accent:#160906;
   --ok:#4ADE9B; --warn:#F5C24C; --crit:#FF5470;
   --ok-mid:rgba(74,222,155,.45);
@@ -59,6 +64,7 @@
   --shadow-hard:rgba(23,32,48,.26);
   --edge:rgba(0,0,0,.22);
   --plot-veil:rgba(255,255,255,.8);
+  --view:#2F6D9E; --view-lo:rgba(47,109,158,.10); --view-mid:rgba(47,109,158,.30);
 }
 
 /* auto: no attribute set, so the operating system decides */
@@ -82,6 +88,7 @@
     --shadow-hard:rgba(23,32,48,.26);
     --edge:rgba(0,0,0,.22);
     --plot-veil:rgba(255,255,255,.8);
+    --view:#2F6D9E; --view-lo:rgba(47,109,158,.10); --view-mid:rgba(47,109,158,.30);
   }
 }
 * { box-sizing:border-box; }
@@ -162,9 +169,15 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   overflow-x:auto; scrollbar-width:none;
 }
 .tabs::-webkit-scrollbar { display:none; }
-.tab { padding:.42rem .7rem; font-size:.76rem; color:var(--dim); border-bottom:2px solid transparent; }
-.tab:hover { color:var(--body); }
-.tab.on { color:var(--bright); border-bottom-color:var(--accent); background:var(--panel); }
+/* Oval like the crumbs beside them, and tinted so the row still reads as two runs: a
+   coral wash on the channel you are in, a cool one on the view you are looking through.
+   Same shape, different question. */
+.tab {
+  padding:.3rem .7rem; font-size:.76rem; color:var(--dim);
+  border:1px solid transparent; border-radius:999px; margin:.12rem .08rem;
+}
+.tab:hover { color:var(--body); background:var(--raised); }
+.tab.on { color:var(--bright); background:var(--view-lo); border-color:var(--view-mid); }
 .tab.plus { color:var(--dim); font-family:var(--mono); margin-left:auto; }
 
 /* Remove sits on the current crumb and the current tab and nowhere else. It gets a
@@ -186,8 +199,8 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tab .spk { font-size:.66rem; margin-right:.24rem; }
 .tab.sq .spk { opacity:.35; }
 .tab .alvl {
-  display:block; position:absolute; left:.7rem; right:.7rem; top:3px; height:2px;
-  border-radius:1px; background:var(--ok);
+  display:block; position:absolute; left:.85rem; right:.85rem; top:2px; height:2px;
+  border-radius:999px; background:var(--ok);
   transform-origin:left; transform:scaleX(0); transition:transform .1s linear;
 }
 .tab { position:relative; }
@@ -768,7 +781,11 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   color:var(--rule); margin-left:.35rem; text-transform:uppercase;
 }
 .tab.on .tk { color:var(--dim); }
-.tab.ext { border-bottom-style:dashed; }
+/* A node you cannot see inside looks different (ADR-0013). That was a dashed underline;
+   on an oval it is a dashed ring, which is the same statement in the shape this row now
+   has. It shows on the current tab as it did before — at rest the `ext` mark on the kind
+   badge is what carries it. */
+.tab.ext { border-style:dashed; }
 .tab.ext .tk { color:var(--warn); }
 
 /* siblings stay on screen at the current level, grouped so they read as a set */
