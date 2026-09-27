@@ -1351,12 +1351,15 @@ class App {
     const onTime = this.view() === 'Time' || this.view() === 'Both';
     const onSpec = this.hasSpectrum();
     if (onTime && !onSpec) {
-      groups.push({ key: 'view', title: 'view', cells: viewCells.concat(timeCells) });
+      groups.push({ key: 'view', title: 'view', bar: false, cells: viewCells.concat(timeCells) });
     }
 
     if (onSpec) {
       groups.push({
-        key: 'view', title: 'view',
+        // Off the bar, reached by right-clicking the picture it changes. The controls
+        // are the strip's own, unchanged — only the trigger and the position moved, so
+        // nothing about how a colormap or an FFT size is set had to be rebuilt.
+        key: 'view', title: 'view', bar: false,
         cells: viewCells.concat(onTime ? timeCells : []).concat([
           { key: 'bins', label: 'fft', unit: 'bins', type: 'enum', value: String(p.bins), values: ['256', '512', '1024', '2048', '4096'] },
           { key: 'colormap', label: 'colormap', unit: '', type: 'enum', value: p.colormap, values: COLORMAPS },
@@ -3080,6 +3083,30 @@ class App {
       if (e.shiftKey) panBy(e.deltaY * 0.0015);
       else applyZoom(e.deltaY > 0 ? 1.18 : 1 / 1.18, at);
     }, { passive: false });
+
+    /* Right-click asks about the picture.
+     *
+     * The canvas had no `contextmenu` binding at all — the only one in the app is
+     * `wireNodeMenu`, on crumbs and tabs — while a bare left click is already
+     * `clearSelection()` on a drag shorter than 6 px and cannot be taken: a menu there
+     * would reopen itself every time you clicked the canvas to dismiss it. So the free
+     * button gets the new thing, and the drag keeps operations.
+     *
+     * The allocation is the right way round for discoverability too. Right-click is not
+     * discoverable, and it carries the *secondary* surface; the primary one stays on the
+     * gesture the empty state teaches in a sentence.
+     */
+    stage.addEventListener('contextmenu', (e) => {
+      if (!this.strip.groups || !this.strip.groups.some((g) => g.key === 'view')) return;
+      e.preventDefault();
+      this.metrics.interaction();
+      // A zero-size rect at the pointer is a legal anchor, so the controls arrive where
+      // the cursor already is rather than at the foot of the window.
+      const x = e.clientX, y = e.clientY;
+      this.strip.openMore('view', { getBoundingClientRect: () => ({
+        left: x, right: x, top: y, bottom: y, width: 0, height: 0, x, y,
+      }) });
+    });
 
     stage.addEventListener('dblclick', () => { if (this.hasSpectrum()) resetZoom(); });
 

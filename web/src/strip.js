@@ -31,7 +31,7 @@ export class Strip {
     const p = this._pending;
     this._pending = null;
     this.pop.hidden = true;
-    if (this._openPill) this._openPill.classList.remove('open');
+    if (this._openPill && this._openPill.classList) this._openPill.classList.remove('open');
     this._openPill = null;
     if (p) p.commit(p.value);
   }
@@ -61,6 +61,9 @@ export class Strip {
     return groups.map((g) => {
       const shown = g.cells;
       if (!shown.length) return '';
+      // A run reached by a gesture does not need a chip in the bar as well. It stays in
+      // `this.groups`, so `openMore` still finds it; it just stops paying rent here.
+      if (g.bar === false) return '';
 
       // A run you can only read folds away entirely. The source's center and rate are
       // facts about the capture, not controls — they were taking a third of the bar
@@ -150,11 +153,13 @@ export class Strip {
     const g = this.groups.find((x) => x.key === gk);
     if (!g) return;
     // The same test the layout used, or the chip opens a popover holding nothing.
-    const rest = foldsWhole(g.cells) ? g.cells : g.cells.slice(this._inline);
+    const rest = restOf(g, this._inline);
     this._openKey = null;
-    if (this._openPill) this._openPill.classList.remove('open');
+    if (this._openPill && this._openPill.classList) this._openPill.classList.remove('open');
     this._openPill = anchor;
-    anchor.classList.add('open');
+    // The anchor is a pill when the chip opened it and a bare rect when a gesture did.
+    // Only the first kind has a pressed state to show.
+    if (anchor.classList) anchor.classList.add('open');
 
     this.pop.innerHTML = `<div class="pophead"><span>${g.title}</span></div>` +
       `<div class="morelist">${rest.map((c) => {
@@ -207,7 +212,7 @@ export class Strip {
     const anchor = this.el.querySelector(`.pill[data-g="${k.g}"][data-k="${k.k}"]`)
                 || this.el.querySelector(`.pill.more[data-g="${k.g}"]`);
     if (!anchor) { this.closePop(); return; }
-    if (this._openPill) this._openPill.classList.remove('open');
+    if (this._openPill && this._openPill.classList) this._openPill.classList.remove('open');
     this._openPill = anchor;
     anchor.classList.add('open');
     const spec = this._find(k.g, k.k);
@@ -218,7 +223,13 @@ export class Strip {
     this._place(anchor);
   }
 
-  /** Above the thing it belongs to, and on screen. */
+  /**
+   * Above the thing it belongs to, and on screen.
+   *
+   * `anchor` only has to answer `getBoundingClientRect`, so a zero-size rect at the
+   * pointer is a legal anchor and the popover arrives at the cursor — which is the whole
+   * difference between a control you travel to and one that comes to you.
+   */
   _place(anchor) {
     const r = anchor.getBoundingClientRect();
     const pr = this.pop.getBoundingClientRect();
@@ -230,7 +241,7 @@ export class Strip {
     const spec = this._find(gk, key);
     if (!spec) return;
     this._openKey = { g: gk, k: key };
-    if (this._openPill) this._openPill.classList.remove('open');
+    if (this._openPill && this._openPill.classList) this._openPill.classList.remove('open');
     this._openPill = pill;
     pill.classList.add('open');
 
@@ -366,6 +377,27 @@ export class Strip {
  * layout and the popover have to agree about this: when they did not, the chip drew
  * correctly and opened onto an empty list.
  */
+/**
+ * What the fold chip opens.
+ *
+ * Normally the inline pills are the first few and the popover holds the remainder. Two
+ * runs have no inline pills at all and the remainder is the whole thing: one whose cells
+ * are all facts, and one that has left the bar entirely for a gesture. Slicing the first
+ * three off the second kind silently dropped fft, colormap and speed — the three you
+ * reach for most — out of the surface that had just become their only home.
+ */
+function restOf(g, inline) {
+  return (foldsWhole(g.cells) || g.bar === false) ? g.cells : g.cells.slice(inline);
+}
+
 function foldsWhole(cells) {
-  return cells.every((c) => c.type === 'ro' || c.type === 'action');
+  // A run holds nothing worth an inline pill when none of it is a control you would
+  // turn *while watching the signal*. Read-only facts and actions were the original
+  // two; a name you type and commit with enter is the third, and leaving it out had a
+  // consequence nobody intended. The session cell landed in the source's run, the
+  // `every` went false, and the source's center and rate — the two facts the comment
+  // above this file's layout says are "not controls" and should fold — came back inline.
+  // An unrelated feature un-hid them, and the rule was right the whole time.
+  return cells.every((c) => c.type === 'ro' || c.type === 'action'
+                         || (c.type === 'text' && c.commit === 'enter'));
 }
