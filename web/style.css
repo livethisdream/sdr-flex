@@ -143,8 +143,16 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .dev .live { width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 7px var(--ok); flex:none; }
 /* a file is not live — it is a fixed length of past, and the dot should not pretend */
 .dev .live.file { background:var(--dim); box-shadow:none; border-radius:1px; }
-.dev .devopen { font-style:normal; color:var(--faint); font-size:.6rem; margin-left:.1rem; }
-.dev:hover .devopen { color:var(--accent); }
+/* Its own control, ahead of the path. Quiet at rest — it is the thing you use once at
+   the start and then stop looking at — and it takes the accent on hover like the crumbs
+   beside it, so the row still reads as one row. */
+.openbtn {
+  flex:none; align-self:center;
+  padding:.16rem .5rem; border-radius:3px;
+  font-size:.72rem; color:var(--dim); white-space:nowrap;
+  border:1px solid var(--rule);
+}
+.openbtn:hover { color:var(--bright); background:var(--panel); border-color:var(--dim); }
 .crumb { padding:.16rem .42rem; border-radius:3px; color:var(--body); font-size:.8rem; white-space:nowrap; }
 .crumb:hover { background:var(--raised); }
 .crumb.cur { background:var(--accent-lo); color:var(--bright); font-weight:600; }

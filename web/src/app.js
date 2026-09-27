@@ -542,15 +542,22 @@ class App {
     // The device's center and rate are its node's parameters, so they live in the
     // strip when the source is selected. Repeating them here made the top row a
     // second readout of something already on screen.
-    // The device chip is the root of the path, so it is also where you change what
-    // the path starts from. Clicking the one you are already on opens a capture —
-    // the same place a source picker will live once there is more than one source.
+    // Opening is its own button, ahead of the path rather than inside it.
+    //
+    // It used to be a word appended to the device chip, which made one control mean two
+    // things and picked between them by whether you happened to be standing on the root:
+    // click the source you are already on and you get a file dialog, click it from
+    // anywhere else and you navigate. Reported as the open button being "oddly merged
+    // with the current file" — which is exactly what it was.
+    //
+    // So the chip goes back to being one thing, the path's first entry, and always
+    // navigates. `open` sits to the left of it because it is what you do *before* there
+    // is a path, and it reads as one: open, then the file, then where you are in it.
     const onRoot = this.channel === root.id;
     let html =
-      `<button class="dev${onRoot ? ' cur' : ''}" data-id="${root.id}"` +
-      ` title="${onRoot ? 'open a capture' : root.label}">` +
-      `<span class="live${this.engine.capture ? ' file' : ''}"></span>${root.label}` +
-      `${onRoot ? '<i class="devopen">open…</i>' : ''}</button>`;
+      `<button class="openbtn" title="open a capture from this computer">open</button>` +
+      `<button class="dev${onRoot ? ' cur' : ''}" data-id="${root.id}" title="${attr(root.label)}">` +
+      `<span class="live${this.engine.capture ? ' file' : ''}"></span>${root.label}</button>`;
 
     for (const n of ancestors) {
       if (n.id === root.id) continue;
@@ -566,11 +573,10 @@ class App {
 
     const el = $('#topbar');
     el.innerHTML = html;
+    const open = el.querySelector('.openbtn');
+    if (open) open.addEventListener('click', () => $('#file').click());
     for (const b of el.querySelectorAll('[data-id]')) {
-      b.addEventListener('click', () => {
-        if (b.classList.contains('dev') && b.classList.contains('cur')) { $('#file').click(); return; }
-        this.goChannel(b.dataset.id);
-      });
+      b.addEventListener('click', () => this.goChannel(b.dataset.id));
     }
     this.wireRemove(el);
     this.wireNodeMenu(el);
