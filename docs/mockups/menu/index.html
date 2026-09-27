@@ -15,6 +15,36 @@
 <div class="wrap">
   <h1>One list, two kinds of row?</h1>
   <p class="sub">
+    A menu that carries <em>operations</em> — things that build a node — and
+    <em>view parameters</em> — things that change the picture. Does it read as one list,
+    or as two stuck together? Change the treatment, run the drill, watch the two columns
+    in the result. <b>The reasoning is all below the fold; the thing under test is here.</b>
+  </p>
+
+  <div class="bar2" id="bar2"></div>
+
+  <div class="drill">
+    <span id="drill-target"><span class="q">Timing whether an operation and a parameter are
+      equally easy to find. Hit “another”.</span></span>
+    <button class="go" id="another">another</button>
+    <span class="live"><button id="reset" style="color:var(--dim);font-family:var(--mono);font-size:.7rem">reset</button></span>
+  </div>
+
+  <div class="device">
+    <div class="stagewrap" id="stagewrap">
+      <canvas id="sp" class="sp"></canvas>
+      <canvas id="wf" class="wf"></canvas>
+    </div>
+    <div class="tmenu" id="menu" style="left:54%;top:24%"></div>
+  </div>
+
+  <div class="nums" id="nums"></div>
+
+  <div id="res"></div>
+
+
+  <h2>Why this page exists</h2>
+  <p class="sub">
     The gesture discriminator is settled — <code>openMenu(x, y, selection)</code> already
     exists in <code>app.js</code>, already filters by stream type and by whether a
     selection is present, and a third answer is a one-line change. <b>This is the half
@@ -37,18 +67,6 @@
     is two rows; everywhere else the menu stays exactly what it is today. Switch the
     <em>view</em> control below and watch the row counts.
   </p>
-
-  <div class="bar2" id="bar2"></div>
-
-  <div class="device">
-    <div class="stagewrap" id="stagewrap">
-      <canvas id="sp" class="sp"></canvas>
-      <canvas id="wf" class="wf"></canvas>
-    </div>
-    <div class="tmenu" id="menu" style="left:54%;top:24%"></div>
-  </div>
-
-  <div class="nums" id="nums"></div>
 
   <h2>Where the mixed list actually occurs</h2>
   <p class="sub">
@@ -129,7 +147,7 @@
     the merge is even about.
   </p>
 
-  <h2>The drill</h2>
+  <h2>How the drill is built</h2>
   <p class="sub">
     Reading a menu is not the same as finding a row in it, and only the second one can
     be timed. This names a row — drawn from the whole list, folded ones included — and
@@ -145,14 +163,6 @@
     place. Without it the drill could only ever say which merge was best, never whether
     to merge at all. Opening that row costs a click, and the timer charges for it.
   </p>
-
-  <div class="drill">
-    <span id="drill-target"><span class="q">Press “another” to start.</span></span>
-    <button class="go" id="another">another</button>
-    <span class="live"><button id="reset" style="color:var(--dim);font-family:var(--mono);font-size:.7rem">reset</button></span>
-  </div>
-
-  <div id="res"></div>
 
   <h2>What a result would mean</h2>
   <p class="sub">

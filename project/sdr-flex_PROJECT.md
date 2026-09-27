@@ -812,6 +812,13 @@ Read them in order: `layout/` → `surfaces/` → `menu/` → `threshold/`.
   working window. This is why Bits, Bytes and Events having nothing to draw on does not
   matter: a slice threshold belongs over the envelope, one pane up.
 
+  **Decided, on looking at it: the line is the thing.** The prior art is Universal Radio
+  Hacker, which puts the slice threshold on the signal exactly this way, and it is the
+  right call for the same reason it is there — you are choosing a cut through a
+  waveform, and a number in a bar at the foot of the screen is a description of that
+  choice rather than the choice itself. This is the first thing in the study that is
+  settled by preference rather than by measurement, and it does not need a measurement.
+
 ### What is still open
 
 - **The strip's remaining eighteen numeric parameters.** Threshold and symbol period
@@ -821,6 +828,12 @@ Read them in order: `layout/` → `surfaces/` → `menu/` → `threshold/`.
   with a "do not merge" null on the ladder. Not yet run by a person. Building it shrank
   the question: view parameters belong to the *view*, and only **Spectrum (7) and Time
   (2)** have any — the other seven views have none, and a node menu never carries them.
+
+  The page's first version buried the drill's own button two screens below the menu it
+  was timing, which is a fair description of why nobody ran it. Controls, button and
+  menu now sit together above the fold and every word of reasoning is below it. If it
+  still goes unrun, take the hairline: it is the cheapest marking that cannot be badly
+  wrong, and it is reversible.
 - **Hotkeys do not relieve that question, they scope it.** Only **8 of 22** operations
   carry a key, so the key badge cannot mark the seam; and the rule that makes `s` safe
   (SSB on `iq`, Stereo on `real` — never both at once) does not extend to parameters,
