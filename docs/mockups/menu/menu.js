@@ -98,12 +98,78 @@ const FOLD = 6;   // ADR-0039: at most six rows, then `more…` expanding in pla
  */
 function foldLabel(hidden) {
   if (!hidden.length) return '';
+  // In group mode a folded row stands in for its members, so the honest count is what is
+  // behind them — and it has to aggregate. Listing rows one by one produced
+  // "1 view option · 1 view option · 1 view option", which is a label that has given up.
+  if (st.foldMode === 'groups') {
+    const by = new Map();
+    for (const r of hidden) {
+      const g = r.kind === 'group' ? r.group : (r.kind === 'param' ? 'View' : r.group);
+      by.set(g, (by.get(g) || 0) + (r.kind === 'group' ? r.members.length : 1));
+    }
+    const parts = [...by].sort((a, b) => b[1] - a[1]).map(([g, n]) => `${n} ${g}`);
+    return parts.length > 4 ? parts.slice(0, 4).join(' · ') + ` · +${parts.length - 4} more` : parts.join(' · ');
+  }
   const ops = hidden.filter((r) => r.kind === 'op').length;
   const par = hidden.filter((r) => r.kind === 'param').length;
   const part = [];
   if (ops) part.push(`${ops} operation${ops === 1 ? '' : 's'}`);
   if (par) part.push(`${par} view option${par === 1 ? '' : 's'}`);
   return part.join(' · ');
+}
+
+/* The chain order from ADR-0039's own tier-1 list, then the things that answer a
+ * question beside it. Fixed rather than sorted by size, because a group row that moves
+ * is a group row nobody learns — the same reason usage counts were rejected. */
+const GROUP_ORDER = ['View', 'Narrow', 'Demodulate', 'Decode', 'Listen', 'Export', 'Analyze', 'Convert'];
+
+// Which group the gesture is asking about, hoisted to the front. That is the one
+// controlled way context is allowed to move a row.
+const LEAD_GROUP = { drag: 'Narrow', click: 'View', node: 'Decode' };
+
+// The leading group expands inline, but it cannot have the whole budget. On a bare
+// click the lead is View, View has seven members, and expanding it took all six slots
+// and folded every operation — the exact failure the fold control was added to expose,
+// reappearing one level down. Three seats are reserved for the other groups.
+const LEAD_CAP = FOLD - 3;
+
+/* Fold by depth rather than by importance.
+ *
+ * One row per group valid here; the variants inside a group are what folds. The fold
+ * then holds nothing but more of the kinds already on screen, which is the property the
+ * bare count never had — you can guess its contents without opening it.
+ *
+ * This is not the grouped menu ADR-0039 removed. That one spent rows on *headings* over
+ * items it still showed in full, which is how it reached 500 px; these rows stand in for
+ * their contents, one instead of five.
+ */
+function byGroup(all) {
+  const lead = LEAD_GROUP[st.gesture] || 'Narrow';
+  const order = [lead].concat(GROUP_ORDER.filter((g) => g !== lead));
+  const groups = new Map();
+  for (const r of all) {
+    const g = r.kind === 'param' ? 'View' : r.group;
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(r);
+  }
+
+  const out = [], tail = [];
+  for (const g of order) {
+    const members = groups.get(g);
+    if (!members) continue;
+    if (g === lead && members.length > LEAD_CAP) {
+      out.push(...members.slice(0, LEAD_CAP));
+      tail.push(...members.slice(LEAD_CAP));
+      continue;
+    }
+    // The leading group is expanded inline — on a drag, "Tune here" stays one click,
+    // which is the whole reason the gesture is a discriminator at all. A group of one
+    // shows its member rather than a row standing in for a single thing.
+    if (g === lead) out.push(...members.slice(0, LEAD_CAP), ...members.slice(LEAD_CAP));
+    else if (members.length === 1 || st.openGroup === g) out.push(...members);
+    else out.push({ name: g, kind: 'group', group: g, value: String(members.length), members });
+  }
+  return out.concat(tail);
 }
 
 function foldSplit(all) {
@@ -123,7 +189,7 @@ const st = {
   // The hairline is the default now: of the four rungs it is the one that reads as one
   // list while still saying where the seam is.
   gesture: 'click', treatment: 'ruled', kind: 'iq', view: 'Spectrum',
-  foldMode: 'rank', paramsOpen: false,
+  foldMode: 'rank', paramsOpen: false, openGroup: null,
   open: false, folded: true, target: null, t0: 0,
   runs: [],            // {treatment, gesture, ms, expanded, hit}
 };
@@ -154,6 +220,7 @@ function rows() {
     .concat(params.map((p) => ({ ...p, rank: g.paramRank })))
     .sort((a, b) => (a.kind === first ? 0 : 1) - (b.kind === first ? 0 : 1) || a.rank - b.rank);
 
+  if (st.foldMode === 'groups') return byGroup(ordered);
   if (st.treatment !== 'split' || !params.length) return ordered;
 
   // Not merged: the parameters come out of the list and sit behind one row that opens
@@ -172,11 +239,13 @@ function render() {
   const el = $('#menu');
 
   const rowHtml = (r, i) => `
-    <button class="row${r.sub ? ' sub' : ''}${r.kind === 'gate' ? ' gate' : ''}"
-      data-i="${i}" data-name="${r.name}" ${r.kind === 'gate' ? 'data-gate="1"' : ''}>
+    <button class="row${r.sub ? ' sub' : ''}${r.kind === 'gate' || r.kind === 'group' ? ' gate' : ''}"
+      data-i="${i}" data-name="${r.name}"
+      ${r.kind === 'gate' ? 'data-gate="1"' : ''}${r.kind === 'group' ? ` data-group="${r.group}"` : ''}>
       <span class="rt">${r.name}</span>
       ${r.kind === 'param' ? `<span class="val">${r.value}</span>`
         : r.kind === 'gate' ? `<span class="val">${st.paramsOpen ? '−' : r.value + ' ▸'}</span>`
+        : r.kind === 'group' ? `<span class="val">${r.value} ▸</span>`
         : r.key ? `<span class="k">${r.key}</span>` : ''}
     </button>`;
 
@@ -211,6 +280,8 @@ function render() {
       // Opening the gate is a click the drill has to charge for — that is the whole
       // cost of not merging, and hiding it would rig the comparison.
       if (b.dataset.gate) { st.paramsOpen = !st.paramsOpen; st.folded = false; render(); measure(); return; }
+      // Opening a group is a click the drill charges for, exactly like opening the gate.
+      if (b.dataset.group) { st.openGroup = b.dataset.group; st.folded = false; render(); measure(); return; }
       pick(b);
     });
 
@@ -256,8 +327,12 @@ function newTarget() {
   // not a reason for it to be asked easier questions.
   st.folded = true;
   st.paramsOpen = false;
-  const pool = rows().filter((r) => r.kind !== 'gate')
-    .concat(st.treatment === 'split' ? paramsFor() : []);
+  // Identical in every mode, or the medians are not comparable: every operation valid
+  // here plus every view parameter, regardless of what the current mode collapses.
+  const g = GESTURES[st.gesture];
+  let ops = OPS.filter((o) => o.kinds.includes(st.kind));
+  if (!g.selection) ops = ops.filter((o) => !o.fromSelection);
+  const pool = ops.concat(paramsFor());
   if (!pool.length) return;
   st.target = pool[Math.floor(Math.random() * pool.length)];
   st.open = true;
@@ -383,7 +458,8 @@ function controls() {
        Object.keys(VIEW_PARAMS).map((k) => [k, k])), st.view)}
      <span class="lab">treatment</span>${seg('t-sel', Object.fromEntries(
        Object.keys(TREATMENTS).map((k) => [k, k])), st.treatment)}
-     <span class="lab">fold</span>${seg('f-sel', { rank: 'by rank', mixed: 'both kinds' }, st.foldMode)}`;
+     <span class="lab">fold</span>${seg('f-sel',
+       { rank: 'by rank', mixed: 'both kinds', groups: 'by group' }, st.foldMode)}`;
 
   const wire = (id, set) => {
     for (const b of $(`#${id}`).querySelectorAll('button'))
@@ -393,7 +469,7 @@ function controls() {
   wire('k-sel', (v) => { st.kind = v; });
   wire('v-sel', (v) => { st.view = v; });
   wire('t-sel', (v) => { st.treatment = v; st.paramsOpen = false; });
-  wire('f-sel', (v) => { st.foldMode = v; });
+  wire('f-sel', (v) => { st.foldMode = v; st.openGroup = null; });
 }
 
 // Only an explicit `?theme=` pins the palette. Left alone, `web/style.css` already

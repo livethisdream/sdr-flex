@@ -81,6 +81,47 @@
     treatment you would be judging is not on screen until you expand.
   </p>
 
+  <h2>Three ways to decide what folds</h2>
+  <p class="sub">
+    The <em>fold</em> control in the bar switches between them. <b>It is not a setting
+    the app would ship.</b> A menu whose structure is configurable is a menu nobody can
+    learn, and law 9's “the menu shows the key on the row” needs the row to be where you
+    expect it; a preference for this belongs nowhere, least of all in the settings pane
+    ADR-0019 already refuses to build. This is a decision made once, in the catalog. The
+    toggle exists so the three can be seen side by side before it is made.
+  </p>
+  <table class="res">
+    <tr><th>mode</th><th>what it folds</th><th>drag · iq</th></tr>
+    <tr><td><b>by rank</b><br><span style="color:var(--dim)">ADR-0039 as written</span></td>
+        <td>the tail of a single ranked list</td>
+        <td class="n">Tune here · AM · FM · SSB · CW · Despread<br>
+          <span style="color:var(--dim)">+ 9 operations · 7 view options</span></td></tr>
+    <tr><td><b>both kinds</b></td>
+        <td>the tail, but three seats each</td>
+        <td class="n">three operations, three view options<br>
+          <span style="color:var(--dim)">+ 12 operations · 4 view options</span></td></tr>
+    <tr><td><b>by group</b><br><span style="color:var(--dim)">fold by depth</span></td>
+        <td>the variants inside each group</td>
+        <td class="n">Tune here · De-hop · View 7 ▸ · Demodulate 4 ▸ · Despread · Export<br>
+          <span style="color:var(--dim)">+ 5 Analyze · 2 Convert</span></td></tr>
+  </table>
+  <p class="sub" style="margin-top:1rem">
+    <b>The trade is sharp.</b> By rank, a selection drag shows all four demodulators, so
+    if you know you want FM it is one click. By group, it shows <em>Demodulate 4 ▸</em> and
+    FM costs two — but nothing is hidden behind an unnamed edge, and the fold holds only
+    more of what is already on screen. <b>Rank wins when you know what you want; group
+    wins when you do not.</b> The hotkeys tilt it: <code>f</code> is FM whatever the menu
+    is showing, so the case rank optimises for is the case the keyboard already covers.
+  </p>
+  <p class="sub">
+    Two things building it exposed, both the same failure one level down. The leading
+    group expands inline — that is what keeps “Tune here” one click — and on a bare click
+    the lead is <em>View</em>, whose seven members took all six slots and folded every
+    operation. Three seats are now reserved. And the fold label, listing rows one at a
+    time, produced <em>“1 view option · 1 view option · 1 view option”</em>; it aggregates
+    by group now, biggest first.
+  </p>
+
   <h2>Why this page exists</h2>
   <p class="sub">
     The gesture discriminator is settled — <code>openMenu(x, y, selection)</code> already
