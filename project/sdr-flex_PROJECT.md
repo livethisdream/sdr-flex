@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-27 (the parked chrome, unparked: the layout built and in `web/`, plus four measuring pages on a branch) · on `claude/interface-simplification-mockups-xmvu2g`
+**Last updated:** 2026-09-27 (the parked chrome, unparked and built: one path row, one deck, the picture on a right-click, the path in ovals) · merged to `main`
 
 Previous: 2026-09-21 (`/version` and `check-build.mjs`: a rebuild that did not take is now answerable in one command)
 
@@ -1636,6 +1636,30 @@ separated by the same hairline the strip already puts between its own groups.
 square variant at **74 px (8%)**. Nothing is blocked on it; the floating one is in the
 tree because it is the smaller change from what was there, not because it won.
 
+### What went in
+
+Merged to `main`. Verified against the real server as well as the mock, which is where
+`hasLibrary` and `hasRadios` are true and the source popover grows its other two
+entries — a path the in-tab engine never takes.
+
+- **One path row, one deck.** 174 px of chrome to 90, and the spectrum from 705 px to
+  789 at 1440x900.
+- **The bottom bar is the transport.** The picture's controls are a right-click on the
+  picture; the source's are a right-click on the source. Every other node keeps its run,
+  because its numeric parameters still have nowhere else to go.
+- **The path is ovals**, the shape the deck already had, with a coral wash on the channel
+  you are in and a cool one on the view you are looking through — `--view`, its own
+  token, because the accent means *you placed this* and a view is not something you
+  placed.
+- **Identify leads the operations menu** instead of owning a button, `+` follows the last
+  tab instead of the far edge, theme moved to the transport, and `o` opens a file while
+  `?` identifies.
+
+Two things to do on a box: `docker compose up -d --build`, then `node check-build.mjs` —
+which exists precisely because a failed build and a build that did nothing look
+identical. The Pages deploy needs nothing; it triggers on a push to `main` touching
+`web/**`.
+
 ### The rest of the study, on a branch
 
 Four measuring pages under `docs/mockups/` — `layout/`, `surfaces/`, `menu/`,
@@ -1826,6 +1850,18 @@ have `/version`.
 ---
 
 ## Standing rules learned the hard way
+
+- **`git stash` in the middle of a merge throws the merge away.** Not the work — the
+  *merge*. It clears `MERGE_HEAD`, and `stash pop` puts the files back without it, so the
+  next `git commit` quietly makes an ordinary one-parent commit out of a resolution that
+  was correct. The content is right and the ancestry is a lie: `merge-base --is-ancestor`
+  says the branch was never merged, and merging it onward replays every one of those
+  commits against itself. It cost nothing here only because it was caught before the push
+  to `main`. The tell is in the reflog, which reads `commit:` where a merge reads
+  `commit (merge):`. If it happens, the repair does not touch a file —
+  `git commit-tree HEAD^{tree} -p HEAD -p <other>` records the missing parent and nothing
+  else. The rule: finish or abort a merge before stashing, and use a second worktree when
+  something needs checking against another ref.
 
 - **A pane that reads a node after an await is reading the wrong node.** A snapshot
   replaces every object, so results land on the replacement. The tell is that the
