@@ -1,0 +1,114 @@
+/* A threshold is a line on the waveform.
+ *
+ * The last unbuilt piece of the layout study. `web/style.css` is loaded first and
+ * carries everything visual; what is added here is the on-object control — the line,
+ * its handle, the symbol ruler and the evidence panel — none of which exists in the
+ * app yet, because in the app these are cells in a strip at the foot of the screen.
+ */
+
+html, body { height:auto; overflow:auto; }
+.wrap { max-width:1100px; margin:0 auto; padding:2.2rem 1.4rem 6rem; }
+h1 { font-family:var(--display); font-size:1.5rem; color:var(--bright); margin:0 0 .3rem; font-weight:600; }
+h2 { font-family:var(--display); font-size:1rem; color:var(--bright); margin:2rem 0 .5rem; font-weight:600; }
+.sub { color:var(--dim); font-size:.86rem; margin:0 0 1.3rem; line-height:1.65; max-width:70ch; }
+.sub b { color:var(--body); font-weight:600; }
+.sub em { font-style:normal; color:var(--bright); }
+kbd { font-family:var(--mono); font-size:.72rem; border:1px solid var(--rule); border-radius:3px; padding:0 .24rem; color:var(--dim); }
+
+/* ── the app shell, as the layout study left it: one bar, one dock row ── */
+.device { position:relative; border:1px solid var(--rule); border-radius:8px; overflow:hidden; height:560px; }
+.device .app { height:100%; }
+.bar { display:flex; align-items:center; gap:.15rem; padding:.35rem .7rem;
+       background:var(--raised); border-bottom:1px solid var(--rule); }
+.bar .themebtn { margin-left:auto; }
+.bar .crumb .car { font-style:normal; color:var(--faint); font-size:.6rem; margin-left:.2rem; }
+
+.split { flex:1; min-height:0; display:flex; flex-direction:column; }
+.wavewrap { position:relative; flex:1.25; min-height:0; background:var(--stage); }
+.wavewrap canvas { display:block; width:100%; height:100%; }
+.byteswrap {
+  flex:1; min-height:0; overflow:auto; background:var(--ground);
+  border-top:1px solid var(--rule); padding:.5rem .7rem;
+  font-family:var(--mono); font-size:.72rem;
+}
+.byteswrap .bhead {
+  font-size:.56rem; letter-spacing:.12em; text-transform:uppercase; color:var(--dim);
+  margin:0 0 .4rem; display:flex; gap:.6rem; align-items:baseline;
+}
+.burst { display:flex; gap:.5rem; align-items:baseline; padding:.14rem .2rem; border-radius:4px; }
+.burst:nth-child(odd) { background:var(--panel); }
+.burst .at { color:var(--faint); font-size:.64rem; width:5.5em; flex:none; }
+.burst .bits { color:var(--bright); letter-spacing:.09em; word-break:break-all; }
+.burst .n { color:var(--dim); font-size:.64rem; margin-left:auto; flex:none; }
+.byteswrap .none { color:var(--warn); font-size:.74rem; }
+
+/* ── the control, which is the thing you are looking at ── */
+/* The 2 px mode edge from the strip, moved onto the object: green while the value is
+   derived, coral the moment the user places it. Same encoding, no bar. */
+.thr {
+  position:absolute; left:0; right:0; height:0; z-index:6;
+  border-top:2px dashed var(--ok); cursor:ns-resize; touch-action:none;
+}
+.thr.manual { border-top-color:var(--accent); border-top-style:solid; }
+.thr::before { content:""; position:absolute; inset:-9px 0; }    /* a real grab target */
+.thr .tag {
+  position:absolute; right:.5rem; top:-1.55em;
+  display:inline-flex; align-items:center; gap:.35rem;
+  font-family:var(--mono); font-size:.66rem; color:var(--on-accent);
+  background:var(--ok); border-radius:4px; padding:.05rem .35rem; white-space:nowrap;
+}
+.thr.manual .tag { background:var(--accent); }
+.thr .tag .re {
+  font-style:normal; opacity:.75; border-left:1px solid rgba(0,0,0,.25);
+  margin-left:.1rem; padding-left:.35rem; cursor:pointer;
+}
+.thr .tag .re:hover { opacity:1; }
+
+/* The symbol period is a spacing, so it is set by dragging a spacing. */
+.ruler { position:absolute; left:0; right:0; bottom:0; height:26px; z-index:5; }
+.ruler canvas { position:absolute; inset:0; }
+.rhandle {
+  position:absolute; bottom:0; width:22px; height:26px; margin-left:-11px;
+  cursor:ew-resize; touch-action:none; z-index:7;
+}
+.rhandle::after {
+  content:""; position:absolute; left:6px; top:3px; width:4px; height:20px;
+  border-radius:2px; background:var(--ok);
+}
+.rhandle.manual::after { background:var(--accent); }
+.rtag {
+  position:absolute; bottom:28px; transform:translateX(-50%); z-index:7;
+  font-family:var(--mono); font-size:.64rem; color:var(--on-accent);
+  background:var(--ok); border-radius:4px; padding:.05rem .35rem; white-space:nowrap;
+}
+.rtag.manual { background:var(--accent); }
+
+/* Evidence, summoned — ADR-0017 wants every derived value able to show its work, and
+   a histogram is the work. It appears beside the line rather than in a panel. */
+.eviz {
+  position:absolute; right:.5rem; z-index:8; width:190px;
+  background:var(--float); border:1px solid var(--rule); border-radius:7px;
+  padding:.4rem .5rem; backdrop-filter:blur(8px);
+  box-shadow:0 14px 34px -14px var(--shadow-hard);
+}
+.eviz[hidden] { display:none; }
+.eviz .eh {
+  font-family:var(--mono); font-size:.54rem; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--dim); margin-bottom:.3rem;
+}
+.eviz canvas { display:block; width:100%; height:52px; }
+.eviz .ex { font-size:.62rem; color:var(--faint); line-height:1.4; margin-top:.3rem; }
+
+.dock { display:flex; align-items:center; justify-content:space-between;
+        gap:.6rem; padding:.55rem .7rem; background:var(--ground); }
+
+.nums { display:grid; gap:.1rem .9rem; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));
+        margin:.7rem 0 0; font-family:var(--mono); font-size:.68rem; color:var(--dim); }
+.nums b { color:var(--bright); font-weight:500; }
+.nums .good { color:var(--ok); } .nums .warn { color:var(--warn); } .nums .bad { color:var(--crit); }
+
+table.cmp { border-collapse:collapse; width:100%; font-size:.78rem; margin:.4rem 0 0; }
+table.cmp th, table.cmp td { text-align:left; padding:.32rem .5rem; border-bottom:1px solid var(--rule-lo); vertical-align:top; }
+table.cmp th { font-family:var(--mono); font-size:.56rem; letter-spacing:.11em; text-transform:uppercase; color:var(--dim); font-weight:400; }
+table.cmp td.n { font-family:var(--mono); color:var(--bright); white-space:nowrap; }
+table.cmp .good { color:var(--ok); } table.cmp .bad { color:var(--crit); }

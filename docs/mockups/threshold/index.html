@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A threshold is a line on the waveform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../../../web/style.css">
+<link rel="stylesheet" href="thr.css">
+</head>
+<body>
+
+<div class="wrap">
+  <h1>A threshold is a line on the waveform</h1>
+  <p class="sub">
+    The last unbuilt piece. Everything else in the strip found a home — the tuner's
+    numbers to a summoned card, the view's choices to the menu, typed fields and a
+    plugin's knobs to the card as well. What was left was
+    <a href="../surfaces/parameter-census.md" style="color:var(--accent)">the twenty
+    numeric node parameters</a> and the claim that they belong <em>on the object</em>,
+    which had been described four times and never built. That claim was the only reason
+    the bottom bar was still alive.
+  </p>
+  <p class="sub">
+    <b>This runs the real slicer.</b> <code>web/src/dsp.js</code> has no imports, so the
+    page imports <code>otsuThreshold</code>, <code>estimateSymbolPeriod</code> and
+    <code>pwmSlice</code> from it directly. Drag the line and the bits below are the bits
+    the app would actually produce — including the ones it would get wrong.
+  </p>
+  <p class="sub">
+    <em>Try:</em> drag the dashed line up and down · drag the handle at the foot to set
+    the symbol period · hover either for the evidence behind its auto value ·
+    <kbd>⟲ auto</kbd> on the tag puts both back.
+  </p>
+
+  <div class="device">
+    <div class="app">
+      <div class="bar">
+        <button class="dev crumb has"><i class="live"></i>rtl-sdr #0<i class="car">⌄</i></button>
+        <span class="sepc">›</span>
+        <button class="crumb has">A · fan remote<i class="car">⌄</i></button>
+        <span class="sepc">›</span>
+        <button class="crumb has cur">PWM<i class="car">⌄</i></button>
+        <button class="themebtn" title="theme">◐</button>
+      </div>
+
+      <div class="split">
+        <!-- The parameter sits on the plot of its INPUT. A slice threshold drawn over
+             bytes would be meaningless; over the envelope that produced them it is the
+             only place it has ever made sense. -->
+        <div class="wavewrap" id="wavewrap">
+          <canvas id="wave"></canvas>
+          <div class="ruler"><canvas id="ruler"></canvas></div>
+          <div class="rhandle" id="rhandle"></div>
+          <div class="rtag" id="rtag"></div>
+          <div class="thr" id="thr"><span class="tag"></span></div>
+          <div class="eviz" id="eviz" hidden></div>
+        </div>
+        <div class="byteswrap" id="bits"></div>
+      </div>
+
+      <div class="dock">
+        <div class="transport">
+          <button class="tbtn">◀◀</button>
+          <button class="tbtn play">❚❚</button>
+          <button class="tbtn">▶▶</button>
+          <span class="mono clock">1.284 s</span>
+          <button class="track"><i style="width:46%"></i></button>
+        </div>
+        <button id="reset" style="font-family:var(--mono);font-size:.7rem;color:var(--dim)">reset</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="nums" id="nums"></div>
+
+  <h2>What this settles, and what it does not</h2>
+  <table class="cmp">
+    <tr><th></th><th>in the strip today</th><th>on the object</th></tr>
+    <tr><td>Pointer travel to change it</td>
+        <td class="n">canvas → strip → back, ~380 px</td>
+        <td class="n good">0 px — the control is the thing you are watching</td></tr>
+    <tr><td>Seeing what you are choosing</td>
+        <td class="n">a number; the effect is two panes away</td>
+        <td class="n good">the shaded region <em>is</em> the choice</td></tr>
+    <tr><td>Law 12, mid-gesture</td>
+        <td class="n">the cell stays visible</td>
+        <td class="n good">no longer applies — nothing is summoned</td></tr>
+    <tr><td>auto vs manual</td>
+        <td class="n">a 2 px edge on the cell</td>
+        <td class="n good">the line's own color, green → coral on first drag</td></tr>
+    <tr><td>The evidence ADR-0017 wants</td>
+        <td class="n">a tooltip on the cell</td>
+        <td class="n">a histogram beside the line, on hover</td></tr>
+    <tr><td>A symbol period</td>
+        <td class="n">a number in µs</td>
+        <td class="n good">a spacing, which walks off the pulse edges when wrong</td></tr>
+  </table>
+
+  <p class="sub" style="margin-top:1.1rem">
+    <b>The census's hard case has an answer, and it is a rule rather than a workaround:
+    the parameter goes on the plot of its input, never its output.</b> That is why Bits,
+    Bytes and Events having nothing to draw on turns out not to matter — a slicer's
+    threshold was never going to live over its own bytes. It belongs over the envelope
+    being sliced, one pane up, which is drawn already.
+  </p>
+  <p class="sub">
+    <b>What it does not settle.</b> This is one parameter of one node, and the easiest
+    one: a scalar with a natural axis to sit on. A de-emphasis time constant, a BFO
+    offset, a volume — those are numeric too and have no such axis, and nothing here
+    shows where they go. The honest scope is that <em>threshold and symbol period</em>
+    work on the object, which is two of twenty. The rest is still a claim.
+  </p>
+</div>
+
+<script type="module" src="thr.js"></script>
+</body>
+</html>
