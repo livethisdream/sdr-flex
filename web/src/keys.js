@@ -39,7 +39,8 @@ export const HOTKEYS = {
  * pane would open *and* a node would appear. That is the kind of bug that gets noticed
  * three weeks later, so a test asserts the two sets stay disjoint.
  */
-export const RESERVED = [' ', 'ArrowLeft', 'ArrowRight', 'Escape', 'm', 'M', '=', '+', '-', '_', '0', '/'];
+export const RESERVED = [' ', 'ArrowLeft', 'ArrowRight', 'Escape', 'm', 'M', '=', '+', '-', '_', '0', '/',
+                         'o', 'O'];
 
 /** The key that reaches an operation, for the badge the menu draws beside it. */
 export const KEY_FOR = {};

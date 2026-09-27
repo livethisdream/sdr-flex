@@ -554,20 +554,13 @@ class App {
     // The device's center and rate are its node's parameters, so they live in the
     // strip when the source is selected. Repeating them here made the top row a
     // second readout of something already on screen.
-    // Opening is its own button, ahead of the path rather than inside it.
-    //
-    // It used to be a word appended to the device chip, which made one control mean two
-    // things and picked between them by whether you happened to be standing on the root:
-    // click the source you are already on and you get a file dialog, click it from
-    // anywhere else and you navigate. Reported as the open button being "oddly merged
-    // with the current file" — which is exactly what it was.
-    //
-    // So the chip goes back to being one thing, the path's first entry, and always
-    // navigates. `open` sits to the left of it because it is what you do *before* there
-    // is a path, and it reads as one: open, then the file, then where you are in it.
+    // The chip is the path's first entry and nothing else. Opening used to be a word
+    // inside it — one control meaning two things, picked between by where you were
+    // standing — then briefly a button beside it, which was still a permanent control on
+    // the row for something you do once at the start. It is an entry in the chip's own
+    // popover now, with `o` for the times you do it twice.
     const onRoot = this.channel === root.id;
     let html =
-      `<button class="openbtn" title="open a capture from this computer">open</button>` +
       `<button class="dev${onRoot ? ' cur' : ''}" data-id="${root.id}" title="${attr(root.label)}">` +
       `<span class="live${this.engine.capture ? ' file' : ''}"></span>${root.label}</button>`;
 
@@ -585,8 +578,6 @@ class App {
 
     const el = $('#topbar');
     el.innerHTML = html;
-    const open = el.querySelector('.openbtn');
-    if (open) open.addEventListener('click', () => $('#file').click());
     // The source's parameters left the bar, so this is where they are now.
     const dev = el.querySelector('.dev');
     if (dev) this.wireSummon(dev, (x, y) => this.strip.openMore('node', atPointer(x, y)));
@@ -1219,7 +1210,12 @@ class App {
         { key: 'sampleRate', label: 'rate', unit: 'kS/s', type: 'ro', value: n.out.sampleRate,
           fmt: (v) => (v / 1e3).toFixed(0) });
       // Where a source comes from belongs with the facts about the one you have.
-      // Only when there is a server to ask: in the tab, the gesture is the drop.
+      // This one is always offered, because a file on your own machine needs no server:
+      // it is the same dialog the drop gesture saves you from, for when you would rather
+      // pick than drag.
+      nodeCells.push({ key: 'file', label: 'open a file…', type: 'action', value: '' });
+      // And the server's capture directory, which is a different place, only when there
+      // is a server to ask.
       if (this.hasLibrary) {
         nodeCells.push({ key: 'library', label: 'open a capture…', type: 'action', value: '' });
       }
@@ -1422,6 +1418,7 @@ class App {
     this.strip.onMode = (g, k, mode) => this.onMode(g, k, mode);
     this.strip.onAction = (g, k, e) => {
       const x = e ? e.clientX : null, y = e ? e.clientY : null;
+      if (k === 'file') $('#file').click();
       if (k === 'library') this.openLibrary(x, y);
       if (k === 'radio') this.openRadios(x, y);
       if (k === 'stopradio') this.stopRadio();
@@ -3354,6 +3351,11 @@ class App {
       if (e.key === 'ArrowLeft') { e.preventDefault(); $('#back').click(); }
       if (e.key === 'ArrowRight') { e.preventDefault(); $('#fwd').click(); }
       if (e.key === 'm' || e.key === 'M') { this.toggleBudgets(); }
+      // Opening lost its permanent control, so it gains a key. Listed in RESERVED beside
+      // the transport and zoom bindings, which is what keeps it out of the operation
+      // table — those are matched later and do not return, so a key in both would fire
+      // both, and a test asserts the two sets stay disjoint.
+      if (e.key === 'o' || e.key === 'O') { e.preventDefault(); $('#file').click(); }
       if (e.key === '=' || e.key === '+') { e.preventDefault(); this.zoomKey(1 / 1.4); }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); this.zoomKey(1.4); }
       if (e.key === '0') { e.preventDefault(); this.resetZoom && this.resetZoom(); }
