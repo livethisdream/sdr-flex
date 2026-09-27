@@ -251,6 +251,27 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .lnote { max-width:40ch; font-size:.74rem; color:var(--dim); line-height:1.5; }
 
 .panes { flex:1; min-height:0; position:relative; }
+
+/* Both axes at once (ADR-0036's `domain: both`).
+ *
+ * The two panes share the space instead of one of them being a third pane that
+ * duplicates the other — there is no second waterfall and no second scope to keep in
+ * step, only `position:absolute` turned off so they can sit next to each other.
+ *
+ * Side by side when there is width for it, stacked when there is not. Stacked is the
+ * fallback rather than the default because these two plots are read against different
+ * axes: side by side gives each its full height, where stacking halves the waterfall,
+ * which is the one of the two that needs the pixels. */
+.panes.split { display:flex; flex-direction:column; }
+.panes.split > .pane { position:relative; inset:auto; }
+.panes.split > #pane-spectrum { flex:1 1 60%; min-height:0; }
+.panes.split > #pane-time { flex:1 1 40%; min-height:0; border-top:1px solid var(--rule); }
+@media (min-width: 900px) {
+  .panes.split { flex-direction:row; }
+  .panes.split > #pane-spectrum { flex:1 1 58%; min-width:0; }
+  .panes.split > #pane-time { flex:1 1 42%; min-width:0; border-top:none;
+                              border-left:1px solid var(--rule); }
+}
 .pane { position:absolute; inset:0; display:flex; flex-direction:column; }
 .pane[hidden] { display:none; }
 .pane.scrolly { overflow:auto; padding:1rem; }
@@ -297,14 +318,37 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
  * and there they stack again.
  */
 .dock {
-  display:flex; flex-direction:row; align-items:center; justify-content:space-between;
-  gap:.6rem; padding:.55rem .7rem .7rem; background:var(--ground);
+  display:flex; justify-content:center;
+  padding:.55rem .7rem .7rem; background:var(--ground);
 }
-.dock > .transport { flex:none; }
-.dock > .strip { flex:0 1 auto; }
-@media (max-width:640px) {
-  .dock { flex-direction:column; align-items:center; gap:.4rem; }
-  .dock > .strip { max-width:100%; }
+/* The pill is the container; the transport and the strip are runs inside it and carry no
+   edge of their own. Bordering both made two boxes where the complaint was that there
+   were two boxes. */
+.deck {
+  display:flex; align-items:center; gap:.5rem;
+  width:max-content; max-width:calc(100% - 1.4rem);
+  padding:.25rem .5rem; border-radius:999px;
+  background:var(--float); border:1px solid var(--rule);
+  box-shadow:0 10px 30px -12px var(--shadow);
+  backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+  min-width:0;
+}
+.deck > .transport, .deck > .strip {
+  background:none; border:none; box-shadow:none; backdrop-filter:none;
+  -webkit-backdrop-filter:none; padding:.05rem .2rem; max-width:none;
+}
+.deck > .transport { flex:none; }
+.deck > .strip { flex:0 1 auto; min-width:0; }
+/* The rule belongs to the run that follows, as it does inside the strip itself. */
+.deck > .strip::before {
+  content:""; flex:none; width:1px; height:1.35em; align-self:center;
+  background:var(--rule); margin-right:.15rem;
+}
+/* A vertical rule between two stacked runs points the wrong way, so below the width
+   where they stop fitting on one line it goes, and the pill wraps. */
+@media (max-width:860px) {
+  .deck { flex-wrap:wrap; justify-content:center; row-gap:.15rem; }
+  .deck > .strip::before { display:none; }
 }
 .transport {
   display:flex; align-items:center; gap:.4rem;
@@ -345,6 +389,27 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .tbtn.loop:not(.on) { color:var(--dim); }
 
 .transport .track { flex:1 1 auto; width:clamp(44px, 26vw, 320px); min-width:44px; }
+/* The speaker on the transport.
+ *
+ * Listening used to cost a node: out to the menu, add a Listen block, land on its own
+ * tab, and back again for what is really mute/unmute. The block is still there and still
+ * on the graph — a sink is a node (ADR-0027) and hiding it would make the flowgraph a
+ * lie — but it is created behind this button rather than by hand, and clicking here does
+ * not take you anywhere. It is on the transport because that is where "what is happening
+ * right now" lives, beside play and loop.
+ *
+ * On is the plain speaker; off is the same speaker struck through, the way loop already
+ * says the same thing. Hidden entirely when the thing in front of you is not audio,
+ * because a control that cannot do anything is worse than no control. */
+.tbtn.spk svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:2;
+                stroke-linecap:round; stroke-linejoin:round; display:block; }
+.tbtn.spk svg path:first-child { fill:currentColor; stroke:none; }
+.tbtn.spk .slash { display:none; }
+.tbtn.spk:not(.on) { color:var(--dim); }
+.tbtn.spk:not(.on) .wave, .tbtn.spk:not(.on) .wave2 { display:none; }
+.tbtn.spk:not(.on) .slash { display:inline; }
+.tbtn.spk.on { color:var(--bright); }
+
 .tbtn {
   color:var(--body); font-size:.76rem; min-width:34px; min-height:28px;
   border:none; border-radius:6px; background:none;
@@ -367,6 +432,43 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    control you can see and not use. Every source is time-indexed (ADR-0005), so
    this scrubs for real — through the clip when a channel is pinned, through
    everything the session has reached when it is not. */
+/* On a phone the transport is a pill of fixed-size buttons and one elastic thing, so
+ * every button added comes out of the scrub track. Measured: adding the speaker took the
+ * track from 112px to 76px at 430 wide and from 77px to 44px at 390 — and 44px across a
+ * 90 s capture is two seconds a pixel, which is not a scrubber.
+ *
+ * So below this width the track gets its own row instead of a share of one. That also
+ * undoes the squeeze the track was already in before the speaker existed. Nothing moves
+ * on a desktop, where there was never a shortage of room.
+ */
+@media (max-width: 560px) {
+  .transport { flex-wrap:wrap; justify-content:center; border-radius:18px; row-gap:.15rem; }
+  .transport .track { flex:1 0 100%; width:auto; margin-inline:.35rem; }
+}
+
+/* Below this the buttons stop fitting on one row and wrap to a third — measured at 360
+ * wide, where the pill went from 64px tall to 94px. Tightening the gaps buys the ~15px
+ * that costs, which is cheaper than losing a row of the screen to chrome on the
+ * smallest phone this is ever opened on. */
+@media (max-width: 400px) {
+  .transport { gap:.2rem; padding-inline:.3rem; }
+  .transport .tbtn { padding-inline:.3rem; }
+  .transport .clock { font-size:.68rem; }
+}
+
+/* Playback speed, as a readout you can click rather than another icon.
+ *
+ * The transport is already a row of fixed-size buttons and one elastic scrub track, so
+ * every icon added comes out of the track — measured at 36px a button on a phone. This
+ * is the width of its own text instead, and at 1x it reads as a label rather than a
+ * control, which is right: full speed is not a mode anybody needs reminding of. */
+.tbtn.spd { min-width:2.6em; font-family:var(--mono); font-size:.72rem; padding-inline:.35rem; }
+.tbtn.spd.slow { color:var(--accent); background:var(--raised); }
+
+/* When a record came out of the capture, for a decode that filled in as it played. */
+.evat { font-family:var(--mono); font-size:.68rem; color:var(--dim);
+        min-width:3.2em; text-align:right; }
+
 .track {
   position:relative; height:22px; margin-inline:.5rem; padding:0;
   background:none; border:none; cursor:ew-resize; touch-action:none;
@@ -389,10 +491,46 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .metrics b.bad { color:var(--warn); }
 .metrics i { font-style:normal; color:var(--faint); }
 
+/* What you had open last time (resume.js). Bottom centre, above the dock, in the
+   shape of the other transient bars — it is an offer, not a state, so it sits where a
+   notice sits and not where a panel would. */
+.resume {
+  /* Against `.panes`, which ends where the dock begins — fixed to the window it landed
+     on top of the transport at anything under about 800 px of height. */
+  position:absolute; z-index:45; left:50%; bottom:14px; transform:translateX(-50%);
+  display:flex; align-items:center; gap:.5rem; max-width:min(92vw, 34rem);
+  padding:.4rem .4rem .4rem .7rem;
+  background:var(--panel); border:1px solid var(--rule); border-radius:5px;
+  box-shadow:0 18px 44px -14px var(--shadow-hard); font-size:.74rem; color:var(--body);
+}
+.resume[hidden] { display:none; }
+.resume .rs-t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.resume .rs-go {
+  flex:none; padding:.22rem .6rem; border-radius:3px; font-size:.72rem; font-weight:600;
+  color:var(--on-accent); background:var(--accent);
+}
+.resume .rs-go:hover { filter:brightness(1.1); }
+.resume .rs-no { flex:none; padding:.1rem .35rem; color:var(--faint); font-size:.9rem; line-height:1; }
+.resume .rs-no:hover { color:var(--bright); }
+
 /* ── contextual menu ── */
-.ctx { position:fixed; z-index:40; width:196px; background:var(--panel); border:1px solid var(--rule); border-radius:4px; overflow:hidden; box-shadow:0 18px 44px -14px var(--shadow-hard); font-size:.78rem; }
+/* The menu is `position:fixed` and was `overflow:hidden` with no height limit, so a list
+   taller than the window ran off the bottom of it with no way to reach what was down
+   there. `open()` cannot save it: it places the box by its own rect, and the rect was
+   honest — there was simply nowhere to put a box that tall.
+
+   Measured, on the largest palette this can draw (17 rows and 6 headings, which is an
+   `iq` node on a box with every decoder installed), the menu opened 40px from the bottom
+   edge: it wants 534px, and at a 500px-tall window 44px of it was off screen, at 390px
+   — a phone held sideways — 154px. The clamp is the space `open()` has to place it in
+   (its 8px pad, twice), so it scrolls only when the list genuinely does not fit: at
+   600px and above nothing changes. Horizontal stays hidden; that is what rounds the
+   corners. */
+.ctx { position:fixed; z-index:40; width:196px; background:var(--panel); border:1px solid var(--rule); border-radius:4px; max-height:calc(100vh - 1rem); overflow-y:auto; overflow-x:hidden; box-shadow:0 18px 44px -14px var(--shadow-hard); font-size:.78rem; }
 .ctx[hidden] { display:none; }
-.ctx-search { padding:.3rem .45rem; border-bottom:1px solid var(--rule); background:var(--raised); }
+/* Sticky, because the box you type into is no use scrolled off the top of the list it
+   filters. */
+.ctx-search { position:sticky; top:0; z-index:1; padding:.3rem .45rem; border-bottom:1px solid var(--rule); background:var(--raised); }
 .ctx-search input { width:100%; background:transparent; border:0; color:var(--bright); font-family:var(--mono); font-size:.72rem; outline:none; }
 .ctx-grp { font-family:var(--mono); font-size:.54rem; letter-spacing:.15em; text-transform:uppercase; color:var(--dim); padding:.4rem .6rem .16rem; }
 .ctx-i { display:flex; width:100%; text-align:left; gap:.4rem; align-items:baseline; padding:.28rem .6rem; color:var(--body); }
@@ -547,6 +685,12 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    only number on the row that matters. */
 .fd { font-family:var(--mono); font-size:.66rem; color:var(--faint); min-width:4.2rem; text-align:right; }
 .fd.unk { color:var(--warn); }
+/* A set rather than a choice: two dozen demodulators is a scroll, and the tick is what
+   says this list does not close when you pick from it. */
+.popopts.multi { max-height:15rem; overflow-y:auto; }
+.popopts.multi .opt { display:flex; align-items:baseline; gap:.4rem; }
+.popopts.multi .tick { width:.7rem; font-style:normal; color:var(--accent); font-size:.66rem; }
+.popopts.multi .opt.on { color:var(--bright); }
 /* A second input, which the tree's indentation cannot say. Dashed and dimmer than a node
    because it is an edge rather than a thing — it names where the merge above it reads
    from, and that node is drawn in its own place too. */

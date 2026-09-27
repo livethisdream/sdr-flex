@@ -23,7 +23,7 @@
     <button id="theme" class="themebtn" title="theme" aria-label="theme">◐</button>
   </div>
 
-  <div class="panes">
+  <div class="panes" id="panes">
     <!-- Spectrum + waterfall: one tab, one shared frequency axis (ADR-0020) -->
     <div class="pane" id="pane-spectrum">
       <div class="stage" id="stage">
@@ -51,6 +51,7 @@
     <div class="pane scrolly" id="pane-events" hidden></div>
     <div class="pane scrolly" id="pane-audio" hidden></div>
     <div class="pane scrolly" id="pane-export" hidden></div>
+    <div class="pane scrolly" id="pane-stream" hidden></div>
     <div class="pane scrolly" id="pane-bytes" hidden></div>
     <!-- A grid is a picture, so it gets a canvas rather than a table: a resource grid is
          hundreds of symbols by hundreds of subcarriers and the pattern is the message. -->
@@ -61,18 +62,37 @@
         <div class="axis" id="gridaxis"></div>
       </div>
     </div>
+
+    <!-- What you had open last time. Not a dialog: it does not block anything, it does
+         not restore by itself, and it is gone the moment you touch the spectrum. Losing
+         an afternoon's chain to a mis-clicked reload is the problem; a modal on every
+         load would be a worse one. Inside `.panes` rather than fixed to the window, so
+         it sits above the dock at every window height rather than on top of it. -->
+    <div class="resume" id="resume" hidden>
+      <span class="rs-t" id="resume-text"></span>
+      <button class="rs-go" id="resume-go">restore</button>
+      <button class="rs-no" id="resume-no" title="forget it" aria-label="forget it">×</button>
+    </div>
   </div>
 
   <div class="dock">
+    <!-- One pill, two runs. The earlier measurement's conclusion was that "the only real
+         problem at the bottom is that there are two pills" — putting them side by side
+         halves the height and leaves that untouched. They share the pill and are told
+         apart by the same hairline the strip already puts between its own groups. -->
+    <div class="deck">
     <div class="transport">
       <button id="back" class="tbtn" aria-label="back one second" title="back 1 s">◀◀</button>
       <button id="play" class="tbtn play" aria-label="play or pause">❚❚</button>
       <button id="fwd" class="tbtn" aria-label="forward one second" title="forward 1 s">▶▶</button>
       <button id="loop" class="tbtn loop on" aria-label="loop at the end of the capture" title="loop"><svg viewBox="0 0 24 24" aria-hidden="true"><defs><mask id="noloop"><rect width="24" height="24" fill="#fff"/><line x1="1" y1="23" x2="23" y2="1" stroke="#000" stroke-width="5.5"/></mask></defs><g><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></g><line class="slash" x1="3" y1="21" x2="21" y2="3"/></svg></button>
       <span id="clock" class="mono clock">0.000 s</span>
+      <button id="speed" class="tbtn spd" aria-label="playback speed" title="playback speed">1&times;</button>
+      <button id="listen" class="tbtn spk" aria-label="listen to this channel" title="listen" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path class="wave" d="M16.5 8.5a5 5 0 0 1 0 7"/><path class="wave2" d="M19 6a8.5 8.5 0 0 1 0 12"/><line class="slash" x1="3" y1="21" x2="21" y2="3"/></svg></button>
       <button id="track" class="track" aria-label="scrub through time"><i></i></button>
     </div>
     <div class="strip" id="strip"></div>
+    </div>
   </div>
 
   <div class="metrics" id="metrics" hidden></div>
