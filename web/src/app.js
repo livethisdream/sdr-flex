@@ -1214,7 +1214,11 @@ class App {
         nodeCells.push({ key: 'library', label: 'open a capture…', type: 'action', value: '' });
       }
       if (this.hasRadios) {
-        nodeCells.push({ key: 'radio', label: live ? 'change radio…' : 'listen to a radio…',
+        // "Listen" was wrong twice. Most of the time nobody is listening — a radio here
+        // is a process writing raw IQ into a ring recording (ADR-0030), and hearing any
+        // of it is a separate node you add on purpose. And `Listen` is already the name
+        // of that node, so the label promised the one thing it does not do.
+        nodeCells.push({ key: 'radio', label: live ? 'change radio…' : 'connect a radio…',
                          type: 'action', value: '' });
       }
       // A session is named by typing its name, and saved by committing it — the same

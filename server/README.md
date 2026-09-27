@@ -94,7 +94,8 @@ there, so `iio_readdev.exe` is found from the bare name. UHD is the exception: i
 a filename rather than a stream and is pointed at `/dev/stdout`, which Windows does not
 have, so that driver reports itself unavailable there rather than failing obscurely.
 
-They show up under `src` on the bottom bar, as "listen to a radio…". A driver whose
+They show up under `src`, as "connect a radio…" — right-click the source chip in the
+path row, which is where that run lives now rather than on the bottom bar. A driver whose
 program is not installed is still listed, greyed, saying what it wants — that is a
 five-second problem, and a menu that hides the option instead is a twenty-minute one.
 
