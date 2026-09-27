@@ -10,7 +10,9 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built; the stereo decode drawn as a graph; ADR-0039 on the menu) · merged to `main`
+**Last updated:** 2026-09-27 (the interface study: four measuring pages on a branch, nothing in `web/` touched) · on `claude/interface-simplification-mockups-xmvu2g`
+
+Previous: 2026-09-17 (the baseband spectrum; the redsea adapter that needed it; FM stereo; hotkeys; ADR-0038 built; the stereo decode drawn as a graph; ADR-0039 on the menu) · merged to `main`
 
 **`main` is the default branch**, as of this session. It was
 `claude/sdr-flex-toolkit-planning-c4ghl1` — the branch this project happened to be
@@ -769,6 +771,72 @@ house rule.
   keeps declining. The likely shape: native drivers where a board has a protocol worth
   speaking (anything AD936x now is), and `rx_sdr` for everything else. Worth revisiting
   when a board turns up that `rx_sdr` handles badly.
+
+## The interface study, on a branch
+
+Lives on `claude/interface-simplification-mockups-xmvu2g`, entirely under
+`docs/mockups/`. **Nothing in `web/` has changed.** Four pages, each of which measures
+rather than asserts, because "measure before adjusting anything visual" turned out to
+overturn three confident guesses in a row.
+
+Read them in order: `layout/` → `surfaces/` → `menu/` → `threshold/`.
+
+### What the numbers say
+
+- **Chrome is a flat 174 px at every width** — 19% of 1440×900, **25% of 1024×700**.
+  Four full-width rows, two of them about **11% full**: the breadcrumb fills 150 px of
+  1385, the tab strip 152 px of 1440. The dock stacks two pills that together are
+  952 px wide inside a 1440 px window.
+- Merging the two top rows and putting the two dock pills side by side gets it to
+  **90 px**. Floating the path in the spectrum's headroom gets it to **60 px** and is
+  the only scheme that also wins on a phone (60 px against today's 201).
+- **Travel, not clicks.** `docs/08` already said clicks are the wrong metric and the
+  first pass led with them anyway. Changing the colormap costs **386 px today and
+  234 px in the proposal with one *more* click**. Swept across four cursor positions,
+  one column does not move: the menu costs 234 px from anywhere because it arrives at
+  the cursor. Everything anchored to a bar slides with the cursor — which indicts the
+  map popunder specifically, at a flat **~260 px worse** at every start point.
+
+### What is settled
+
+- One "where you are" bar on top; transport stays at the foot; the dock is one row.
+- **One menu, three gestures.** `openMenu(x, y, selection)` already exists, already
+  filters by stream type and by whether a selection is present; a third answer is a
+  one-line change. A drag asks about the signal, a bare click about the picture, a
+  right-click about the node.
+- **A summoned surface must arrive at the cursor, not under a crumb.** That is the
+  single correction that turns the popunder from a loss into a win.
+- **A numeric parameter goes on the plot of its *input*, never its output.** Built and
+  verified in `threshold/`, which imports the production `otsuThreshold` and `pwmSlice`
+  — three bursts of sixteen bits matching the generator, auto inside a 0.139–0.343
+  working window. This is why Bits, Bytes and Events having nothing to draw on does not
+  matter: a slice threshold belongs over the envelope, one pane up.
+
+### What is still open
+
+- **The strip's remaining eighteen numeric parameters.** Threshold and symbol period
+  work on the object; a de-emphasis constant, a BFO offset and a volume are numeric too
+  and have **no natural axis**. Two of twenty is the honest score.
+- **Does a mixed menu read as one list?** `menu/` is a timed drill for exactly this,
+  with a "do not merge" null on the ladder. Not yet run by a person. Building it shrank
+  the question: view parameters belong to the *view*, and only **Spectrum (7) and Time
+  (2)** have any — the other seven views have none, and a node menu never carries them.
+- **Hotkeys do not relieve that question, they scope it.** Only **8 of 22** operations
+  carry a key, so the key badge cannot mark the seam; and the rule that makes `s` safe
+  (SSB on `iq`, Stereo on `real` — never both at once) does not extend to parameters,
+  because colormap and CW demod are both valid on an `iq` node simultaneously.
+- **Inventory.** Folding the block tabs into the map hides the list of what you built.
+  `08-ui-principles` and ADR-0018 already contradict each other here — "siblings stay
+  visible" against "each segment a menu of its siblings" — and the proposal has to pick
+  a side. A count on the crumb would answer most of it; untested.
+- **Whether any of it is ported.** That is the decision this branch exists to inform,
+  and it is the first change that would touch `web/`.
+
+### Two published copies
+
+`menu/` and `threshold/` are also published as private artifacts so they can be opened
+without serving the repo. The published copies differ from the branch in one respect
+only: the stylesheet and `dsp.js` paths, since an artifact cannot reach `../../../web/`.
 
 ## Open, needs a decision
 
