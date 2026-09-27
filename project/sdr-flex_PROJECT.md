@@ -797,6 +797,27 @@ Read them in order: `layout/` → `surfaces/` → `menu/` → `threshold/`.
   the cursor. Everything anchored to a bar slides with the cursor — which indicts the
   map popunder specifically, at a flat **~260 px worse** at every start point.
 
+### Ported, and in `web/`
+
+**The layout, as of this session.** The two top rows are one `.path` row and the dock is
+one row. Measured in the real app, not the mockup:
+
+| | chrome before | after | spectrum + waterfall |
+|---|---|---|---|
+| 1440x900 | 174 px (19%) | **90 px (10%)** | 705 → **789** |
+| 1280x800 | 174 px (22%) | **90 px (11%)** | 605 → **689** |
+| 1024x700 | 174 px (25%) | **90 px (13%)** | 505 → **589** |
+| 390x844 | 201 px (24%) | **136 px (16%)** | 619 → **687** |
+
+Nothing clips at any width; below 640 px the dock stacks again, which is the one case
+where the two pills genuinely do not fit. `#topbar`, `#tabs` and `#strip` kept their ids,
+so `renderTopbar`, `renderTabs` and the strip did not change — the whole port is markup
+and CSS. 351 tests pass.
+
+One behavior did change and is worth watching: the crumb run **scrolls rather than
+wraps**. Wrapping would let a deep chain grow the path row taller, which is the height
+the change exists to reclaim; a chain deep enough to need it has not been tried.
+
 ### What is settled
 
 - One "where you are" bar on top; transport stays at the foot; the dock is one row.
@@ -842,8 +863,13 @@ Read them in order: `layout/` → `surfaces/` → `menu/` → `threshold/`.
   `08-ui-principles` and ADR-0018 already contradict each other here — "siblings stay
   visible" against "each segment a menu of its siblings" — and the proposal has to pick
   a side. A count on the crumb would answer most of it; untested.
-- **Whether any of it is ported.** That is the decision this branch exists to inform,
-  and it is the first change that would touch `web/`.
+- **The rest of the port.** The layout is in. Next is the picture menu on a
+  **right-click**, which the code makes easy: canvas `contextmenu` is entirely unclaimed
+  (the only binding is `wireNodeMenu` on crumbs and tabs), while a bare left click is
+  already `clearSelection()` at `app.js:2215` and cannot be taken. Splitting the two
+  menus by button **retires the merge question** the `menu/` drill was built to answer —
+  operations on the drag, the picture on right-click, and they never share a list. What
+  survives is the fold: the operations menu alone is 14 rows on `iq` against 6 slots.
 
 ### Two published copies
 

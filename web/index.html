@@ -12,11 +12,16 @@
 <body>
 
 <div class="app">
-  <div class="topbar">
+  <!-- One row, not two. Both said the same kind of thing — where you are — and neither
+       filled: measured at 1440, the breadcrumb used 150 px of a 1385 px row and the tab
+       strip 152 px of 1440. Read left to right they are one path: source › channel │ view.
+       The ids are unchanged, so `renderTopbar` and `renderTabs` do not know about this. -->
+  <div class="path">
     <div class="crumbs" id="topbar"></div>
+    <span class="pathsep" aria-hidden="true"></span>
+    <div class="tabs" id="tabs"></div>
     <button id="theme" class="themebtn" title="theme" aria-label="theme">◐</button>
   </div>
-  <div class="tabs" id="tabs"></div>
 
   <div class="panes">
     <!-- Spectrum + waterfall: one tab, one shared frequency axis (ADR-0020) -->

@@ -99,13 +99,32 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .app { display:flex; flex-direction:column; height:100%; }
 
 
-/* one row: what radio, and where in it */
-.topbar {
-  display:flex; align-items:center; gap:.4rem;
-  padding:.35rem .7rem; border-bottom:1px solid var(--rule);
-  background:var(--raised);
+/* One row: what radio, where in it, and which view of it.
+ *
+ * This was two rows. Measured at 1440x900 the breadcrumb filled 150 px of a 1385 px row
+ * and the tab strip 152 px of 1440 — both about 11% full — for 68 px of height. They say
+ * the same kind of thing, so they read as one path: source › channel │ view. The doc
+ * argued tabs need no channel prefix because the highlighted crumb sits directly above;
+ * it now sits directly beside, which is a shorter distance for the eye to carry the letter.
+ */
+.path {
+  display:flex; align-items:stretch; gap:0;
+  padding:0 .5rem 0 .7rem; border-bottom:1px solid var(--rule);
+  background:var(--raised); min-width:0;
 }
-.crumbs { display:flex; flex-wrap:wrap; align-items:center; gap:.15rem; min-width:0; flex:1; }
+/* The crumbs are as wide as the path is; the tab run is the thing with slack, so it is
+   the thing that scrolls — the same treatment the parameter strip already has. */
+.crumbs {
+  display:flex; align-items:center; gap:.15rem;
+  flex:0 1 auto; min-width:0; align-self:center;
+  overflow-x:auto; scrollbar-width:none;
+}
+.crumbs::-webkit-scrollbar { display:none; }
+/* The rule belongs to the run that follows, as it does inside the strip. */
+.pathsep {
+  flex:none; align-self:center; width:1px; height:1.1em;
+  background:var(--rule); margin:0 .55rem 0 .3rem;
+}
 /* Theme is one preference about the room. It lives in the dead space at the end of
    the breadcrumb — the only row that always exists and never fills up. */
 .themebtn {
@@ -133,7 +152,12 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .crumb i { font-style:normal; color:var(--dim); font-size:.68rem; }
 .sepc { color:var(--rule); padding:0 .1rem; }
 
-.tabs { display:flex; gap:0; padding:0 .5rem; background:var(--raised); border-bottom:1px solid var(--rule); }
+.tabs {
+  display:flex; gap:0; padding:0;
+  flex:1 1 auto; min-width:0;
+  overflow-x:auto; scrollbar-width:none;
+}
+.tabs::-webkit-scrollbar { display:none; }
 .tab { padding:.42rem .7rem; font-size:.76rem; color:var(--dim); border-bottom:2px solid transparent; }
 .tab:hover { color:var(--body); }
 .tab.on { color:var(--bright); border-bottom-color:var(--accent); background:var(--panel); }
@@ -265,10 +289,22 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .axis { display:flex; justify-content:space-between; padding:.28rem .6rem; border-top:1px solid var(--rule-lo); font-family:var(--mono); font-size:.62rem; color:var(--dim); font-variant-numeric:tabular-nums; }
 
 /* Both bars sit under the frequency axis rather than over the waterfall: the
-   options pill covering the labels was the thing it most needed not to cover. */
+   options pill covering the labels was the thing it most needed not to cover.
+ *
+ * And they sit side by side rather than stacked. They already fit: 588 px of transport
+ * and 364 px of strip is 952 px inside a 1440 px window, and 899 inside 1024. Stacking
+ * them was buying a second row nothing needed. Below 640 px they genuinely do not fit,
+ * and there they stack again.
+ */
 .dock {
-  display:flex; flex-direction:column; align-items:center; gap:.4rem;
-  padding:.55rem .7rem .7rem; background:var(--ground);
+  display:flex; flex-direction:row; align-items:center; justify-content:space-between;
+  gap:.6rem; padding:.55rem .7rem .7rem; background:var(--ground);
+}
+.dock > .transport { flex:none; }
+.dock > .strip { flex:0 1 auto; }
+@media (max-width:640px) {
+  .dock { flex-direction:column; align-items:center; gap:.4rem; }
+  .dock > .strip { max-width:100%; }
 }
 .transport {
   display:flex; align-items:center; gap:.4rem;
