@@ -15,8 +15,8 @@ h2 { font-family:var(--display); font-size:1rem; color:var(--bright); margin:2re
 kbd { font-family:var(--mono); font-size:.72rem; border:1px solid var(--rule); border-radius:3px; padding:0 .24rem; color:var(--dim); }
 
 .bar2 {
-  display:flex; flex-wrap:wrap; align-items:center; gap:.45rem .9rem;
-  padding:.6rem .8rem; margin:0 0 1rem;
+  display:flex; flex-wrap:wrap; align-items:center; gap:.35rem .8rem;
+  padding:.45rem .7rem; margin:0 0 .5rem;
   background:var(--float); border:1px solid var(--rule); border-radius:10px;
 }
 .bar2 .lab { font-size:.56rem; letter-spacing:.13em; text-transform:uppercase; color:var(--dim); }
@@ -29,7 +29,12 @@ kbd { font-family:var(--mono); font-size:.72rem; border:1px solid var(--rule); b
 .seg button.on { color:var(--on-accent); background:var(--accent); border-color:var(--accent); font-weight:600; }
 
 /* the stage, so the menu is judged over the thing it covers */
-.device { position:relative; height:520px; border:1px solid var(--rule); border-radius:8px; overflow:hidden; }
+.device {
+  position:relative; border:1px solid var(--rule); border-radius:8px; overflow:hidden;
+  /* Tall enough for the menu to sit on a real waterfall, short enough that the menu
+     clears the fold in a side panel. */
+  height:clamp(300px, 46vh, 460px);
+}
 .device .stagewrap { position:absolute; inset:0; display:flex; flex-direction:column; }
 .device canvas { display:block; width:100%; }
 .device .sp { height:34%; flex:none; }
@@ -79,8 +84,8 @@ kbd { font-family:var(--mono); font-size:.72rem; border:1px solid var(--rule); b
 .nums .bad { color:var(--crit); } .nums .good { color:var(--ok); } .nums .warn { color:var(--warn); }
 
 .drill {
-  display:flex; flex-wrap:wrap; align-items:center; gap:.7rem;
-  margin:1rem 0 0; padding:.6rem .8rem;
+  display:flex; flex-wrap:wrap; align-items:center; gap:.6rem;
+  margin:0 0 .5rem; padding:.45rem .7rem;
   background:var(--panel); border:1px solid var(--rule); border-radius:8px;
 }
 .drill .target { font-size:.9rem; color:var(--bright); font-weight:600; }
@@ -103,3 +108,6 @@ table.res td.thin { color:var(--faint); }
 .row.gate { color:var(--dim); }
 .row.gate:hover { color:var(--bright); }
 .row.sub { padding-left:1.1rem; }
+
+/* The menu rides near the top of the stage rather than a quarter of the way down, so
+   its last row clears the fold on a short viewport. */
