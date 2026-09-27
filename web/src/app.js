@@ -69,6 +69,18 @@ const SINK_CHUNK_MS = 250;
 
 const $ = (s, r = document) => r.querySelector(s);
 
+/**
+ * An anchor that is a point rather than an element.
+ *
+ * `Strip._place` only asks for `getBoundingClientRect`, so a zero-size rect at the
+ * pointer is a legal anchor and the controls arrive where the cursor already is. That is
+ * the whole difference between a surface you travel to and one that comes to you: it
+ * measured 9 px from the cursor against 386 px to the foot of the window.
+ */
+const atPointer = (x, y) => ({
+  getBoundingClientRect: () => ({ left: x, right: x, top: y, bottom: y, width: 0, height: 0, x, y }),
+});
+
 /** Safe inside an attribute as well as in text — a name is whatever somebody typed. */
 const attr = (x) => String(x ?? '').replace(/[<>&"']/g, (c) =>
   ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -575,6 +587,9 @@ class App {
     el.innerHTML = html;
     const open = el.querySelector('.openbtn');
     if (open) open.addEventListener('click', () => $('#file').click());
+    // The source's parameters left the bar, so this is where they are now.
+    const dev = el.querySelector('.dev');
+    if (dev) this.wireSummon(dev, (x, y) => this.strip.openMore('node', atPointer(x, y)));
     for (const b of el.querySelectorAll('[data-id]')) {
       b.addEventListener('click', () => this.goChannel(b.dataset.id));
     }
@@ -626,7 +641,19 @@ class App {
   wireNodeMenu(el) {
     for (const b of el.querySelectorAll('[data-menu]')) {
       const id = b.dataset.menu;
-      const open = (x, y) => { this.menu.close(); this.nodeMenuAt(id, x, y); };
+      this.wireSummon(b, (x, y) => { this.menu.close(); this.nodeMenuAt(id, x, y); });
+    }
+  }
+
+  /**
+   * Right-click on a pointer, long press on a touch screen, and nowhere else.
+   *
+   * Extracted the moment there were two things to summon this way — a node's own menu
+   * and the source's parameters — because a second copy of a 480 ms press timer is a
+   * second place for it to drift.
+   */
+  wireSummon(b, open) {
+    {
       b.addEventListener('contextmenu', (e) => {
         e.preventDefault(); e.stopPropagation();
         open(e.clientX, e.clientY);
@@ -1325,7 +1352,17 @@ class App {
       nodeCells.push({ key: 'out', label: n.out.kind === 'audio' ? 'in' : 'out', unit: 'kS/s',
                        type: 'ro', value: n.out.sampleRate, fmt: (v) => (v / 1e3).toFixed(1) });
     }
-    groups.push({ key: 'node', title: n.op === 'core.source' ? 'src' : (n.letter || n.label), cells: nodeCells });
+    groups.push({
+      key: 'node', title: n.op === 'core.source' ? 'src' : (n.letter || n.label),
+      // The source's run holds no control you turn while watching the signal: its center
+      // and rate are on the axis already, and the rest is a name you type and two things
+      // you open. So it leaves the bar for the crumb it belongs to, and the rule becomes
+      // one rule — right-click the picture for the picture, right-click the source for
+      // the source. Every other node keeps its run, because the numeric parameters those
+      // hold have nowhere else to live yet.
+      bar: n.op === 'core.source' ? false : undefined,
+      cells: nodeCells,
+    });
 
     // Which axis a real stream is read on. It sits with the other things that change
     // how a result is drawn rather than what it is, and it is the first cell in the
@@ -3106,12 +3143,7 @@ class App {
       if (!this.strip.groups || !this.strip.groups.some((g) => g.key === 'view')) return;
       e.preventDefault();
       this.metrics.interaction();
-      // A zero-size rect at the pointer is a legal anchor, so the controls arrive where
-      // the cursor already is rather than at the foot of the window.
-      const x = e.clientX, y = e.clientY;
-      this.strip.openMore('view', { getBoundingClientRect: () => ({
-        left: x, right: x, top: y, bottom: y, width: 0, height: 0, x, y,
-      }) });
+      this.strip.openMore('view', atPointer(e.clientX, e.clientY));
     });
 
     stage.addEventListener('dblclick', () => { if (this.hasSpectrum()) resetZoom(); });

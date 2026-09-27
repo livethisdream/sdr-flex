@@ -347,6 +347,9 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 }
 .deck > .transport { flex:none; }
 .deck > .strip { flex:0 1 auto; min-width:0; }
+/* On the source there is nothing left in the strip, and a rule with nothing after it is
+   a rule pointing at the end of the bar. */
+.deck > .strip:empty { display:none; }
 /* The rule belongs to the run that follows, as it does inside the strip itself. */
 .deck > .strip::before {
   content:""; flex:none; width:1px; height:1.35em; align-self:center;
