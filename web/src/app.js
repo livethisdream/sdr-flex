@@ -3152,12 +3152,18 @@ class App {
      * discoverable, and it carries the *secondary* surface; the primary one stays on the
      * gesture the empty state teaches in a sentence.
      */
-    stage.addEventListener('contextmenu', (e) => {
+    //
+    // The scope is a picture too, and it is the one a demodulator opens on. Bound only
+    // to the spectrum stage, a real stream in `time` had no way to reach `domain` —
+    // the view group is off the bar — so it could never be switched to its spectrum.
+    const openView = (e) => {
       if (!this.strip.groups || !this.strip.groups.some((g) => g.key === 'view')) return;
       e.preventDefault();
       this.metrics.interaction();
       this.strip.openMore('view', atPointer(e.clientX, e.clientY));
-    });
+    };
+    stage.addEventListener('contextmenu', openView);
+    $('#pane-time .tstage').addEventListener('contextmenu', openView);
 
     stage.addEventListener('dblclick', () => { if (this.hasSpectrum()) resetZoom(); });
 
