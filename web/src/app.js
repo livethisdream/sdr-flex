@@ -1211,11 +1211,11 @@ class App {
       // This one is always offered, because a file on your own machine needs no server:
       // it is the same dialog the drop gesture saves you from, for when you would rather
       // pick than drag.
-      nodeCells.push({ key: 'file', label: 'open a file…', type: 'action', value: '' });
+      nodeCells.push({ key: 'file', label: 'open from this computer…', type: 'action', value: '' });
       // And the server's capture directory, which is a different place, only when there
       // is a server to ask.
       if (this.hasLibrary) {
-        nodeCells.push({ key: 'library', label: 'open a capture…', type: 'action', value: '' });
+        nodeCells.push({ key: 'library', label: 'open from the server…', type: 'action', value: '' });
       }
       if (this.hasRadios) {
         // "Listen" was wrong twice. Most of the time nobody is listening — a radio here
