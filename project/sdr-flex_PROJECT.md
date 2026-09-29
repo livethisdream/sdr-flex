@@ -10,7 +10,9 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-27 (the parked chrome, unparked and built: one path row, one deck, the picture on a right-click, the path in ovals) · merged to `main`
+**Last updated:** 2026-09-29 (the bar is the transport and nothing else: every node's settings on a right-click; menu headings readable)
+
+Previous: 2026-09-27 (the parked chrome, unparked and built: one path row, one deck, the picture on a right-click, the path in ovals) · merged to `main`
 
 Previous: 2026-09-21 (`/version` and `check-build.mjs`: a rebuild that did not take is now answerable in one command)
 
@@ -1654,6 +1656,29 @@ entries — a path the in-tab engine never takes.
 - **Identify leads the operations menu** instead of owning a button, `+` follows the last
   tab instead of the far edge, theme moved to the transport, and `o` opens a file while
   `?` identifies.
+
+### 2026-09-29: the bar is the transport
+
+The user asked for "maximum simplicity" across every view: sample rate, FFT bins and the
+like did not belong in the bottom bar. A sweep of every operation in the mock engine
+found every node except the source still putting its whole run there — the tuner's
+decim and taps, the hop map's bins, an `out` rate on every node.
+
+- **Every node's run left the bar.** Right-click (or long-press) a crumb or tab opens
+  that node's settings at the pointer: its parameters, then rename and remove, which
+  used to be a separate menu on the same gesture. A node you are not looking at is
+  brought on screen first. The hover on every crumb and tab says where settings went.
+- **Two bugs in gesture-opened popovers**, both live since the view group moved to a
+  right-click: clicking an item threw (`classList` on a bare rect), and the first value
+  change closed the popover, because `_reopen` looked for a pill the bar no longer draws.
+- **The time view takes a right-click too** (the fix merged just before this): the scope
+  had no binding, so `domain` was unreachable on a demodulator.
+- **Menu headings** are larger, brighter and ruled, and items indent under them. They
+  were smaller than the items and flush with them, so they read as disabled rows.
+
+Still open: the sigid walk-through, which the user is doing by hand and reporting slot by
+slot. `grcon26-ctf` can be attached for its generators; its capture data is not committed
+there, and nothing from it comes into this repository.
 
 Two things to do on a box: `docker compose up -d --build`, then `node check-build.mjs` —
 which exists precisely because a failed build and a build that did nothing look

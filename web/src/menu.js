@@ -125,6 +125,9 @@ export class ContextMenu {
       `${o.soon ? `<span class="soon">${o.soon}</span>` : ''}` +
       `${o.key && !o.stub ? `<kbd class="ctx-k" title="press ${o.key} to add this">${o.key}</kbd>` : ''}</button>`;
 
+    // Items sit indented under their heading, so the heading reads as the start of a
+    // run rather than one more row that happens to be smaller.
+    this.el.classList.toggle('headed', headed);
     this.el.innerHTML =
       (searchable
         ? `<div class="ctx-search"><input type="text" placeholder="search…" value="${this.filter}" aria-label="Search operations"></div>`

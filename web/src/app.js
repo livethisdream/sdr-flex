@@ -376,7 +376,8 @@ class App {
   }
 
   /** What to say on hover: the operation, once a name has replaced it. */
-  titleOf(n) { return n.name ? `${n.name} — ${n.label}` : n.label; }
+  // The bar no longer shows a node's settings, so the hover says where they went.
+  titleOf(n) { return (n.name ? `${n.name} — ${n.label}` : n.label) + ' · right-click for settings'; }
 
   /** Everything under a node, in any direction — used to stop what is about to vanish. */
   /**
@@ -580,7 +581,7 @@ class App {
     el.innerHTML = html;
     // The source's parameters left the bar, so this is where they are now.
     const dev = el.querySelector('.dev');
-    if (dev) this.wireSummon(dev, (x, y) => this.strip.openMore('node', atPointer(x, y)));
+    if (dev) this.wireSummon(dev, (x, y) => this.openSettings(root.id, x, y));
     for (const b of el.querySelectorAll('[data-id]')) {
       b.addEventListener('click', () => this.goChannel(b.dataset.id));
     }
@@ -605,20 +606,23 @@ class App {
    * Menu depth stays 1 (ADR-0018) — it is the same flat widget the operations palette
    * uses, with two entries instead of twenty.
    */
-  nodeMenuAt(id, x, y) {
+  /**
+   * A node's settings, at the pointer: its parameters, then rename and remove.
+   *
+   * The bar builds its groups for the node on screen, so a node you are not looking at is
+   * brought on screen first — a channel on its spectrum, a block on its own tab. Its
+   * settings beside a picture of something else would be settings nobody can check.
+   */
+  openSettings(id, x, y) {
     const n = this.engine.node(id);
-    if (!n || n.id === this.engine.root.id) return;
-    const items = [{ id: 'rename', name: n.name ? 'Rename…' : 'Give it a name…', group: 'node' }];
-    // Only offered once there is something to undo, because "use its operation name" on
-    // a node already called what it does is a menu entry that does nothing.
-    if (n.name) items.push({ id: 'clear', name: `Call it “${n.label}” again`, group: 'node' });
-    items.push({ id: 'remove', name: 'Remove', group: 'node' });
-    this.menu.open(x, y, items, (op) => {
-      if (op === 'rename') this.beginRename(id);
-      else if (op === 'clear') this.commitRename(id, '');
-      else if (op === 'remove') this.removeNode(id);
-    });
+    if (!n) return;
+    if (id !== this.current) {
+      if (id === this.engine.root.id || this.isChannel(n)) { this.tabs.set(id, 'spectrum'); this.goChannel(id); }
+      else { this.setTab(id); this.refresh(); }
+    }
+    this.strip.openMore('node', atPointer(x, y));
   }
+
 
   /**
    * Right-click, or hold.
@@ -632,7 +636,7 @@ class App {
   wireNodeMenu(el) {
     for (const b of el.querySelectorAll('[data-menu]')) {
       const id = b.dataset.menu;
-      this.wireSummon(b, (x, y) => { this.menu.close(); this.nodeMenuAt(id, x, y); });
+      this.wireSummon(b, (x, y) => { this.menu.close(); this.openSettings(id, x, y); });
     }
   }
 
@@ -1345,16 +1349,22 @@ class App {
       // a sink has no output; what its rate describes is what it is being fed
       nodeCells.push({ key: 'out', label: n.out.kind === 'audio' ? 'in' : 'out', unit: 'kS/s',
                        type: 'ro', value: n.out.sampleRate, fmt: (v) => (v / 1e3).toFixed(1) });
+      // What the node menu used to hold, now that its right-click opens this instead.
+      // One gesture on a node, one place for everything about it.
+      nodeCells.push({ key: 'rename', label: n.name ? 'rename…' : 'give it a name…', type: 'action', value: '' });
+      if (n.name) nodeCells.push({ key: 'unname', label: `call it “${n.label}” again`, type: 'action', value: '' });
+      nodeCells.push({ key: 'remove', label: 'remove', type: 'action', value: '' });
     }
     groups.push({
       key: 'node', title: n.op === 'core.source' ? 'src' : (n.letter || n.label),
       // The source's run holds no control you turn while watching the signal: its center
       // and rate are on the axis already, and the rest is a name you type and two things
       // you open. So it leaves the bar for the crumb it belongs to, and the rule becomes
-      // one rule — right-click the picture for the picture, right-click the source for
-      // the source. Every other node keeps its run, because the numeric parameters those
-      // hold have nowhere else to live yet.
-      bar: n.op === 'core.source' ? false : undefined,
+      // one rule — right-click the picture for the picture, right-click a node for the
+      // node. Every other node used to keep its run here, and it was the same mistake
+      // again: decimation, taps, FFT bins and an output rate are things you set once, not
+      // things you turn while watching. The bar is the transport and nothing else.
+      bar: false,
       cells: nodeCells,
     });
 
@@ -1421,6 +1431,9 @@ class App {
       if (k === 'radio') this.openRadios(x, y);
       if (k === 'stopradio') this.stopRadio();
       if (k === 'sessions') this.openSessions(x, y);
+      if (k === 'rename') this.beginRename(this.current);
+      if (k === 'unname') this.commitRename(this.current, '');
+      if (k === 'remove') this.removeNode(this.current);
     };
   }
 
