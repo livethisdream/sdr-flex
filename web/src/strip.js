@@ -209,12 +209,16 @@ export class Strip {
    * underneath is the auto button, which is set here directly.
    */
   _reopen(k) {
+    // A popover a gesture opened is anchored to the pointer, not to anything the bar
+    // draws, so there is nothing to look up and the rect it came with is still right.
+    // Looking anyway found nothing and closed the control on its first change.
+    const held = this._openPill && !this._openPill.classList ? this._openPill : null;
     const anchor = this.el.querySelector(`.pill[data-g="${k.g}"][data-k="${k.k}"]`)
-                || this.el.querySelector(`.pill.more[data-g="${k.g}"]`);
-    if (!anchor) { this.closePop(); return; }
+                || this.el.querySelector(`.pill.more[data-g="${k.g}"]`) || held;
+    if (!anchor || !this._find(k.g, k.k)) { this.closePop(); return; }
     if (this._openPill && this._openPill.classList) this._openPill.classList.remove('open');
     this._openPill = anchor;
-    anchor.classList.add('open');
+    if (anchor.classList) anchor.classList.add('open');
     const spec = this._find(k.g, k.k);
     const ab = this.pop.querySelector('[data-act=auto]');
     if (ab && spec) ab.classList.toggle('on', this._mode(spec) === 'auto');
@@ -243,7 +247,7 @@ export class Strip {
     this._openKey = { g: gk, k: key };
     if (this._openPill && this._openPill.classList) this._openPill.classList.remove('open');
     this._openPill = pill;
-    pill.classList.add('open');
+    if (pill.classList) pill.classList.add('open');
 
     const mode = this._mode(spec);
     const auto = spec.canAuto

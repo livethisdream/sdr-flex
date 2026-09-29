@@ -563,7 +563,9 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    filters. */
 .ctx-search { position:sticky; top:0; z-index:1; padding:.3rem .45rem; border-bottom:1px solid var(--rule); background:var(--raised); }
 .ctx-search input { width:100%; background:transparent; border:0; color:var(--bright); font-family:var(--mono); font-size:.72rem; outline:none; }
-.ctx-grp { font-family:var(--mono); font-size:.54rem; letter-spacing:.15em; text-transform:uppercase; color:var(--dim); padding:.4rem .6rem .16rem; }
+.ctx-grp { font-family:var(--mono); font-size:.62rem; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--body); padding:.45rem .6rem .18rem; }
+.ctx-grp ~ .ctx-grp { border-top:1px solid var(--rule-lo); margin-top:.2rem; }
+.ctx.headed .ctx-i { padding-left:1.3rem; }
 .ctx-i { display:flex; width:100%; text-align:left; gap:.4rem; align-items:baseline; padding:.28rem .6rem; color:var(--body); }
 .ctx-i:hover { background:var(--accent); color:var(--on-accent); font-weight:600; }
 .ctx-i.gsep { border-top:1px solid var(--rule-lo); }
