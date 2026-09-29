@@ -1,7 +1,12 @@
 # ADR-0039: The menu answers the gesture, and folds everything else
 
-**Status:** Accepted — not yet built. This records the decision and the measurements
-behind it.
+**Status:** Accepted — built 2026-09-29. `rank` is on every entry in `OPS`; `arrange()` in
+`web/src/menu.js` is the whole ordering, and `web/test/menu.test.mjs` pins it.
+
+**One change in the building:** `Identify` is not filed under any group. It had been
+listed under Narrow, which is not what it does — it is the way to find out which step you
+want, not a step — so it is a lead row of its own above the ranked six, set apart by a
+rule, and it does not count against them.
 
 **Revises:** [ADR-0018](0018-contextual-menus-and-view-tabs.md), which said the contextual
 menu is flat, grouped and searchable. It is no longer flat, the grouping has stopped

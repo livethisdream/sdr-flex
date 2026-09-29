@@ -565,7 +565,12 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .ctx-search input { width:100%; background:transparent; border:0; color:var(--bright); font-family:var(--mono); font-size:.72rem; outline:none; }
 .ctx-grp { font-family:var(--mono); font-size:.62rem; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--body); padding:.45rem .6rem .18rem; }
 .ctx-grp ~ .ctx-grp { border-top:1px solid var(--rule-lo); margin-top:.2rem; }
-.ctx.headed .ctx-i { padding-left:1.3rem; }
+.ctx-i.under { padding-left:1.3rem; }
+/* Identify: above the operations, not one of them, so it is set apart rather than filed. */
+.ctx-i.lead { color:var(--bright); font-weight:600; border-bottom:1px solid var(--rule); padding-top:.36rem; padding-bottom:.36rem; }
+.ctx-more { display:flex; width:100%; gap:.35rem; align-items:baseline; padding:.28rem .6rem; color:var(--dim); font-family:var(--mono); font-size:.66rem; border-top:1px solid var(--rule-lo); }
+.ctx-more span { color:var(--faint); }
+.ctx-more:hover { color:var(--bright); background:var(--ground); }
 .ctx-i { display:flex; width:100%; text-align:left; gap:.4rem; align-items:baseline; padding:.28rem .6rem; color:var(--body); }
 .ctx-i:hover { background:var(--accent); color:var(--on-accent); font-weight:600; }
 .ctx-i.gsep { border-top:1px solid var(--rule-lo); }

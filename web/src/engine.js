@@ -106,6 +106,11 @@ const fmtKS = (hz) => `${(hz / 1e3).toFixed(1)} kS/s`;
 
 // ── operation catalog ────────────────────────────────────────────────────
 // `in`/`out` are semantic stream kinds (ADR-0006); the palette filters on them.
+//
+// `rank` is where an operation sits in the menu (ADR-0039), readable here in one place
+// rather than emerging from the order these happen to be written in. Under 50 advances the
+// chain — narrow, demodulate, slice, frame, listen — and those lead; 50 and up answers a
+// question beside it (a picture, arithmetic, export) and folds under `more…`.
 export const OPS = {
   // **Takes a demodulated stream as well as IQ**, which is what a mixer can do and a
   // separate conversion node was pretending it could not. GNU Radio has had this for
@@ -117,7 +122,7 @@ export const OPS = {
   // at zero frequency, so its image rejection falls apart at the bottom of the band — 8 dB
   // at 500 Hz where a mixer has no such problem, because a mixer has no opinion about DC.
   'core.tuner': {
-    name: 'Tune here', group: 'Narrow', in: ['iq', 'real'], out: 'iq',
+    name: 'Tune here', group: 'Narrow', rank: 10, in: ['iq', 'real'], out: 'iq',
     fromSelection: true,
   },
   // A time window is a property of a channel, not a node of its own (ADR-0023),
@@ -128,41 +133,41 @@ export const OPS = {
   // the convention every radio uses, because that is what someone *choosing* one is
   // looking for: nobody scans a menu for "envelope detector".
   'core.am_envelope': {
-    name: 'AM demod', group: 'Demodulate', in: 'iq', out: 'real',
+    name: 'AM demod', group: 'Demodulate', rank: 20, in: 'iq', out: 'real',
   },
   // These are detectors, not "demodulators" in the sense that bundles a
   // channelizer, AGC, squelch and an audio chain into one panel. The tuner ahead of
   // them already did the filtering; listening happens at the sink. That split is
   // the whole reason these have two parameters each instead of twenty.
   'core.fm_discriminator': {
-    name: 'FM demod', group: 'Demodulate', in: 'iq', out: 'real',
+    name: 'FM demod', group: 'Demodulate', rank: 21, in: 'iq', out: 'real',
   },
   'core.ssb': {
-    name: 'SSB demod', group: 'Demodulate', in: 'iq', out: 'real',
+    name: 'SSB demod', group: 'Demodulate', rank: 22, in: 'iq', out: 'real',
   },
   'core.cw': {
-    name: 'CW demod', group: 'Demodulate', in: 'iq', out: 'real',
+    name: 'CW demod', group: 'Demodulate', rank: 23, in: 'iq', out: 'real',
   },
   // The one operation that takes a real stream and returns a real stream, and the only
   // one that returns two channels (ADR-0037). It is grouped with the demodulators
   // because that is what it is: a coherent demodulation of the L-R subcarrier, plus the
   // two-by-two matrix that turns a sum and a difference back into a left and a right.
   'core.stereo': {
-    name: 'Stereo decode', group: 'Demodulate', in: 'real', out: 'real',
+    name: 'Stereo decode', group: 'Demodulate', rank: 24, in: 'real', out: 'real',
   },
   'core.pwm_slicer': {
-    name: 'PWM / OOK slicer', group: 'Decode', in: 'real', out: 'bits',
+    name: 'PWM / OOK slicer', group: 'Decode', rank: 30, in: 'real', out: 'bits',
   },
   // The other half of slicing: a fixed symbol rate rather than pulse widths, which
   // is what most real protocols use. Its output is `bytes` — the type ADR-0006
   // declared and nothing had needed until a plugin wanted somewhere to plug in.
   'core.nrz_slicer': {
-    name: 'NRZ slicer', group: 'Decode', in: 'real', out: 'bytes',
+    name: 'NRZ slicer', group: 'Decode', rank: 31, in: 'real', out: 'bytes',
   },
   // The third slicer, and the one whose parameters are most nearly derivable: a line
   // code that guarantees a transition every symbol tells you its own symbol rate.
   'core.manchester': {
-    name: 'Manchester slicer', group: 'Decode', in: 'real', out: 'bytes',
+    name: 'Manchester slicer', group: 'Decode', rank: 32, in: 'real', out: 'bytes',
   },
   // The fourth slicer, and the only one that takes IQ: a spread signal has to be
   // despread before there is a waveform to slice, and the correlation that despreads it
@@ -170,12 +175,12 @@ export const OPS = {
   // despreader and a slicer would put a node in the chain whose input is one sample per
   // symbol, which is not a waveform and has nothing to slice.
   'core.despread': {
-    name: 'Despread (DSSS)', group: 'Decode', in: 'iq', out: 'bytes',
+    name: 'Despread (DSSS)', group: 'Decode', rank: 33, in: 'iq', out: 'bytes',
   },
   // A line code on top of a line code. Cheap to try, and a stream that sliced to noise
   // sometimes reads perfectly on the other side of it.
   'core.differential': {
-    name: 'Differential decode', group: 'Decode', in: 'bytes', out: 'bytes',
+    name: 'Differential decode', group: 'Decode', rank: 34, in: 'bytes', out: 'bytes',
   },
   // Where a guess becomes a fact: a CRC that validates every frame is the only thing
   // in the chain that answers "is this the packet" rather than "here are some bytes".
@@ -183,18 +188,18 @@ export const OPS = {
   // until this did, that was where the chain stopped: you could see the bits and there
   // was nothing to do with them.
   'core.framer': {
-    name: 'Frames & CRC', group: 'Decode', in: ['bytes', 'bits'], out: 'events',
+    name: 'Frames & CRC', group: 'Decode', rank: 35, in: ['bytes', 'bits'], out: 'events',
   },
   // A sink is a node. A view renders what a node produced; a sink consumes it and
   // the data leaves the graph there, which is exactly what a terminal block is
   // (ADR-0027). Nothing takes `audio` as input, so nothing can follow it.
   'core.audio': {
-    name: 'Listen', group: 'Listen', in: 'real', out: 'audio',
+    name: 'Listen', group: 'Listen', rank: 28, in: 'real', out: 'audio',
   },
   // A file writer is a sink like the speaker is (ADR-0027), and it takes whatever is
   // in front of it — `*` rather than three near-identical entries in the palette.
   'core.export': {
-    name: 'Export', group: 'Export', in: '*', out: 'file',
+    name: 'Export', group: 'Export', rank: 80, in: '*', out: 'file',
   },
   // The network sink ADR-0027 named when it listed what a sink is. Everything in this
   // table either analyzes a stream or decodes it; this one hands it to somebody else.
@@ -206,7 +211,7 @@ export const OPS = {
   // the samples go out and nothing comes back, which is what makes this a sink rather
   // than a decoder — and why `Identify` will never offer it.
   'core.stream': {
-    name: 'Stream out', group: 'Export', in: '*', out: 'sink',
+    name: 'Stream out', group: 'Export', rank: 81, in: '*', out: 'sink',
   },
   // The external decoders are not listed here. Which of them exist depends on what is
   // installed on the box, which only the engine can know, so `palette` asks the adapter
@@ -216,20 +221,20 @@ export const OPS = {
   // somebody is after, so it is records rather than a picture — but the picture is a
   // view of the same records (ADR-0027).
   'core.hopmap': {
-    name: 'Hop map', group: 'Analyze', in: 'iq', out: 'events',
+    name: 'Hop map', group: 'Analyze', rank: 60, in: 'iq', out: 'events',
   },
   // And then following it. A hopper's payload runs through the dwells rather than
   // restarting on each one, so stitching them back together hands the ordinary chain a
   // signal it already knows how to read — which is why the hop sequence and the bits
   // come out of one capability rather than two.
   'core.dehop': {
-    name: 'De-hop', group: 'Narrow', in: 'iq', out: 'iq',
+    name: 'De-hop', group: 'Narrow', rank: 26, in: 'iq', out: 'iq',
   },
   // The resource grid, as a picture rather than a list. OFDM's message is *which* cells
   // carry anything, in time and in frequency, so the answer is a grid and not a byte
   // stream — and a grid is a stream type of its own rather than an events pane pretending.
   'core.ofdm': {
-    name: 'OFDM grid', group: 'Analyze', in: 'iq', out: 'grid',
+    name: 'OFDM grid', group: 'Analyze', rank: 61, in: 'iq', out: 'grid',
   },
   // A screen leaking is a raster: pixels along a line, lines down a frame. Fold the
   // signal at the line period and the picture comes back — the same grid view OFDM uses,
@@ -240,7 +245,7 @@ export const OPS = {
   // into each other and the letters come out as bars. The raster takes the magnitude
   // itself and leaves the bandwidth alone.
   'core.raster': {
-    name: 'Raster', group: 'Analyze', in: ['iq', 'real'], out: 'grid',
+    name: 'Raster', group: 'Analyze', rank: 62, in: ['iq', 'real'], out: 'grid',
   },
   // The way back from IQ, and the only one of the pair that has to exist: a chain of
   // tuners and arithmetic ends complex, and a speaker takes a real stream. `complex_to_real`
@@ -250,7 +255,7 @@ export const OPS = {
   // a mixer can do — a separate Hilbert-based conversion was one more block to explain
   // and worse near DC.
   'core.real': {
-    name: 'To real', group: 'Convert', in: 'iq', out: 'real',
+    name: 'To real', group: 'Convert', rank: 71, in: 'iq', out: 'real',
   },
 
   // `multiply_const`, and the node that lets a chain of arithmetic end at a level
@@ -259,7 +264,7 @@ export const OPS = {
   // same size — so somewhere between the arithmetic and the speaker there has to be one
   // number, and this is it.
   'core.gain': {
-    name: 'Gain', group: 'Convert', in: ['iq', 'real'], out: 'same',
+    name: 'Gain', group: 'Convert', rank: 72, in: ['iq', 'real'], out: 'same',
   },
 
   // The first operation with two inputs (ADR-0038). It is what makes a decode something
@@ -271,7 +276,7 @@ export const OPS = {
   // the graph rather than drawn on a spectrum, which is the one thing in this tool that
   // asks you to point at a node.
   'core.math': {
-    name: 'Math', group: 'Analyze', in: ['iq', 'real'], out: 'same',
+    name: 'Math', group: 'Analyze', rank: 73, in: ['iq', 'real'], out: 'same',
     twoInputs: true,
   },
   // `symbol_sync_ff`, and the step a decoder that reads symbols needs in front of it.
@@ -287,10 +292,10 @@ export const OPS = {
   // them is a real stream — there is no third thing to be, and making one would mean a
   // new kind that only one decoder reads (ADR-0006).
   'core.symbols': {
-    name: 'Symbol sync', group: 'Convert', in: 'real', out: 'real',
+    name: 'Symbol sync', group: 'Convert', rank: 70, in: 'real', out: 'real',
   },
   'core.burst_detector': {
-    name: 'Burst detector', group: 'Analyze', in: 'iq', out: 'events',
+    name: 'Burst detector', group: 'Analyze', rank: 63, in: 'iq', out: 'events',
     stub: true,
   },
 };
@@ -1356,6 +1361,9 @@ export class MockEngine extends Graph {
       // you have not discovered, and silence is the wrong answer to a mistake.
       .filter((a) => a.available || a.local)
       .map((a) => ({ id: a.id, name: a.name, group: a.group, in: a.in, out: a.out,
+                     // A shipped decoder advances the chain, right after the framer. One you
+                     // added has no rank: it may be what you want, and is not the default.
+                     ...(a.local ? {} : { rank: 36 }),
                      external: true, opaque: true, blurb: a.blurb,
                      // Yours or ours (ADR-0026). A decoder you added misbehaving and one
                      // that shipped misbehaving are different problems, and the menu is

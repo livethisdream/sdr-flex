@@ -1676,6 +1676,15 @@ decim and taps, the hop map's bins, an `out` rate on every node.
 - **Menu headings** are larger, brighter and ruled, and items indent under them. They
   were smaller than the items and flush with them, so they read as disabled rows.
 
+**The operations menu has an order** (ADR-0039, built). It had been the order operations
+happened to be written into `OPS`, which the user rightly called random: De-hop under
+Narrow, Export before Analyze on one stream and after it on another. Now every operation
+carries a `rank`; under 50 advances the chain and leads, at most six of them, with the rest
+under `more…` in chain-ordered groups (Narrow, Demodulate, Decode, Listen, Analyze,
+Convert, Export). Shipped decoders rank right after the framer; plugins and your own
+decoders are unranked and fold. Identify is its own lead row, under no heading. Keys still
+reach folded rows — `e` adds Export from a folded menu — and search sees everything.
+
 Still open: the sigid walk-through, which the user is doing by hand and reporting slot by
 slot. `grcon26-ctf` can be attached for its generators; its capture data is not committed
 there, and nothing from it comes into this repository.
