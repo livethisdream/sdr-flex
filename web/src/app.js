@@ -1547,9 +1547,10 @@ class App {
       //
       // First rather than merely present, because the ranking rule is whether an entry
       // moves the signal toward a result: when you do not yet know what you are looking
-      // at, nothing moves you further than this.
+      // at, nothing moves you further than this. And under no heading: it is not a kind of
+      // step — not narrowing, not decoding — but the way to find out which step you want.
       const rows = this.canIdentify()
-        ? [{ id: '__identify', name: 'Identify', group: 'Narrow', key: '?',
+        ? [{ id: '__identify', name: 'Identify', group: '', lead: true, key: '?',
              hint: 'try every decoder that could read this stream' }].concat(shown)
         : shown;
       this.menu.open(x, y, rows, (opId) => {
