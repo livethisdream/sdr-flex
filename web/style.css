@@ -116,7 +116,9 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
  */
 .path {
   display:flex; align-items:stretch; gap:0;
-  padding:0 .5rem 0 .7rem; border-bottom:1px solid var(--rule);
+  /* Room above and below the ovals, and more at the ends: at .5rem/.7rem with none
+     vertical, the chips touched the rule and the screen edge and the row read as crowded. */
+  padding:.35rem .9rem .35rem 1rem; border-bottom:1px solid var(--rule);
   background:var(--raised); min-width:0;
 }
 /* The crumbs are as wide as the path is; the tab run is the thing with slack, so it is
@@ -377,7 +379,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 }
 /* A vertical rule between two stacked runs points the wrong way, so below the width
    where they stop fitting on one line it goes, and the pill wraps. */
-@media (max-width:860px) {
+@media (max-width:900px) {
   .deck { flex-wrap:wrap; justify-content:center; row-gap:.15rem; }
   .deck > .strip::before { display:none; }
 }
@@ -472,9 +474,36 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
  * undoes the squeeze the track was already in before the speaker existed. Nothing moves
  * on a desktop, where there was never a shortage of room.
  */
-@media (max-width: 560px) {
-  .transport { flex-wrap:wrap; justify-content:center; border-radius:18px; row-gap:.15rem; }
-  .transport .track { flex:1 0 100%; width:auto; margin-inline:.35rem; }
+/* The groups exist for the phone layout below. Here they dissolve, and `order` puts the
+ * controls back in the sequence the desktop bar has always had. */
+.tgroup { display:contents; }
+#back { order:1; } #play { order:2; } #fwd { order:3; } #loop { order:4; } #clock { order:5; }
+#speed { order:6; } #listen { order:7; } #track { order:8; } #theme { order:9; }
+
+/* On a touch-sized screen — a phone, and a folding phone open — the track takes the top
+ * row and the buttons the bottom one, nearest the thumb, with play in the exact middle:
+ * reachable by either hand, and still there when you switch. A grid rather than a wrapped
+ * row, because centering play in a row needs the runs either side of it to be the same
+ * width, and they are not. Play is the button pressed most, so it is the biggest. */
+@media (max-width: 900px) {
+  .deck { border-radius:20px; }
+  .deck > .transport { flex:1 1 100%; width:auto; min-width:0; }
+  .transport {
+    display:grid; grid-template-columns:1fr auto 1fr;
+    grid-template-areas:"track track track" "tl tc tr";
+    align-items:center; row-gap:.1rem; border-radius:18px;
+  }
+  .tgroup { display:flex; align-items:center; gap:.2rem; min-width:0; }
+  .tgroup.tl { grid-area:tl; justify-self:start; }
+  .tgroup.tc { grid-area:tc; justify-self:center; gap:.4rem; }
+  .tgroup.tr { grid-area:tr; justify-self:end; }
+  .transport .track { grid-area:track; width:auto; margin-inline:.35rem; }
+  .tbtn.play { min-width:52px; min-height:44px; font-size:.95rem; border-radius:12px; background:var(--raised); }
+  .transport .clock { margin-left:.2rem; }
+  /* 26px with a .82rem glyph was the smallest target on the bar; the same size as the
+     buttons beside it now. */
+  .themebtn { width:36px; height:36px; font-size:1.1rem; }
+}
 }
 
 /* Below this the buttons stop fitting on one row and wrap to a third — measured at 360
@@ -994,4 +1023,36 @@ input.rn::placeholder { color:var(--dim); font-weight:400; }
   font-family:var(--mono); font-size:.56rem; letter-spacing:.01em;
   color:var(--on-stage-dim, var(--dim)); background:var(--stage-veil);
   padding:.05rem .26rem; border-radius:2px;
+}
+
+/* Chrome: a long press is a menu here, not a request to select the label it landed on.
+   Without this, holding the source chip selected its text and raised the copy callout. */
+.path, .deck, .ctx, .pop {
+  -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
+}
+.path input, .pop input, .ctx input { -webkit-user-select:text; user-select:text; }
+
+/* The path, folded on a phone — see wirePathFold. Closed, each run is its current entry;
+   open, the run drops down under itself as a list. */
+@media (max-width: 600px) {
+  .path { position:relative; }
+  .pathspacer { flex:none; pointer-events:none; }
+  .pathspacer .sibs { background:none; padding:0; }
+  #topbar:not(.open) > :not(.cur):not(:has(.cur)):not(.naming),
+  #topbar:not(.open) .sibs > :not(.cur):not(.naming),
+  #tabs:not(.open) > :not(.on) { display:none; }
+  #topbar:not(.open) .sibs { background:none; padding:0; }
+  #tabs { flex:0 1 auto; }
+  .tab { white-space:nowrap; }
+  #topbar.open, #tabs.open {
+    position:absolute; top:calc(100% + 4px); z-index:40;
+    flex-direction:column; align-items:stretch; gap:.2rem;
+    padding:.35rem; min-width:11rem; max-width:calc(100vw - 8px);
+    max-height:70vh; overflow-x:hidden; overflow-y:auto;
+    background:var(--raised); border:1px solid var(--rule); border-radius:14px;
+    box-shadow:0 14px 34px -14px var(--shadow);
+  }
+  #topbar.open .sepc { display:none; }
+  #topbar.open .sibs { display:flex; flex-direction:column; align-items:stretch; background:none; padding:0; }
+  #topbar.open > *, #topbar.open .sibs > *, #tabs.open > * { text-align:left; justify-content:flex-start; }
 }

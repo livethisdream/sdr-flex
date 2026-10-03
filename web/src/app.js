@@ -24,6 +24,7 @@ import { WINDOWS, spectrumHasSignal } from './dsp.js';
 import * as scene from './scene.js';
 import { CRCS } from './frames.js';
 import * as resume from './resume.js';
+import * as recent from './recent.js';
 import * as sessions from './sessions.js';
 
 // The stream kinds Identify has anything to say about.
@@ -118,7 +119,9 @@ const defaultViewParams = () => ({
   // default and one of them used to disagree.
   dbMin: -74, dbMax: -18, dbAuto: true, colormap: DEFAULT_COLORMAP, speed: 60,
   trigger: 'auto', spanS: 0.12,
-  domain: 'time', channel: 'sum',
+  // `both`, not `time`: on a phone the waveform alone left the spectrum behind a
+  // gesture, and on wideband FM the spectrum is the answer (ADR-0036).
+  domain: 'both', channel: 'sum',
   zoomLo: 0, zoomHi: 1,
 });
 
@@ -150,6 +153,7 @@ class App {
     // in the DOM because the rows it lives in are rebuilt from state, and a live source
     // rebuilds them without being asked.
     this.renaming = null;          // { id, draft } | null
+    this._summonedAt = -Infinity;  // when a long press last opened a menu
     this.selection = null;
     this.metrics = new Metrics($('#metrics'));
     this.menu = new ContextMenu(document.body);
@@ -649,21 +653,26 @@ class App {
    */
   wireSummon(b, open) {
     {
+      let timer = null, sx = 0, sy = 0, fired = false;
       b.addEventListener('contextmenu', (e) => {
         e.preventDefault(); e.stopPropagation();
+        // Chrome on Android sends its own contextmenu for a long press as well, after
+        // the hold below has already opened the menu — which drew it twice.
+        if (performance.now() - this._summonedAt < 800) return;
         open(e.clientX, e.clientY);
       });
-
-      let timer = null, sx = 0, sy = 0, fired = false;
       const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
       b.addEventListener('pointerdown', (e) => {
         if (e.pointerType === 'mouse') return;        // a mouse has a right button
         sx = e.clientX; sy = e.clientY; fired = false;
         cancel();
-        timer = setTimeout(() => { timer = null; fired = true; open(sx, sy); }, 480);
+        timer = setTimeout(() => {
+          timer = null; fired = true; this._summonedAt = performance.now(); open(sx, sy);
+        }, 480);
       });
       b.addEventListener('pointermove', (e) => {
-        if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel();
+        // A fingertip drifts more than a mouse: 10 px cancelled holds that never moved on purpose.
+        if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 16) cancel();
       });
       b.addEventListener('pointerup', cancel);
       b.addEventListener('pointercancel', cancel);
@@ -2242,10 +2251,12 @@ class App {
     try { caps = await this.engine.listCaptures(); }
     catch (err) { this.notify(`could not read the library: ${err.message}`, 8000); return; }
     if (!caps.length) { this.notify('no captures in the server\u2019s capture directory', 7000); return; }
+    const ranks = recent.leadRanks(caps);
     const ops = caps.map((c) => ({
       id: c.id,
       name: `${c.label} — ${(c.sampleRate / 1e6).toFixed(3)} MS/s · ${c.durationS.toFixed(1)} s`,
       group: c.sigmf ? 'SigMF' : 'guessed from the filename',
+      rank: ranks.get(c.id),
     }));
     const px = x != null ? x : innerWidth / 2, py = y != null ? y : innerHeight - 120;
     // the menu hands back the id it was given, the same as everywhere else it is used
@@ -2256,6 +2267,7 @@ class App {
       try {
         this.mixer.removeAll();
         await this.engine.openCapture(id);
+        recent.noteOpened(id);
         // Which capture this is, in the terms it can be opened by again. The engine's
         // mirror carries a capture's facts and not its library id, because nothing that
         // draws a spectrum has ever needed one — so the window that asked for it is
@@ -3020,7 +3032,66 @@ class App {
     return { f0: n.out.centerHz - w / 2, f1: n.out.centerHz + w / 2 };
   }
 
+  /**
+   * On a narrow screen each run of the path folds to the one entry you are on.
+   *
+   * The crumbs and the tabs each scrolled sideways on a phone — two strips of hidden
+   * entries, with "FM demod" wrapping onto three lines inside one of them. Folded, a run
+   * shows only its current entry, and a tap drops the whole run down under it.
+   * The entries are the same elements with the same handlers, so nothing about what a
+   * tap or a hold on one does has to be written twice; a copy of the folded run holds
+   * its place in the row while it is out of flow, so the row does not change.
+   */
+  wirePathFold() {
+    const narrow = matchMedia('(max-width: 600px)');
+    const runs = [$('#topbar'), $('#tabs')];
+    const close = () => {
+      for (const el of runs) {
+        if (!el.classList.contains('open')) continue;
+        el.classList.remove('open');
+        el.style.left = '';
+        if (el._spacer) { el._spacer.remove(); el._spacer = null; }
+      }
+    };
+    for (const el of runs) {
+      el.addEventListener('click', (e) => {
+        if (!narrow.matches) return;
+        if (el.classList.contains('open')) {
+          if (e.target.closest('button, [data-k], [data-id]')) setTimeout(close);
+          return;
+        }
+        // The release of a hold that already opened a node's menu is not a tap.
+        if (performance.now() - this._summonedAt < 800) return;
+        e.preventDefault(); e.stopPropagation();
+        close();
+        const path = el.parentElement.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        // The run as it looked folded stays in the row while the list drops below it:
+        // a copy without what the fold hides, inert, so the bar does not change under you.
+        const spacer = el.cloneNode(true);
+        spacer.removeAttribute('id');
+        spacer.classList.add('pathspacer');
+        spacer.inert = true;
+        const live = el.querySelectorAll('*'), copy = spacer.querySelectorAll('*');
+        const hidden = [...live].map((n, i) => getComputedStyle(n).display === 'none' && copy[i]).filter(Boolean);
+        for (const n of hidden) n.remove();
+        el.before(spacer);
+        el._spacer = spacer;
+        el.classList.add('open');
+        const w = el.getBoundingClientRect().width;
+        el.style.left = `${Math.max(4, Math.min(r.left - path.left, path.width - w - 4))}px`;
+        this.metrics.interaction();
+      }, true);
+    }
+    addEventListener('pointerdown', (e) => {
+      if (!e.target.closest('#topbar.open, #tabs.open')) close();
+    }, true);
+    addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    narrow.addEventListener('change', close);
+  }
+
   wire() {
+    this.wirePathFold();
     const stage = $('#stage');
     const box = $('#selbox');
 
@@ -3170,14 +3241,19 @@ class App {
     // The scope is a picture too, and it is the one a demodulator opens on. Bound only
     // to the spectrum stage, a real stream in `time` had no way to reach `domain` —
     // the view group is off the bar — so it could never be switched to its spectrum.
-    const openView = (e) => {
+    //
+    // A touch screen has no right button, and Chrome on Android does not reliably turn a
+    // long press into one on a `touch-action: none` canvas, so this goes through the same
+    // hold as the node menu. A hold that opened the menu was not a drag: without dropping
+    // it, the release would read as a sub-6 px click and clear the selection.
+    const openView = (x, y) => {
       if (!this.strip.groups || !this.strip.groups.some((g) => g.key === 'view')) return;
-      e.preventDefault();
+      if (this.drag) { this.drag = null; box.hidden = true; }
       this.metrics.interaction();
-      this.strip.openMore('view', atPointer(e.clientX, e.clientY));
+      this.strip.openMore('view', atPointer(x, y));
     };
-    stage.addEventListener('contextmenu', openView);
-    $('#pane-time .tstage').addEventListener('contextmenu', openView);
+    this.wireSummon(stage, openView);
+    this.wireSummon($('#pane-time .tstage'), openView);
 
     stage.addEventListener('dblclick', () => { if (this.hasSpectrum()) resetZoom(); });
 
