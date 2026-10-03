@@ -24,6 +24,7 @@ import { WINDOWS, spectrumHasSignal } from './dsp.js';
 import * as scene from './scene.js';
 import { CRCS } from './frames.js';
 import * as resume from './resume.js';
+import * as recent from './recent.js';
 import * as sessions from './sessions.js';
 
 // The stream kinds Identify has anything to say about.
@@ -2244,10 +2245,12 @@ class App {
     try { caps = await this.engine.listCaptures(); }
     catch (err) { this.notify(`could not read the library: ${err.message}`, 8000); return; }
     if (!caps.length) { this.notify('no captures in the server\u2019s capture directory', 7000); return; }
+    const ranks = recent.leadRanks(caps);
     const ops = caps.map((c) => ({
       id: c.id,
       name: `${c.label} — ${(c.sampleRate / 1e6).toFixed(3)} MS/s · ${c.durationS.toFixed(1)} s`,
       group: c.sigmf ? 'SigMF' : 'guessed from the filename',
+      rank: ranks.get(c.id),
     }));
     const px = x != null ? x : innerWidth / 2, py = y != null ? y : innerHeight - 120;
     // the menu hands back the id it was given, the same as everywhere else it is used
@@ -2258,6 +2261,7 @@ class App {
       try {
         this.mixer.removeAll();
         await this.engine.openCapture(id);
+        recent.noteOpened(id);
         // Which capture this is, in the terms it can be opened by again. The engine's
         // mirror carries a capture's facts and not its library id, because nothing that
         // draws a spectrum has ever needed one — so the window that asked for it is
