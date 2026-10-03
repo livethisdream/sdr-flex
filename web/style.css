@@ -500,6 +500,9 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   .transport .track { grid-area:track; width:auto; margin-inline:.35rem; }
   .tbtn.play { min-width:52px; min-height:44px; font-size:.95rem; border-radius:12px; background:var(--raised); }
   .transport .clock { margin-left:.2rem; }
+  /* 26px with a .82rem glyph was the smallest target on the bar; the same size as the
+     buttons beside it now. */
+  .themebtn { width:36px; height:36px; font-size:1.1rem; }
 }
 }
 
