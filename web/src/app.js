@@ -153,6 +153,7 @@ class App {
     // in the DOM because the rows it lives in are rebuilt from state, and a live source
     // rebuilds them without being asked.
     this.renaming = null;          // { id, draft } | null
+    this._summonedAt = -Infinity;  // when a long press last opened a menu
     this.selection = null;
     this.metrics = new Metrics($('#metrics'));
     this.menu = new ContextMenu(document.body);
@@ -652,21 +653,26 @@ class App {
    */
   wireSummon(b, open) {
     {
+      let timer = null, sx = 0, sy = 0, fired = false;
       b.addEventListener('contextmenu', (e) => {
         e.preventDefault(); e.stopPropagation();
+        // Chrome on Android sends its own contextmenu for a long press as well, after
+        // the hold below has already opened the menu — which drew it twice.
+        if (performance.now() - this._summonedAt < 800) return;
         open(e.clientX, e.clientY);
       });
-
-      let timer = null, sx = 0, sy = 0, fired = false;
       const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
       b.addEventListener('pointerdown', (e) => {
         if (e.pointerType === 'mouse') return;        // a mouse has a right button
         sx = e.clientX; sy = e.clientY; fired = false;
         cancel();
-        timer = setTimeout(() => { timer = null; fired = true; open(sx, sy); }, 480);
+        timer = setTimeout(() => {
+          timer = null; fired = true; this._summonedAt = performance.now(); open(sx, sy);
+        }, 480);
       });
       b.addEventListener('pointermove', (e) => {
-        if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel();
+        // A fingertip drifts more than a mouse: 10 px cancelled holds that never moved on purpose.
+        if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 16) cancel();
       });
       b.addEventListener('pointerup', cancel);
       b.addEventListener('pointercancel', cancel);
@@ -3026,7 +3032,60 @@ class App {
     return { f0: n.out.centerHz - w / 2, f1: n.out.centerHz + w / 2 };
   }
 
+  /**
+   * On a narrow screen each run of the path folds to the one entry you are on.
+   *
+   * The crumbs and the tabs each scrolled sideways on a phone — two strips of hidden
+   * entries, with "FM demod" wrapping onto three lines inside one of them. Folded, a run
+   * shows only its current entry and a ▾, and a tap drops the whole run down under it.
+   * The entries are the same elements with the same handlers, so nothing about what a
+   * tap or a hold on one does has to be written twice; a spacer holds the run's place
+   * in the row while it is out of flow, so the row does not jump.
+   */
+  wirePathFold() {
+    const narrow = matchMedia('(max-width: 600px)');
+    const runs = [$('#topbar'), $('#tabs')];
+    const close = () => {
+      for (const el of runs) {
+        if (!el.classList.contains('open')) continue;
+        el.classList.remove('open');
+        el.style.left = '';
+        if (el._spacer) { el._spacer.remove(); el._spacer = null; }
+      }
+    };
+    for (const el of runs) {
+      el.addEventListener('click', (e) => {
+        if (!narrow.matches) return;
+        if (el.classList.contains('open')) {
+          if (e.target.closest('button, [data-k], [data-id]')) setTimeout(close);
+          return;
+        }
+        // The release of a hold that already opened a node's menu is not a tap.
+        if (performance.now() - this._summonedAt < 800) return;
+        e.preventDefault(); e.stopPropagation();
+        close();
+        const path = el.parentElement.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        const spacer = document.createElement('span');
+        spacer.className = 'pathspacer';
+        spacer.style.width = `${r.width}px`;
+        el.before(spacer);
+        el._spacer = spacer;
+        el.classList.add('open');
+        const w = el.getBoundingClientRect().width;
+        el.style.left = `${Math.max(4, Math.min(r.left - path.left, path.width - w - 4))}px`;
+        this.metrics.interaction();
+      }, true);
+    }
+    addEventListener('pointerdown', (e) => {
+      if (!e.target.closest('#topbar.open, #tabs.open')) close();
+    }, true);
+    addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    narrow.addEventListener('change', close);
+  }
+
   wire() {
+    this.wirePathFold();
     const stage = $('#stage');
     const box = $('#selbox');
 

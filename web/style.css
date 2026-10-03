@@ -1003,3 +1003,37 @@ input.rn::placeholder { color:var(--dim); font-weight:400; }
   color:var(--on-stage-dim, var(--dim)); background:var(--stage-veil);
   padding:.05rem .26rem; border-radius:2px;
 }
+
+/* Chrome: a long press is a menu here, not a request to select the label it landed on.
+   Without this, holding the source chip selected its text and raised the copy callout. */
+.path, .deck, .ctx, .pop {
+  -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
+}
+.path input, .pop input, .ctx input { -webkit-user-select:text; user-select:text; }
+
+/* The path, folded on a phone — see wirePathFold. Closed, each run is its current entry
+   and a ▾; open, the run drops down under itself as a list. */
+@media (max-width: 600px) {
+  .path { position:relative; }
+  .pathspacer { flex:none; }
+  #topbar:not(.open) > :not(.cur):not(:has(.cur)):not(.naming),
+  #topbar:not(.open) .sibs > :not(.cur):not(.naming),
+  #tabs:not(.open) > :not(.on) { display:none; }
+  #topbar:not(.open) .sibs { background:none; padding:0; }
+  #topbar:not(.open)::after, #tabs:not(.open)::after {
+    content:"▾"; flex:none; color:var(--dim); font-size:.7rem; padding-left:.1rem;
+  }
+  #tabs { flex:0 1 auto; }
+  .tab { white-space:nowrap; }
+  #topbar.open, #tabs.open {
+    position:absolute; top:calc(100% + 4px); z-index:40;
+    flex-direction:column; align-items:stretch; gap:.2rem;
+    padding:.35rem; min-width:11rem; max-width:calc(100vw - 8px);
+    max-height:70vh; overflow-x:hidden; overflow-y:auto;
+    background:var(--raised); border:1px solid var(--rule); border-radius:14px;
+    box-shadow:0 14px 34px -14px var(--shadow);
+  }
+  #topbar.open .sepc { display:none; }
+  #topbar.open .sibs { display:flex; flex-direction:column; align-items:stretch; background:none; padding:0; }
+  #topbar.open > *, #topbar.open .sibs > *, #tabs.open > * { text-align:left; justify-content:flex-start; }
+}
