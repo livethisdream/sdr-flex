@@ -118,7 +118,9 @@ const defaultViewParams = () => ({
   // default and one of them used to disagree.
   dbMin: -74, dbMax: -18, dbAuto: true, colormap: DEFAULT_COLORMAP, speed: 60,
   trigger: 'auto', spanS: 0.12,
-  domain: 'time', channel: 'sum',
+  // `both`, not `time`: on a phone the waveform alone left the spectrum behind a
+  // gesture, and on wideband FM the spectrum is the answer (ADR-0036).
+  domain: 'both', channel: 'sum',
   zoomLo: 0, zoomHi: 1,
 });
 
@@ -3170,14 +3172,19 @@ class App {
     // The scope is a picture too, and it is the one a demodulator opens on. Bound only
     // to the spectrum stage, a real stream in `time` had no way to reach `domain` —
     // the view group is off the bar — so it could never be switched to its spectrum.
-    const openView = (e) => {
+    //
+    // A touch screen has no right button, and Chrome on Android does not reliably turn a
+    // long press into one on a `touch-action: none` canvas, so this goes through the same
+    // hold as the node menu. A hold that opened the menu was not a drag: without dropping
+    // it, the release would read as a sub-6 px click and clear the selection.
+    const openView = (x, y) => {
       if (!this.strip.groups || !this.strip.groups.some((g) => g.key === 'view')) return;
-      e.preventDefault();
+      if (this.drag) { this.drag = null; box.hidden = true; }
       this.metrics.interaction();
-      this.strip.openMore('view', atPointer(e.clientX, e.clientY));
+      this.strip.openMore('view', atPointer(x, y));
     };
-    stage.addEventListener('contextmenu', openView);
-    $('#pane-time .tstage').addEventListener('contextmenu', openView);
+    this.wireSummon(stage, openView);
+    this.wireSummon($('#pane-time .tstage'), openView);
 
     stage.addEventListener('dblclick', () => { if (this.hasSpectrum()) resetZoom(); });
 

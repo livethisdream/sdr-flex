@@ -10,7 +10,9 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-09-29 (the bar is the transport and nothing else: every node's settings on a right-click; menu headings readable)
+**Last updated:** 2026-10-03 (real streams open on `domain: both`; the view menu on a long press, so a touch screen can reach it — ADR-0036 amended)
+
+Previous: 2026-09-29 (the bar is the transport and nothing else: every node's settings on a right-click; menu headings readable)
 
 Previous: 2026-09-27 (the parked chrome, unparked and built: one path row, one deck, the picture on a right-click, the path in ovals) · merged to `main`
 

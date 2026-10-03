@@ -84,3 +84,11 @@ that was missing; `redsea` is the one that reads them, and a stereo decoder is a
 nobody has written yet. It also does not label the subcarriers — 19, 38 and 57 kHz are
 facts about broadcast FM, not about `real`, and baking them into a generic view would
 be the same mistake as the bundled demod, one altitude down.
+
+## Amended 2026-10-03: a real stream opens on `both`
+
+It opened on `time`, which on a phone left the spectrum behind a right-click that a
+touch screen does not have. `both` draws the waveform and the spectrum together (stacked
+below 900 px), so the question this ADR exists for is answered without a gesture, and a
+burst you want to slice is still on screen. The view menu on either picture now also
+opens on a long press, the same 480 ms hold the node menu uses.
