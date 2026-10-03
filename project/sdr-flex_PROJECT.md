@@ -29,8 +29,8 @@ Previous: 2026-09-15 (`Dockerfile.full`; DSSS; BBC fixture; renaming; a real WBF
 `claude/sdr-flex-toolkit-planning-c4ghl1` — the branch this project happened to be
 started on, which had been trunk by accident ever since. `main` carries that whole
 history and nothing was rebased or dropped, so the old branch is an ancestor of this one
-rather than a fork of it; it is left in place and is not written to any more. Work from
-a branch off `main`.
+rather than a fork of it. It was deleted on 2026-10-03, with every other branch whose
+commits were all in `main`; nothing was lost. Work from a branch off `main`.
 
 ---
 
