@@ -10,7 +10,9 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-10-03 (real streams open on `domain: both`; the view menu on a long press, so a touch screen can reach it — ADR-0036 amended)
+**Last updated:** 2026-10-03 (phone pass: the path folds to its current entry with a drop-down at ≤600px; long presses fire once and do not select text; the deck's track stays inside it; the library leads with recently opened captures, then the newest — `recent.js`)
+
+Previous: 2026-10-03 (real streams open on `domain: both`; the view menu on a long press, so a touch screen can reach it — ADR-0036 amended)
 
 Previous: 2026-09-29 (the bar is the transport and nothing else: every node's settings on a right-click; menu headings readable)
 
