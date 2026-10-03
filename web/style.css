@@ -1017,7 +1017,8 @@ input.rn::placeholder { color:var(--dim); font-weight:400; }
    open, the run drops down under itself as a list. */
 @media (max-width: 600px) {
   .path { position:relative; }
-  .pathspacer { flex:none; }
+  .pathspacer { flex:none; pointer-events:none; }
+  .pathspacer .sibs { background:none; padding:0; }
   #topbar:not(.open) > :not(.cur):not(:has(.cur)):not(.naming),
   #topbar:not(.open) .sibs > :not(.cur):not(.naming),
   #tabs:not(.open) > :not(.on) { display:none; }

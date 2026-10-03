@@ -3039,8 +3039,8 @@ class App {
    * entries, with "FM demod" wrapping onto three lines inside one of them. Folded, a run
    * shows only its current entry, and a tap drops the whole run down under it.
    * The entries are the same elements with the same handlers, so nothing about what a
-   * tap or a hold on one does has to be written twice; a spacer holds the run's place
-   * in the row while it is out of flow, so the row does not jump.
+   * tap or a hold on one does has to be written twice; a copy of the folded run holds
+   * its place in the row while it is out of flow, so the row does not change.
    */
   wirePathFold() {
     const narrow = matchMedia('(max-width: 600px)');
@@ -3066,9 +3066,15 @@ class App {
         close();
         const path = el.parentElement.getBoundingClientRect();
         const r = el.getBoundingClientRect();
-        const spacer = document.createElement('span');
-        spacer.className = 'pathspacer';
-        spacer.style.width = `${r.width}px`;
+        // The run as it looked folded stays in the row while the list drops below it:
+        // a copy without what the fold hides, inert, so the bar does not change under you.
+        const spacer = el.cloneNode(true);
+        spacer.removeAttribute('id');
+        spacer.classList.add('pathspacer');
+        spacer.inert = true;
+        const live = el.querySelectorAll('*'), copy = spacer.querySelectorAll('*');
+        const hidden = [...live].map((n, i) => getComputedStyle(n).display === 'none' && copy[i]).filter(Boolean);
+        for (const n of hidden) n.remove();
         el.before(spacer);
         el._spacer = spacer;
         el.classList.add('open');
