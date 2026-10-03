@@ -472,9 +472,17 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
  * undoes the squeeze the track was already in before the speaker existed. Nothing moves
  * on a desktop, where there was never a shortage of room.
  */
+/* The basis leaves room for the track's own margins — at 100% plus margins it ran past
+ * both ends of the pill. `order` puts it last, so the theme button stays on the button
+ * row instead of wrapping onto a third row of its own after the track; and the deck
+ * drops its full rounding, which on two rows curved in over both ends of the track. */
 @media (max-width: 560px) {
+  .deck { border-radius:20px; }
+  /* `max-content` on a row that wraps is the width of every item on one line, so the
+     transport was wider than the deck it sits in and the track overhung both ends. */
+  .deck > .transport { flex:1 1 100%; width:auto; min-width:0; }
   .transport { flex-wrap:wrap; justify-content:center; border-radius:18px; row-gap:.15rem; }
-  .transport .track { flex:1 0 100%; width:auto; margin-inline:.35rem; }
+  .transport .track { flex:1 0 calc(100% - .7rem); width:auto; margin-inline:.35rem; order:1; }
 }
 
 /* Below this the buttons stop fitting on one row and wrap to a third — measured at 360
