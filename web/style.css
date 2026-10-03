@@ -379,7 +379,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 }
 /* A vertical rule between two stacked runs points the wrong way, so below the width
    where they stop fitting on one line it goes, and the pill wraps. */
-@media (max-width:860px) {
+@media (max-width:900px) {
   .deck { flex-wrap:wrap; justify-content:center; row-gap:.15rem; }
   .deck > .strip::before { display:none; }
 }
@@ -474,17 +474,33 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
  * undoes the squeeze the track was already in before the speaker existed. Nothing moves
  * on a desktop, where there was never a shortage of room.
  */
-/* The basis leaves room for the track's own margins — at 100% plus margins it ran past
- * both ends of the pill. `order` puts it last, so the theme button stays on the button
- * row instead of wrapping onto a third row of its own after the track; and the deck
- * drops its full rounding, which on two rows curved in over both ends of the track. */
-@media (max-width: 560px) {
+/* The groups exist for the phone layout below. Here they dissolve, and `order` puts the
+ * controls back in the sequence the desktop bar has always had. */
+.tgroup { display:contents; }
+#back { order:1; } #play { order:2; } #fwd { order:3; } #loop { order:4; } #clock { order:5; }
+#speed { order:6; } #listen { order:7; } #track { order:8; } #theme { order:9; }
+
+/* On a touch-sized screen — a phone, and a folding phone open — the track takes the top
+ * row and the buttons the bottom one, nearest the thumb, with play in the exact middle:
+ * reachable by either hand, and still there when you switch. A grid rather than a wrapped
+ * row, because centering play in a row needs the runs either side of it to be the same
+ * width, and they are not. Play is the button pressed most, so it is the biggest. */
+@media (max-width: 900px) {
   .deck { border-radius:20px; }
-  /* `max-content` on a row that wraps is the width of every item on one line, so the
-     transport was wider than the deck it sits in and the track overhung both ends. */
   .deck > .transport { flex:1 1 100%; width:auto; min-width:0; }
-  .transport { flex-wrap:wrap; justify-content:center; border-radius:18px; row-gap:.15rem; }
-  .transport .track { flex:1 0 calc(100% - .7rem); width:auto; margin-inline:.35rem; order:1; }
+  .transport {
+    display:grid; grid-template-columns:1fr auto 1fr;
+    grid-template-areas:"track track track" "tl tc tr";
+    align-items:center; row-gap:.1rem; border-radius:18px;
+  }
+  .tgroup { display:flex; align-items:center; gap:.2rem; min-width:0; }
+  .tgroup.tl { grid-area:tl; justify-self:start; }
+  .tgroup.tc { grid-area:tc; justify-self:center; gap:.4rem; }
+  .tgroup.tr { grid-area:tr; justify-self:end; }
+  .transport .track { grid-area:track; width:auto; margin-inline:.35rem; }
+  .tbtn.play { min-width:52px; min-height:44px; font-size:.95rem; border-radius:12px; background:var(--raised); }
+  .transport .clock { margin-left:.2rem; }
+}
 }
 
 /* Below this the buttons stop fitting on one row and wrap to a third — measured at 360
