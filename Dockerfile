@@ -19,11 +19,18 @@ COPY server ./server
 VOLUME /captures
 ENV SDRFLEX_CAPTURES=/captures \
     SDRFLEX_PORT=8722 \
-    SDRFLEX_BIND=0.0.0.0
+    SDRFLEX_BIND=0.0.0.0 \
+    SDRFLEX_RINGS=/rings
 
 # Inside a container 0.0.0.0 means "this container's network namespace", not "every
 # interface on the host". What the host exposes is decided by the port publish, and
 # compose scopes that to one address — see docker-compose.yml.
+# Ring recordings are scratch, and large: sixty seconds of 2.4 MS/s cu8 is 288 MB. Its
+# own directory so it can be mounted onto a real disk when the container's writable
+# layer is somewhere you would rather not put that.
+RUN mkdir -p /rings && chown sdrflex /rings
+VOLUME /rings
+
 EXPOSE 8722
 USER sdrflex
 
