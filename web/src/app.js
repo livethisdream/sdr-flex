@@ -3037,7 +3037,7 @@ class App {
    *
    * The crumbs and the tabs each scrolled sideways on a phone — two strips of hidden
    * entries, with "FM demod" wrapping onto three lines inside one of them. Folded, a run
-   * shows only its current entry and a ▾, and a tap drops the whole run down under it.
+   * shows only its current entry, and a tap drops the whole run down under it.
    * The entries are the same elements with the same handlers, so nothing about what a
    * tap or a hold on one does has to be written twice; a spacer holds the run's place
    * in the row while it is out of flow, so the row does not jump.
