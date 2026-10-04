@@ -3259,11 +3259,14 @@ class App {
 
     // pinch: two pointers set both the scale and where it is anchored
     const pts = new Map();
+    // Only the horizontal gap scales the frequency axis, and with the fingers one above
+    // the other it is nearly zero, so a few pixels of drift read as a 10x zoom. Floored.
+    const MIN_PINCH_PX = 40;
     const pinchState = () => {
       const [a, b] = [...pts.values()];
       const r = stage.getBoundingClientRect();
       return {
-        dist: Math.abs(a.x - b.x) || 1,
+        dist: Math.max(MIN_PINCH_PX, Math.abs(a.x - b.x)),
         mid: Math.max(0, Math.min(1, ((a.x + b.x) / 2 - r.left) / r.width)),
       };
     };
@@ -3285,10 +3288,19 @@ class App {
     stage.addEventListener('pointermove', (e) => {
       if (!pts.has(e.pointerId)) return;
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      // Like a map: what was under the fingers stays under them. The spread zooms and
+      // the midpoint moving pans, in one gesture. Anchoring at the new midpoint alone
+      // zoomed in place and ignored the fingers sliding, so there was no pan on touch.
       if (pts.size === 2 && this.pinch) {
         const now = pinchState();
-        const factor = this.pinch.dist / now.dist;
-        if (isFinite(factor) && factor > 0) applyZoom(factor, now.mid);
+        const p = this.vp(this.current);
+        const width = p.zoomHi - p.zoomLo;
+        const under = p.zoomLo + this.pinch.mid * width;
+        const w = Math.min(1, Math.max(MIN_SPAN, width * (this.pinch.dist / now.dist)));
+        const lo = Math.max(0, Math.min(1 - w, under - now.mid * w));
+        p.zoomLo = lo;
+        p.zoomHi = lo + w;
+        this.renderStage();
         this.pinch = now;
       }
     });
