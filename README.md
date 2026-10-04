@@ -57,11 +57,31 @@ Two constraints shape everything else:
 
 ## Status
 
-[M0](docs/06-roadmap.md) is under way in [`web/`](web/) — a static toy model with no
-backend, which already tunes, demodulates and decodes the synthetic scene end to end.
-Everything else is still planning. [M0](docs/06-roadmap.md) is a static toy model — the real client against a
-mock engine in the browser, hosted, no backend. It tests the premise in days and needs
-GNU Radio on nobody's machine ([ADR-0021](docs/adr/0021-mock-engine-first.md)).
+SDR Flex is past the toy model. The same client runs in two places: in the browser
+against a mock engine, which is what the [hosted
+copy](https://livethisdream.github.io/sdr-flex/) runs, and on a box against the Node
+engine, which reads captures off its disk, records live radio into a ring, and runs
+external decoders ([`server/README.md`](server/README.md)).
+
+What works end to end:
+
+- **Analysis:** spectrum and waterfall, a tuner you drag out of the spectrum, FM, AM,
+  SSB and CW demodulation, slicers and framers that derive their own rates and identify
+  the CRC, frequency hopping, OFDM resource grids, DSSS despreading, and a baseband
+  spectrum for anything demodulated.
+- **Decoders:** eleven external programs behind one `Identify` button, installed
+  together by `Dockerfile.full`. Nine are checked against the real programs:
+  rtl_433, multimon-ng, dump1090, direwolf, minimodem, M17 in stream and
+  packet mode, redsea for RDS, and LoRa through GNU Radio. The other two, nrsc5 for HD
+  Radio and whisper for speech, are wired in but have not yet decoded a real signal.
+- **Sessions:** a chain is a recipe. It survives a reload and can be saved by name
+  ([ADR-0042](docs/adr/0042-a-session-is-a-recipe-somewhere-durable.md)).
+
+Radios are written but not proven. There are drivers for ADALM-PLUTO, RTL-SDR, USRP and
+SoapySDR, and the live path runs end to end on a synthetic signal, but no real radio has
+been attached yet. The [roadmap](docs/06-roadmap.md) has the state of each milestone,
+and the [project note](project/sdr-flex_PROJECT.md) lists the open decisions and what is
+deferred on purpose.
 
 ## Hooks
 

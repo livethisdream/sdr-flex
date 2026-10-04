@@ -1,8 +1,10 @@
-# M0 — the toy model
+# The client
 
-The real client running against a **mock engine in the browser**. No server, no build
-step, no GNU Radio. See [ADR-0021](../docs/adr/0021-mock-engine-first.md) for why this
-is the first thing built rather than the last.
+The client runs against one of two engines: the **mock engine in the browser**, with no
+server, no build step and no GNU Radio, which is what the hosted copy is; or the engine
+on a box ([`server/README.md`](../server/README.md)), which it picks whenever one answers.
+See [ADR-0021](../docs/adr/0021-mock-engine-first.md) for why the in-browser engine was
+built first.
 
 **Live:** https://livethisdream.github.io/sdr-flex/
 

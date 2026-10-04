@@ -8,7 +8,7 @@ as it possibly can be** — which is why the first thing built has no server in 
 
 ---
 
-## M0 — Toy model *(static, hosted, no backend)* — **in progress**, see [`web/`](../web/)
+## M0 — Toy model *(static, hosted, no backend)* — **done**, see [`web/`](../web/)
 
 A real client running against a **mock engine inside the browser** that speaks the
 same protocol the real server will. Deployed as a static site; anyone can click a link
@@ -117,7 +117,7 @@ GNU Radio installed anywhere.
 
 ---
 
-## M1 — Walking skeleton *(the real pipeline, feeding the same client)*
+## M1 — Walking skeleton *(the real pipeline, feeding the same client)* — **done, by another route**
 
 Now prove the engine can feed the client that already exists.
 
@@ -136,9 +136,15 @@ SigMF file at a p99 frame interval within 4 ms of the mean.
 here rather than later because retrofitting a three-language interface is the
 expensive version.
 
+**Status, 2026-10-04:** the goal is met by a different design. The engine is Node over
+a WebSocket behind the same protocol (ADR-0029, `web/test/parity.test.mjs`), not a
+Rust relay on a ZMQ worker and shared-memory ring. **Still open:** ADR-0014 still
+reads as accepted and does not say so, and no p99 frame-interval number has been
+measured on the server path.
+
 ---
 
-## M2 — Selection → tuner, for real
+## M2 — Selection → tuner, for real — **partial**
 
 - Node tree, command log, graph compiler for `source` and `tuner`
 - Selection → derived decimation and taps in GNU Radio
@@ -150,9 +156,13 @@ under 120 px of pointer travel per operation.
 **Validates:** ADR-0010, and whether GR's `lock()`/`unlock()` survives frequent
 structural edits — the top technical risk in the design.
 
+**Still open:** the command log (ADR-0009), and a measured end-to-end run against the
+50 ms / 120 px budget. The tuner is JavaScript DSP rather than GNU Radio, so the
+`lock()`/`unlock()` risk has not been tested.
+
 ---
 
-## M3 — Demodulate and listen *(now it's GQRX)*
+## M3 — Demodulate and listen *(now it's GQRX)* — **done**
 
 Wave 1 of the [demod and decoder plan](09-demods-and-decoders.md); the M0 mock
 already runs the detectors and the sink, so M3 is that design against the real engine.
@@ -166,9 +176,11 @@ already runs the detectors and the sink, so M3 is that design against the real e
 **Ship it.** The first point where outside feedback is worth collecting on the
 *engine* — M0 was already collecting it on the workflow.
 
+**Still open:** fragment splitting (ADR-0004).
+
 ---
 
-## M4 — Time is real *(now it's better than GQRX)*
+## M4 — Time is real *(now it's better than GQRX)* — **partial**
 
 - Ring recorder for live sources; live and file unified (ADR-0005). Disk-budget-derived
   window, cs16 default, rate/format policy in the interface (ADR-0016)
@@ -181,9 +193,13 @@ already runs the detectors and the sink, so M3 is that design against the real e
 full resolution, and re-run a chain over it.
 **This is the first capability no free tool has.**
 
+**Still open:** no real radio has been attached yet; the live path has only run on the
+synthetic signal. No multi-resolution pyramid, and the ring is fixed-size scratch
+rather than sized from a disk budget.
+
 ---
 
-## M4.5 — `rtl_433` in a box *(the cheapest win in the project)*
+## M4.5 — `rtl_433` in a box *(the cheapest win in the project)* — **done**
 
 The `process` plugin kind ([ADR-0013](adr/0013-external-decoders-as-subprocesses.md))
 ahead of the rest of the plugin system, because it is small and the payoff is enormous.
@@ -202,9 +218,12 @@ in under 3 s with progressive per-decoder results.
 **Roughly 60 lines of manifest buy 270+ protocols.** Nothing else has that ratio,
 which is why it is out of order.
 
+**Still open:** `Identify` returns in 1.8 s at 250 kS/s but 4.8 s at 2.4 MS/s, so the
+3 s budget holds at channel rates and not at dongle rate.
+
 ---
 
-## M5 — Third parties *(now it's extensible)*
+## M5 — Third parties *(now it's extensible)* — **partial**
 
 - Plugin manifest schema + registry + validation with real error reporting
 - `gr_hier`, `gr_block`, and `grc` implementation kinds (`process` landed at M4.5)
@@ -215,9 +234,13 @@ which is why it is out of order.
 **Done when:** someone outside the project adds a working operation without touching
 the codebase.
 
+**Still open:** the GNU Radio implementation kinds (`gr_hier`, `gr_block`, `grc`), a
+Plugins panel, and `.grc` export. The extension points exist (ADR-0026, ADR-0028,
+`docs/10-adding-a-decoder.md`), but nobody outside the project has used them yet.
+
 ---
 
-## M6 — Bits and meaning *(now it's URH-shaped)*
+## M6 — Bits and meaning *(now it's URH-shaped)* — **partial**
 
 - `symbols`, `bits`, `bytes`, `events` types; slicers, framing, CRC, real decoders —
   wave 2, as composable single-purpose nodes ([ADR-0024](adr/0024-composable-decode-chain.md))
@@ -229,9 +252,13 @@ the codebase.
 
 **Done when:** UC-1 and UC-2 run start to finish.
 
+**Still open:** annotations (ADR-0007) and the SigMF annotation round-trip; export
+writes an empty `annotations` list. Project save exists as a session recipe
+(ADR-0042). UC-1 and UC-2 have not been run start to finish.
+
 ---
 
-## M7 — Beyond the GUI
+## M7 — Beyond the GUI — **not started**
 
 - Headless CLI + batch runner, Python SDK
 - Links (event field → hot parameter) for UC-3
