@@ -484,7 +484,7 @@ export function hilbertTaps(numTaps) {
  * `bfoHz` shifts the passband before the decision, which is what the tuning knob on
  * an SSB receiver actually does — get it wrong and voices sound like ducks.
  */
-export function ssbDemod(iq, count, sampleRate, sideband = 'usb', bfoHz = 0, taps = null) {
+export function ssbDemod(iq, count, sampleRate, sideband = 'usb', bfoHz = 0, taps = null, startIndex = 0) {
   const h = taps || hilbertTaps(65);
   const n = h.length, mid = (n - 1) / 2;
   const sign = sideband === 'lsb' ? 1 : -1;
@@ -493,7 +493,10 @@ export function ssbDemod(iq, count, sampleRate, sideband = 'usb', bfoHz = 0, tap
   // mix first, so the Hilbert transformer always sees the band it was designed for
   const dphi = (-2 * Math.PI * bfoHz) / sampleRate;
   const rc = Math.cos(dphi), rs = Math.sin(dphi);
-  let pc = 1, ps = 0;
+  // The oscillator's phase belongs to the capture's sample `startIndex`, not to the start
+  // of this read — otherwise every read restarts it and consecutive reads meet in a click.
+  const p0 = (dphi * startIndex) % (2 * Math.PI);
+  let pc = Math.cos(p0), ps = Math.sin(p0);
   const I = new Float32Array(count), Q = new Float32Array(count);
   for (let i = 0; i < count; i++) {
     const re = iq[i * 2], im = iq[i * 2 + 1];
@@ -520,11 +523,13 @@ export function ssbDemod(iq, count, sampleRate, sideband = 'usb', bfoHz = 0, tap
  * `offsetHz` is where the carrier actually sits (rarely dead center); `pitchHz` is
  * where you want to hear it, which is a preference, not a measurement.
  */
-export function cwBeat(iq, count, sampleRate, offsetHz, pitchHz) {
+export function cwBeat(iq, count, sampleRate, offsetHz, pitchHz, startIndex = 0) {
   const out = new Float32Array(count);
   const dphi = (2 * Math.PI * (pitchHz - offsetHz)) / sampleRate;
   const rc = Math.cos(dphi), rs = Math.sin(dphi);
-  let pc = 1, ps = 0;
+  // Anchored to the capture's sample index for the same reason as `ssbDemod`.
+  const p0 = (dphi * startIndex) % (2 * Math.PI);
+  let pc = Math.cos(p0), ps = Math.sin(p0);
   for (let i = 0; i < count; i++) {
     const re = iq[i * 2], im = iq[i * 2 + 1];
     out[i] = re * pc - im * ps;              // real part of x · e^{jΔω n}

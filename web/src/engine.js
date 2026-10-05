@@ -311,11 +311,25 @@ export const OPS = {
  * Parameters are derived from the samples in hand when none are supplied, so the answer
  * comes with the evidence for how it was produced (ADR-0017) even when nobody chose it.
  */
-export function demodulate(op, iq, count, fs, params = null) {
+// The detector block cache (`_detectCached`).
+const BLOCK_S = 0.25;
+// Enough for the longest filter edge in a chain: a 65-tap Hilbert transformer at a 5 kS/s
+// SSB channel is 13 ms, a stereo decoder's 127 taps at 250 kS/s half a millisecond.
+const BLOCK_MARGIN_S = 0.03;
+const MAX_BLOCKS = 40;
+const captureIds = new WeakMap();
+let captureCount = 0;
+const captureId = (c) => {
+  if (!c) return 0;
+  if (!captureIds.has(c)) captureIds.set(c, ++captureCount);
+  return captureIds.get(c);
+};
+
+export function demodulate(op, iq, count, fs, params = null, startIndex = 0) {
   const d = DETECTORS[op];
   if (d) {
     const p = params || d.derive(iq, count, fs);
-    return { data: d.detect(iq, count, fs, p), params: p, label: d.label };
+    return { data: d.detect(iq, count, fs, p, startIndex), params: p, label: d.label };
   }
   // AM: the rectifier, then the post-detection low-pass every real receiver has
   return {
@@ -410,8 +424,8 @@ const DETECTORS = {
         gain: param(6, 'manual'),
       };
     },
-    detect(iq, count, fs, params) {
-      const a = dsp.ssbDemod(iq, count, fs, params.sideband.value, params.bfoHz.value);
+    detect(iq, count, fs, params, startIndex = 0) {
+      const a = dsp.ssbDemod(iq, count, fs, params.sideband.value, params.bfoHz.value, null, startIndex);
       const g = params.gain.value || 1;
       for (let i = 0; i < count; i++) a[i] *= g;
       return a;
@@ -434,8 +448,8 @@ const DETECTORS = {
         gain: param(4, 'manual'),
       };
     },
-    detect(iq, count, fs, params) {
-      const a = dsp.cwBeat(iq, count, fs, params.offsetHz.value, params.pitchHz.value);
+    detect(iq, count, fs, params, startIndex = 0) {
+      const a = dsp.cwBeat(iq, count, fs, params.offsetHz.value, params.pitchHz.value, startIndex);
       const g = params.gain.value || 1;
       for (let i = 0; i < count; i++) a[i] *= g;
       return a;
@@ -2275,6 +2289,12 @@ export class MockEngine extends Graph {
    * instead, which is what makes a chain of real-to-real operations possible at all.
    */
   _detect(node, tEnd, count) {
+    // A merge and a symbol sync keep their own grids; everything else is cached.
+    if (node.op === 'core.math' || node.op === 'core.symbols') return this._detectRaw(node, tEnd, count);
+    return this._detectCached(node, tEnd, count);
+  }
+
+  _detectRaw(node, tEnd, count) {
     const p = this.node(node.parent);
     const fs = node.out.sampleRate;
     if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
@@ -2283,16 +2303,81 @@ export class MockEngine extends Graph {
     if (node.op === 'core.symbols') return this._readSymbols(node, tEnd, count);
     if (node.op === 'core.stereo') {
       // Out at a fraction of the composite's rate. The read is snapped to the output
-      // grid so the samples kept are the same ones on every read, whatever window asked.
+      // grid, so output sample k is always made from input sample k·d.
       const fsIn = p.out.sampleRate, d = Math.round(fsIn / fs);
-      const tIn = Math.round(tEnd * fs) / fs;
+      const tIn = (Math.floor(tEnd * fs) * d + 0.5) / fsIn;
       return realOp(node.op, this._detectMono(p, tIn, count * d), count * d, fsIn, node.params).data;
     }
     if (p.out.kind === 'real') {
       return realOp(node.op, this._detectMono(p, tEnd, count), count, fs, node.params).data;
     }
     const iq = this._readIQ(p, tEnd, count);
-    return demodulate(node.op, iq, count, fs, node.params).data;
+    return demodulate(node.op, iq, count, fs, node.params, Math.floor(tEnd * fs) - count).data;
+  }
+
+  /**
+   * `_detectRaw`, assembled from blocks that are computed once and kept.
+   *
+   * Every view asks for a window ending now, about thirty times a second, and the scope's
+   * trigger looks back a whole second to find an edge — so nearly all of each read was
+   * the previous read again, recomputed through the tuner, the demodulator and anything
+   * after it. On a box that is one thread, and the speaker's next chunk waited behind it:
+   * a stereo broadcast skipped. Blocks sit on a grid anchored to the capture, so every
+   * reader shares them, and each is computed with a margin either side so the filters at
+   * its edges see real samples rather than the clamped ends of a short read.
+   */
+  _detectCached(node, tEnd, count) {
+    const fs = node.out.sampleRate;
+    const ch = node.out.channels || 1;
+    const B = Math.max(256, Math.round(BLOCK_S * fs));
+    const M = Math.ceil(BLOCK_MARGIN_S * fs);
+    const sig = this._chainSig(node);
+    if (!node._blocks || node._blockSig !== sig) { node._blocks = new Map(); node._blockSig = sig; }
+
+    // Cache only what cannot change: on a live source, a block whose last sample (and
+    // margin) has not arrived yet is computed for this read and not kept.
+    const [, last] = this.span();
+    const live = !!(this.capture && this.capture.live);
+
+    const kEnd = Math.floor(tEnd * fs), kStart = kEnd - count;
+    const out = new Float32Array(count * ch);
+    for (let j = Math.floor(kStart / B); j * B < kEnd; j++) {
+      const a = Math.max(kStart, j * B), b = Math.min(kEnd, (j + 1) * B);
+      let blk = node._blocks.get(j);
+      if (!blk) {
+        const end = (j + 1) * B + M;
+        if (live && end / fs > last) {
+          // The live edge: this block is not all here yet, so it cannot be kept, and
+          // building all of it on every read would cost a block per frame. Only what
+          // was asked for, with the margin behind it.
+          const raw = this._detectRaw(node, (b + 0.5) / fs, b - a + M);
+          out.set(raw.subarray(M * ch), (a - kStart) * ch);
+          continue;
+        }
+        blk = this._detectRaw(node, (end + 0.5) / fs, B + 2 * M).slice(M * ch, (M + B) * ch);
+        node._blocks.set(j, blk);
+        if (node._blocks.size > MAX_BLOCKS) node._blocks.delete(node._blocks.keys().next().value);
+      }
+      out.set(blk.subarray((a - j * B) * ch, (b - j * B) * ch), (a - kStart) * ch);
+    }
+    return out;
+  }
+
+  /** How many samples of the first real stream in this chain each output sample costs. */
+  _upstreamRatio(node) {
+    let top = node;
+    for (let p = this.node(node.parent); p && p.out.kind === 'real'; p = this.node(p.parent)) top = p;
+    return Math.max(1, top.out.sampleRate / node.out.sampleRate);
+  }
+
+  /** Everything a node's output depends on, as a string: when it changes, the blocks go. */
+  _chainSig(node) {
+    let sig = '';
+    for (let n = node; n; n = n.parent != null ? this.node(n.parent) : null) {
+      const vals = n.params ? Object.keys(n.params).map((k) => `${k}=${n.params[k] && n.params[k].value}`).join(',') : '';
+      sig += `${n.op}:${n.out.sampleRate}:${n.out.centerHz}:${vals}|`;
+    }
+    return `${captureId(this.capture)}#${sig}`;
   }
 
   /**
@@ -2482,7 +2567,10 @@ export class MockEngine extends Graph {
       // shows afterwards is the span the user asked for — tying the two together
       // meant the span control moved nothing whenever the trigger was armed.
       const searchS = Math.min(maxSpan, opts.trigger === 'free' ? span : Math.max(1.05, span));
-      const count = Math.min(131072, Math.max(256, Math.floor(fs * searchS)));
+      // The cap is on the work, not the output: behind a decimating node each output
+      // sample costs several upstream, and a stereo decode at a fifth of its input's rate
+      // read twice the composite a plain FM scope did before the cap counted that.
+      const count = Math.min(Math.floor(131072 / this._upstreamRatio(n)), Math.max(256, Math.floor(fs * searchS)));
       const env = this._detectChannel(n, now, count, opts.channel);
       const windowEnd = now;                        // absolute time of the last sample
 
