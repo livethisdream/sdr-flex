@@ -47,4 +47,5 @@ why, what it costs, and what would make us change our minds.
 | [0040](0040-a-decoder-may-read-symbols.md) | A decoder may read symbols, and then the clock is a node | Accepted |
 | [0041](0041-build-both-and-measure.md) | Where two methods each win on real signals, build both and keep the better one | Accepted |
 | [0042](0042-a-session-is-a-recipe-somewhere-durable.md) | A saved session is the recipe, written somewhere durable — not a live engine held open | Accepted |
+| [0043](0043-a-recipe-is-a-hier-block.md) | A recipe is a hier block; a plugin adds a block | Proposed |
 | [0044](0044-gnu-radio-is-the-engine.md) | GNU Radio is the engine; SDR Flex makes it visible | Accepted |
