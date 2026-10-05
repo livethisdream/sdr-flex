@@ -108,6 +108,9 @@ export const ADAPTERS = {
     blurb: 'POCSAG, FLEX, AFSK, DTMF, ZVEI and more',
     // multimon-ng is fixed at 22.05 kHz signed 16-bit mono, and says so if you disagree
     wants: { format: 's16', rate: 22_050 },
+    // The bandwidth floor, for Identify: Morse and DTMF fit in a 5 kS/s channel. The
+    // 22.05 kS/s above is the format multimon-ng reads, which the stream is resampled to.
+    minRate: 4_000,
     // A set chosen from a list, not a string somebody types.
     //
     // It was a text field, and the two ways anybody would naturally fill one in both
@@ -143,6 +146,14 @@ export const ADAPTERS = {
       const have = new Set(multimonDemods());
       return { modes: SWEEP_DEMODS.filter((m) => have.has(m)).join(' ') };
     },
+    // What a node added by hand starts with. The default above is three POCSAG rates,
+    // which is right for a command line and wrong behind a CW demod, where it decodes
+    // nothing; Identify meanwhile ran the sweep list, so the same decoder answered
+    // differently depending on who added it. Behind a CW demod there is only one thing
+    // it could be reading; anywhere else it starts where Identify would.
+    startWith: (parentOp) => (parentOp === 'core.cw'
+      ? { modes: 'MORSE_CW' }
+      : ADAPTERS['ext.multimon'].sweep()),
     args: ({ params }) => {
       const have = new Set(multimonDemods());
       // Filtered against what the binary actually has. It cannot come from the control
@@ -672,6 +683,8 @@ export const ADAPTERS = {
   'ext.whisper': {
     name: 'Speech', group: 'Decode', in: 'real', out: 'events',
     command: ['whisper-cli'],
+    // `-of -` opens /dev/stdout by path; see `run`.
+    stdoutByPath: true,
     blurb: 'Speech to text — voice traffic, transcribed',
     // Whisper's own rate. It resamples anything else internally, so converting here
     // instead is one resample rather than two and the note says which one happened.
@@ -679,8 +692,10 @@ export const ADAPTERS = {
     wants: { format: 's16', rate: 16_000, container: 'wav' },
     // Voice is not a narrow channel and a decoder handed 3 kHz of a 12 kHz FM channel
     // has been given the part somebody can hear rather than the part that was sent.
-    // Below about this there is not enough of a voice left to be worth the CPU.
-    minRate: 6_000,
+    // Below about this there is not enough of a voice left to be worth the CPU. 5 kS/s
+    // rather than 6: an SSB voice channel tunes to about 5.2, and its 2.6 kHz is the
+    // whole of what SSB sends.
+    minRate: 5_000,
     params: [
       { id: 'model', type: 'text', default: '', label: 'model',
         placeholder: 'leave empty for the installed one',
@@ -1356,7 +1371,15 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
   const started = Date.now();
 
   return new Promise((done_) => {
-    const proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    // Node hands a child a socket for stdout, not a pipe, and a program that writes its
+    // output by opening /dev/stdout cannot open a socket that way: it fails silently and
+    // nothing arrives. whisper-cli's `-of -` is one, and it had never once produced a
+    // transcription from here — the image's own check feeds it from a shell, where stdout
+    // is a pipe. Such an adapter says so, and runs behind `| cat`, which is a real pipe.
+    // The command and its arguments are positional parameters, never parsed by the shell.
+    const proc = a.stdoutByPath
+      ? spawn('sh', ['-c', '"$@" | cat', 'sh', command, ...args], { stdio: ['pipe', 'pipe', 'pipe'] })
+      : spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', outBytes = 0, done = false;
 
     const finish = async (error) => {

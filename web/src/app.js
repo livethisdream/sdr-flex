@@ -897,7 +897,7 @@ class App {
     // seen them — on a box it could not run one if it had. So the plan is built here,
     // where both are visible, and each half is run by whoever can run it.
     const plan = identifyPlan(this.engine.adapters || [], {
-      kind, sampleRate: n.out.sampleRate, demods: demodsFor(kind), plugins: plugins.loaded(),
+      kind, sampleRate: n.out.sampleRate, demods: demodsFor(kind, n.out.sampleRate), plugins: plugins.loaded(),
     });
     const mine = plan.tried.filter((c) => c.plugin);
     const theirs = plan.tried.filter((c) => !c.plugin);

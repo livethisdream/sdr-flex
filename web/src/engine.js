@@ -21,10 +21,21 @@ import * as spreading from './codes.js';
  * adapter list and `identify.js` is shared, so it can work out what is about to be tried
  * without asking. That only stays true if both sides agree on this list, so there is one.
  */
-export function demodsFor(kind) {
+// At or below this a channel is narrow enough to be CW or SSB voice, so Identify tries
+// those demods too. Above it, neither could be the thing in the channel.
+export const NARROW_CHANNEL_HZ = 25_000;
+
+export function demodsFor(kind, sampleRate = Infinity) {
   if (kind !== 'iq') return [];
-  return [{ op: 'core.fm_discriminator', label: OPS['core.fm_discriminator'].name },
-          { op: 'core.am_envelope', label: OPS['core.am_envelope'].name }];
+  const out = [{ op: 'core.fm_discriminator', label: OPS['core.fm_discriminator'].name },
+               { op: 'core.am_envelope', label: OPS['core.am_envelope'].name }];
+  // Without these a Morse decoder was only ever tried behind FM and AM, which do not
+  // produce the beat tone it listens for, and speech on SSB was never tried at all.
+  if (sampleRate <= NARROW_CHANNEL_HZ) {
+    out.push({ op: 'core.cw', label: OPS['core.cw'].name },
+             { op: 'core.ssb', label: OPS['core.ssb'].name });
+  }
+  return out;
 }
 
 export const LATENCY = {
@@ -1227,7 +1238,7 @@ export class MockEngine extends Graph {
     const { t0, t1 } = this.identifyWindow(nodeId, now);
 
     const { tried, skipped } = identifyPlan(this.adapters,
-      { kind: n.out.kind, sampleRate: fs, demods: demodsFor(n.out.kind) });
+      { kind: n.out.kind, sampleRate: fs, demods: demodsFor(n.out.kind, fs) });
 
     const got = tried.length ? await this.readSpan(nodeId, t0, t1) : null;
     if (tried.length && !got) {
@@ -1708,10 +1719,15 @@ export class MockEngine extends Graph {
       // have to keep in step: an adapter's parameters are its own business, and the
       // strip should be able to draw one it has never heard of.
       node.paramMeta = {};
+      const start = typeof a.startWith === 'function' ? a.startWith(p.op) || {} : {};
       for (const pm of a.params || []) {
-        node.params[pm.id] = param(pm.default, 'manual');
+        node.params[pm.id] = param(start[pm.id] ?? pm.default, 'manual');
+        // Resolved here: a list that depends on what is installed is a function in the
+        // adapter table, and a function does not survive the trip to the client. It
+        // arrived as nothing, and the popover that lists the choices threw on it.
         node.paramMeta[pm.id] = { label: pm.label || pm.id, type: pm.type || 'text',
-                                  placeholder: pm.placeholder, hint: pm.hint, values: pm.values };
+                                  placeholder: pm.placeholder, hint: pm.hint,
+                                  values: typeof pm.values === 'function' ? pm.values() : pm.values };
       }
       node.out = { kind: a.out, sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = a.name;

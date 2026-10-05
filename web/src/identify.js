@@ -177,7 +177,11 @@ export function feedRate(a) {
  * rejected it for being 4.03× short of a number that was never a requirement. The signal
  * was there and the decoder was never asked.
  */
-const fits = (a, sampleRate) => !(a.wants.rate > sampleRate * RATE_HEADROOM);
+// A decoder that states the narrowest stream it can read has said what bandwidth it
+// needs, and that floor (`wideEnough`) is the real test; its preferred input rate is only
+// a format. multimon-ng prefers 22.05 kS/s, and the 4x rule refused it a 5 kS/s CW
+// channel, where Morse fits with room to spare.
+const fits = (a, sampleRate) => !!a.minRate || !(a.wants.rate > sampleRate * RATE_HEADROOM);
 
 /**
  * Some decoders read something that is not in a narrow stream at all.

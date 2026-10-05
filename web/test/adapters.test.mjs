@@ -607,3 +607,55 @@ test('rtl_433 says what it measured when it recognizes nothing', async (t) => {
     assert.ok(!res.explained.guess || typeof res.explained.guess === 'string');
   }
 });
+
+// ── a decoder added by hand ─────────────────────────────────────────────────
+
+test('multimon added by hand: its choices reach the client, and it starts sensibly', async () => {
+  // The node is built the way the session builds it, then sent through JSON the way the
+  // socket sends it. Its demodulator list is a function in the adapter table, and a
+  // function sent through JSON arrives as nothing — the popover listing the choices then
+  // threw, so the list could not be changed at all.
+  const { MockEngine } = await import('../src/engine.js');
+  const e = new MockEngine({ latency: false });
+  e.adapter = (id) => (ADAPTERS[id] ? { id, ...ADAPTERS[id] } : null);
+  await e.createSession();
+  const c = e.root.out.centerHz;
+  const tu = await e.addNode({ parent: e.root.id, op: 'core.tuner', selection: { f0: c - 180_000 - 2500, f1: c - 180_000 + 2500 }, at: 0.5 });
+  const cw = await e.addNode({ parent: tu.id, op: 'core.cw', at: 0.5 });
+  const fm = await e.addNode({ parent: tu.id, op: 'core.fm_discriminator', at: 0.5 });
+
+  const behindCw = JSON.parse(JSON.stringify(await e.addNode({ parent: cw.id, op: 'ext.multimon', at: 0.5 })));
+  assert.ok(Array.isArray(behindCw.paramMeta.modes.values) && behindCw.paramMeta.modes.values.includes('MORSE_CW'),
+    'the list of demodulators survives the trip to the client');
+  assert.strictEqual(behindCw.params.modes.value, 'MORSE_CW', 'behind a CW demod it starts on Morse');
+
+  const behindFm = await e.addNode({ parent: fm.id, op: 'ext.multimon', at: 0.5 });
+  assert.strictEqual(behindFm.params.modes.value, ADAPTERS['ext.multimon'].sweep().modes,
+    'anywhere else it starts where Identify would');
+});
+
+test('a decoder that writes to /dev/stdout by path still gets its output read', async (t) => {
+  // Node gives a child a socket for stdout, and a socket cannot be opened by path, so a
+  // program that writes `> /dev/stdout` (whisper-cli's `-of -` does the equivalent)
+  // produced nothing at all. Such an adapter runs behind a real pipe instead. Both are
+  // shown, so the test says which half broke if it breaks.
+  if (process.platform === 'win32') { t.skip('POSIX shell'); return; }
+  const base = {
+    name: 'test', group: 'Decode', in: 'real', out: 'events', command: ['sh'],
+    wants: { format: 's16', rate: 8_000 },
+    args: () => ['-c', 'cat > /dev/null; echo decoded > /dev/stdout'],
+    parse: (stdout) => ({ records: String(stdout).trim() ? [{ text: String(stdout).trim() }] : [] }),
+  };
+  ADAPTERS['test.bypath'] = { ...base, stdoutByPath: true };
+  ADAPTERS['test.plain'] = base;
+  try {
+    const data = new Float32Array(800);
+    const ok = await run('test.bypath', { data, kind: 'real', sampleRate: 8_000 });
+    assert.deepStrictEqual(ok.records.map((r) => r.text), ['decoded']);
+    const lost = await run('test.plain', { data, kind: 'real', sampleRate: 8_000 });
+    t.diagnostic(`without the pipe: ${lost.records.length} records — the failure this guards against`);
+  } finally {
+    delete ADAPTERS['test.bypath'];
+    delete ADAPTERS['test.plain'];
+  }
+});

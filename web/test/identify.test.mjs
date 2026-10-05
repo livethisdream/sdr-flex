@@ -493,3 +493,20 @@ test('results arrive as they land, not all at the end', async (t) => {
   // demodulators and the two are different answers.
   assert.equal(new Set(seen.map((row) => `${row.id}|${row.via || ''}`)).size, seen.length);
 });
+
+test('a narrow channel is tried as CW and SSB, with the decoders that fit in it', async () => {
+  // The GRCon26 signal-ID CW and SSB slots tune to about 5.2 kS/s. Identify used to try
+  // nothing there: every decoder fell to the 4x rule, and only FM and AM were ever put in
+  // front of an audio decoder, so Morse never met a beat tone and SSB speech never ran.
+  const { list } = await import('../../server/adapters.js');
+  const descs = list().map((d) => ({ ...d, available: true }));
+  const fs = 5_208;
+  const { tried } = plan(descs, { kind: 'iq', sampleRate: fs, demods: demodsFor('iq', fs) });
+  const chains = new Set(tried.map((t) => `${t.id}<${(t.via || []).join ? t.via.join('>') : t.via}`));
+  const has = (id, via) => [...chains].some((c) => c.startsWith(`${id}<`) && c.includes(via));
+  assert.ok(has('ext.multimon', 'core.cw'), 'multimon is tried behind a CW demod');
+  assert.ok(has('ext.whisper', 'core.ssb'), 'speech is tried behind an SSB demod');
+  // And a wide channel is not: neither demod can be what is in it.
+  const wide = plan(descs, { kind: 'iq', sampleRate: 250_000, demods: demodsFor('iq', 250_000) });
+  assert.ok(!wide.tried.some((t) => String(t.via).includes('core.cw')), 'no CW demod on a broadcast channel');
+});

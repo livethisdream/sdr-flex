@@ -267,7 +267,7 @@ export class Strip {
       // case-sensitive names and a separator — and getting either wrong produced no
       // decode and a usage message about sample rates.
       const on = new Set(String(spec.value || '').trim().split(/\s+/).filter(Boolean));
-      body = `<div class="popopts multi">${spec.values.map((v) =>
+      body = `<div class="popopts multi">${(spec.values || []).map((v) =>
         `<button class="opt${on.has(v) ? ' on' : ''}" data-m="${v}">` +
         `<i class="tick">${on.has(v) ? '✓' : ''}</i>${spec.fmt ? spec.fmt(v) : v}</button>`).join('')}</div>` +
         (spec.hint ? `<div class="popnote">${spec.hint}</div>` : '');
@@ -316,7 +316,7 @@ export class Strip {
           : chosen.concat(b.dataset.m);
         // Kept in the order the list offers them rather than the order they were
         // clicked, so the same set always reads the same way.
-        const ordered = spec.values.filter((v) => next.includes(v));
+        const ordered = (spec.values || []).filter((v) => next.includes(v));
         b.classList.toggle('on');
         b.querySelector('.tick').textContent = b.classList.contains('on') ? '✓' : '';
         commit(ordered.join(' '));
