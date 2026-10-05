@@ -1,6 +1,6 @@
 # ADR-0044: GNU Radio is the engine; SDR Flex makes it visible
 
-**Status:** Proposed — reaffirms [ADR-0003](0003-gnuradio-in-worker-processes.md), returns
+**Status:** Accepted 2026-10-05 — reaffirms [ADR-0003](0003-gnuradio-in-worker-processes.md), returns
 the native engine to the role [ADR-0021](0021-mock-engine-first.md) gave it, and sets the
 order for getting there
 
@@ -168,6 +168,9 @@ saving is the cause.
 - If the transport between the worker and the server, not the DSP, turns out to dominate.
 
 ## Open questions
+
+Engineering questions, answered by measurement during the migration rather than decided
+up front. Each is closed with a test that pins the answer.
 
 1. Filter edges: each on-demand block came back about 10 ms short (11,976 frames instead of
    12,500), which contiguous playback has to absorb.
