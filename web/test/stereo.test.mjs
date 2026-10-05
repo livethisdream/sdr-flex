@@ -156,13 +156,13 @@ test('the discriminator still does not de-emphasize, because redsea reads its ou
 // ── the node ────────────────────────────────────────────────────────────────
 
 /** A capture of a wideband FM station in stereo, opened in an engine. */
-async function stereoStation({ pilot = 0.10 } = {}) {
-  const mpx = mod.fmStereoMpx({ rate: FS, seconds: 0.5, pilot });
+async function stereoStation({ pilot = 0.10, rate = FS, seconds = 0.5 } = {}) {
+  const mpx = mod.fmStereoMpx({ rate, seconds, pilot });
   const count = mpx.length;
   const iq = new Float32Array(count * 2);
   let phase = 0;
   for (let i = 0; i < count; i++) {
-    phase += (2 * Math.PI * 12_000 * mpx[i]) / FS;
+    phase += (2 * Math.PI * 12_000 * mpx[i]) / rate;
     iq[i * 2] = Math.cos(phase);
     iq[i * 2 + 1] = Math.sin(phase);
   }
@@ -172,10 +172,10 @@ async function stereoStation({ pilot = 0.10 } = {}) {
   await e.createSession();
   await e.openCapture(new Capture({
     buffer: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
-    format: 'cu8', sampleRate: FS, centerHz: 98_500_000, label: 'stereo',
+    format: 'cu8', sampleRate: rate, centerHz: 98_500_000, label: 'stereo',
   }));
   const tu = await e.addNode({ parent: e.root.id, op: 'core.tuner',
-    selection: { f0: 98_500_000 - FS / 2, f1: 98_500_000 + FS / 2 }, at: 0.2 });
+    selection: { f0: 98_500_000 - rate / 2, f1: 98_500_000 + rate / 2 }, at: 0.2 });
   const fm = await e.addNode({ parent: tu.id, op: 'core.fm_discriminator', at: 0.2 });
   return { e, fm };
 }
@@ -241,4 +241,59 @@ test('a stereo node still slices, decodes and exports as one channel', async () 
   }
   const listen = await e.addNode({ parent: st.id, op: 'core.audio', at: 0.25 });
   assert.equal(listen.out.kind, 'audio');
+});
+
+// ── the output rate ─────────────────────────────────────────────────────────
+
+test('at a broadcast rate the channels come out at an audio rate, still apart', () => {
+  // 250 kS/s is what a broadcast station tunes to. Sent out at that rate the decode was
+  // slower than real time on the box and the speaker skipped; it drops by a whole
+  // number to the lowest rate at or above 48 kS/s instead.
+  const fs = 250_000, d = dsp.stereoDecimation(fs);
+  assert.equal(d, 5);
+  const mpx = mod.fmStereoMpx({ rate: fs });
+  const r = dsp.stereoDecode(mpx, mpx.length, fs, { deemphasisUs: 0, decimate: d });
+  assert.equal(r.sampleRate, 50_000);
+  assert.equal(r.count, Math.floor(mpx.length / d));
+  assert.equal(r.data.length, r.count * 2);
+  const sep = separation(r.data, r.sampleRate);
+  assert.ok(sep > 40, `separation ${sep.toFixed(1)} dB`);
+});
+
+test('decimated as mono, the subcarriers are filtered out rather than folded down', () => {
+  // With no pilot the composite goes out as it is — at the full rate that is harmless,
+  // but taking every fifth sample of it would fold 57 kHz RDS down to 7 kHz, inside
+  // the audio. So the mono path low-passes before it decimates.
+  const fs = 250_000, d = dsp.stereoDecimation(fs), n = Math.round(fs * 0.4);
+  const x = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    x[i] = 0.5 * Math.sin((2 * Math.PI * L_HZ * i) / fs) + 0.3 * Math.sin((2 * Math.PI * 57_000 * i) / fs);
+  }
+  const r = dsp.stereoDecode(x, n, fs, { deemphasisUs: 0, stereo: false, decimate: d });
+  const tone = amplitudeAt(r.data, r.sampleRate, L_HZ, 2, 0, 400);
+  const alias = amplitudeAt(r.data, r.sampleRate, 57_000 - r.sampleRate, 2, 0, 400);
+  assert.ok(db(tone, alias) > 40, `the 7 kHz alias is ${db(tone, alias).toFixed(1)} dB down`);
+});
+
+test('a stereo node on a broadcast channel reads out at the audio rate, contiguously', async () => {
+  // The engine snaps every read to the output grid, so two reads that meet end to end
+  // are the same samples as one read across both — which is what the speaker relies on.
+  const { e, fm } = await stereoStation({ rate: 250_000, seconds: 0.6 });
+  const st = await e.addNode({ parent: fm.id, op: 'core.stereo', at: 0.3 });
+  const fsIn = fm.out.sampleRate;
+  assert.equal(st.out.sampleRate, fsIn / dsp.stereoDecimation(fsIn));
+  assert.ok(st.out.sampleRate >= dsp.STEREO_OUT_MIN_HZ && st.out.sampleRate < fsIn,
+    `out at ${st.out.sampleRate} from ${fsIn}`);
+  const n = 2000, t0 = 0.2, t1 = t0 + n / st.out.sampleRate;
+  const a = await e.readAudio(st.id, t0, n), b = await e.readAudio(st.id, t1, n);
+  const whole = await e.readAudio(st.id, t0, 2 * n);
+  assert.equal(a.data.length, n * 2);
+  // Away from the filter edges at the seam, the halves are the whole.
+  const k = 1200;
+  for (const [half, off] of [[a, 0], [b, n]]) {
+    for (let c = 0; c < 2; c++) {
+      const got = half.data[k * 2 + c], want = whole.data[(off + k) * 2 + c];
+      assert.ok(Math.abs(got - want) < 1e-3 * (Math.abs(want) + 1), `frame ${off + k} ch ${c}: ${got} vs ${want}`);
+    }
+  }
 });

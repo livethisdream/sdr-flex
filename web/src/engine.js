@@ -358,10 +358,9 @@ export function realOp(op, x, count, fs, params = null) {
     // `auto` re-measures the pilot on the samples in hand; `stereo` and `mono` are the
     // two ways to overrule that, and both are a decision a person made.
     const want = !params || params.decode.value === 'auto' ? 'auto' : params.decode.value === 'stereo';
-    return {
-      data: dsp.stereoDecode(x, count, fs, { deemphasisUs: tau, stereo: want }).data,
-      label: 'Stereo decode',
-    };
+    const r = dsp.stereoDecode(x, count, fs, { deemphasisUs: tau, stereo: want,
+                                              decimate: dsp.stereoDecimation(fs) });
+    return { data: r.data, count: r.count, sampleRate: r.sampleRate, label: 'Stereo decode' };
   }
   return { data: x, label: op };
 }
@@ -1610,7 +1609,7 @@ export class MockEngine extends Graph {
         // same honesty redsea's `region` knob applies to the same ambiguity.
         deemphasisUs: param(75, 'manual'),
       };
-      node.out = { kind: 'real', sampleRate: fs, centerHz: p.out.centerHz, channels: 2 };
+      node.out = { kind: 'real', sampleRate: fs / dsp.stereoDecimation(fs), centerHz: p.out.centerHz, channels: 2 };
       node.label = 'Stereo decode';
     } else if (op === 'core.audio') {
       node.params = {
@@ -2282,6 +2281,13 @@ export class MockEngine extends Graph {
     if (node.op === 'core.real') return dsp.realPart(this._readIQ(p, tEnd, count), count);
     if (node.op === 'core.gain') return scaled(this._detect(p, tEnd, count), node.params.gainDb.value);
     if (node.op === 'core.symbols') return this._readSymbols(node, tEnd, count);
+    if (node.op === 'core.stereo') {
+      // Out at a fraction of the composite's rate. The read is snapped to the output
+      // grid so the samples kept are the same ones on every read, whatever window asked.
+      const fsIn = p.out.sampleRate, d = Math.round(fsIn / fs);
+      const tIn = Math.round(tEnd * fs) / fs;
+      return realOp(node.op, this._detectMono(p, tIn, count * d), count * d, fsIn, node.params).data;
+    }
     if (p.out.kind === 'real') {
       return realOp(node.op, this._detectMono(p, tEnd, count), count, fs, node.params).data;
     }

@@ -166,6 +166,24 @@ export function fir(x, taps, out) {
 }
 
 /**
+ * `fir`, evaluated only at every `step`-th sample: the same centered, edge-clamped sum,
+ * so `firEvery(x, h, 1)` equals `fir(x, h)`. A filter that is about to be decimated
+ * computes only the outputs that are kept — the whole saving of decimating after it.
+ */
+export function firEvery(x, taps, step) {
+  const n = x.length, m = taps.length, half = (m - 1) >> 1;
+  const y = new Float32Array(Math.floor(n / step));
+  for (let j = 0, i = 0; j < y.length; j++, i += step) {
+    let s = 0;
+    const k0 = i + half - n + 1 > 0 ? i + half - n + 1 : 0;
+    const k1 = i + half < m - 1 ? i + half : m - 1;
+    for (let k = k0; k <= k1; k++) s += x[i + half - k] * taps[k];
+    y[j] = s;
+  }
+  return y;
+}
+
+/**
  * Move a signal by a possibly-fractional number of samples.
  *
  * A whole number is an index offset. The fraction is the part that matters and the part
@@ -543,6 +561,13 @@ export const PILOT_HZ = 19_000;
 export const STEREO_SUBCARRIER_HZ = 2 * PILOT_HZ;
 /** The top of the audio band, and so the cutoff on both the sum and the difference. */
 export const STEREO_AUDIO_HZ = 15_000;
+// The recovered channels are 15 kHz audio, but the composite they came out of is at the
+// channel's rate — 250 kS/s for a broadcast station. Sent out at that rate, a stereo
+// decode was five times the samples it needed and slower than real time on the box,
+// and the speaker ran dry. So the output drops by a whole number to the lowest rate at
+// or above this; the browser takes it the rest of the way to the device's rate.
+export const STEREO_OUT_MIN_HZ = 48_000;
+export const stereoDecimation = (fs) => Math.max(1, Math.floor(fs / STEREO_OUT_MIN_HZ));
 /**
  * How long the filters are, which is a trade rather than a constant.
  *
@@ -642,12 +667,18 @@ export function deemphasis(x, fs, tauS, out) {
  * fades with it while L+R does not. The channels then wander toward mono.
  */
 export function stereoDecode(x, count, fs, { deemphasisUs = 75, stereo = 'auto',
-                                            taps = STEREO_TAPS } = {}) {
+                                            taps = STEREO_TAPS, decimate = 1 } = {}) {
   const n = Math.min(count, x.length);
-  const out = new Float32Array(n * 2);
+  const d = Math.max(1, Math.floor(decimate));
+  const m = Math.floor(n / d);
+  const out = new Float32Array(m * 2);
+  const rate = { sampleRate: fs / d, count: m };
   const both = (note) => {
-    for (let i = 0; i < n; i++) { out[i * 2] = x[i]; out[i * 2 + 1] = x[i]; }
-    return { data: out, quadRejectionDb: 0, note };
+    // Decimated, the composite has to be low-passed first or the pilot, the 38 kHz
+    // subcarrier and RDS fold down into the audio. At the full rate it passes as it is.
+    const y = d > 1 ? firEvery(x.subarray(0, n), lowPassTaps(taps, STEREO_AUDIO_HZ, fs), d) : x;
+    for (let i = 0; i < m; i++) { out[i * 2] = y[i]; out[i * 2 + 1] = y[i]; }
+    return { data: out, quadRejectionDb: 0, note, ...rate };
   };
   if (fs / 2 <= STEREO_SUBCARRIER_HZ + 1000) {
     // Not an error and not a silent half-decode: a composite this narrow does not
@@ -679,28 +710,29 @@ export function stereoDecode(x, count, fs, { deemphasisUs = 75, stereo = 'auto',
     mixQ[i] = span[i] * 2 * quad;
   }
 
+  // Everything from here on is under 15 kHz, so it is computed at the output rate.
   const lp = lowPassTaps(taps, STEREO_AUDIO_HZ, fs);
-  const sum = fir(span, lp);
-  const diff = fir(mixI, lp);
+  const sum = firEvery(span, lp, d);
+  const diff = firEvery(mixI, lp, d);
   // Not used to decode anything — it is the evidence that the reference is locked.
   // A demodulator at the right phase puts everything in one quadrature and nothing in
   // the other, so how much less is in the other one is a measurement of the lock
   // (ADR-0017), and it is the number that goes bad first when a pilot is weak.
-  const quadrature = fir(mixQ, lp);
+  const quadrature = firEvery(mixQ, lp, d);
   let ps = 0, pq = 0;
-  const edge = Math.min(taps * 2, n >> 2);
-  for (let i = edge; i < n - edge; i++) { ps += diff[i] * diff[i]; pq += quadrature[i] * quadrature[i]; }
+  const edge = Math.min(Math.ceil((taps * 2) / d), m >> 2);
+  for (let i = edge; i < m - edge; i++) { ps += diff[i] * diff[i]; pq += quadrature[i] * quadrature[i]; }
   const quadRejectionDb = 10 * Math.log10((ps + 1e-20) / (pq + 1e-20));
 
   const tau = deemphasisUs > 0 ? deemphasisUs * 1e-6 : 0;
-  const left = new Float32Array(n), right = new Float32Array(n);
-  for (let i = 0; i < n; i++) { left[i] = sum[i] + diff[i]; right[i] = sum[i] - diff[i]; }
+  const left = new Float32Array(m), right = new Float32Array(m);
+  for (let i = 0; i < m; i++) { left[i] = sum[i] + diff[i]; right[i] = sum[i] - diff[i]; }
   // After the matrix, never before. The time constant applies to each recovered channel,
   // and de-emphasizing the composite would take 27 dB off the 57 kHz subcarrier that
   // something downstream may still want to read (ADR-0037).
-  const dl = deemphasis(left, fs, tau), dr = deemphasis(right, fs, tau);
-  for (let i = 0; i < n; i++) { out[i * 2] = dl[i]; out[i * 2 + 1] = dr[i]; }
-  return { data: out, quadRejectionDb };
+  const dl = deemphasis(left, fs / d, tau), dr = deemphasis(right, fs / d, tau);
+  for (let i = 0; i < m; i++) { out[i * 2] = dl[i]; out[i * 2 + 1] = dr[i]; }
+  return { data: out, quadRejectionDb, ...rate };
 }
 
 /**
