@@ -31,13 +31,28 @@ Whisper on 16 s of left and right (flag 6 is spoken on the left, flag 7 on the r
 
 - JS engine: left "Flag 6 is Mike, Delta, Zulu, Hotel, Bravo"; right "flag seven is delta uniform
   golf alpha". Separated.
-- GNU Radio `wfm_rcv_pll`: both flags in both channels, in 0.25 s blocks (30 ms or 1 s margins)
-  and in one continuous 16 s pass. Not separated. Cause not yet known: parameters (it assumes
-  75 kHz deviation), the block in this version, or the capture.
+- GNU Radio `wfm_rcv_pll`: both flags in both channels, in 0.25 s blocks and in one continuous
+  16 s pass.
+
+**Cause, found: the capture is not standard, and the JS decoder matches the capture.** The
+broadcast standard (ITU-R BS.450) puts the 38 kHz subcarrier in phase with sin(2θ) for a pilot
+sin(θ). sigid transmits a cos(θ) pilot and a cos(2θ) subcarrier, which is 90° off; GNU Radio's
+reference then lands in quadrature with L-R and recovers none of it. The JS decoder references
+cos(2ψ), the capture's convention, and so do the test suite's own modulator and its tests.
+Measured on a synthetic 400 Hz / 3 kHz L/R signal (`stereo_convention.py`, `.mjs`):
+
+| decoder | standard (sin/sin) | sigid (cos/cos) |
+|---|---|---|
+| GNU Radio `wfm_rcv_pll` | 76.2 dB | -4.7 dB |
+| SDR Flex JS `stereoDecode` | -4.6 dB | 73.4 dB |
+
+GNU Radio's block is right. The JS decoder would give left = right on a real station, and the
+CTF's broadcast slot would not separate in a standard receiver.
 
 ## What it means
 
 Throughput favors GNU Radio clearly. Interactive latency on the box is mostly inside budget, and
-the larger risk is the network to the phone, which any server engine shares. The stock stereo
-receiver failed on a real signal, so "reuse GNU Radio" still needs each block checked against a
-known answer before it replaces the JS version (ADR-0041: build both and measure).
+the larger risk is the network to the phone, which any server engine shares. On quality the
+reused block was the correct one and the hand-written one was not: its tests were written
+against a signal with the same mistake. Every block still gets checked against a known answer
+(ADR-0041), and the known answer has to come from the standard, not from our own modulator.
