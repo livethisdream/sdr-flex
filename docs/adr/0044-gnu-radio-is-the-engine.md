@@ -101,6 +101,31 @@ drift apart the way they did on the CW slot.
 4. **The live radio test comes after the engine moves**, not before, so the first real
    station is decoded by the engine we intend to keep.
 
+## What ADR-0014 actually requires
+
+ADR-0014 says no sample passes through Python. Its reason is **frame jitter**, not speed:
+the budget is under 4 ms of frame-to-frame jitter, and a garbage-collection pause shows as a
+hitch in the waterfall. Its own last line names the real rule: "the hot path is not
+garbage-collected," whatever the language. Two facts follow.
+
+- **Samples will not pass through Python.** The spike copied them through the worker's
+  Python only because it was the quickest thing to write. GNU Radio's C++ sinks
+  (`blocks.file_descriptor_sink`, or the ZeroMQ sinks) write straight to a pipe or socket the
+  server reads, so Python builds and steers the flowgraph and never touches a sample.
+- **The server already breaks the rule, and the cause is the engine, not the collector.** It is
+  Node, which is garbage-collected, and it computes the DSP on its one thread. Frame delivery
+  to a browser, measured with today's engine on the signal-ID broadcast slot:
+
+| what is on screen | median interval | p99 | jitter (sd) |
+|---|---|---|---|
+| stereo tab, spectrum and scope | 28.5 ms | 174 ms | 49.6 ms |
+| the source's spectrum | 39.5 ms | 68 ms | 13.8 ms |
+
+Headless Chrome paces its requests unevenly, which inflates these, but gaps of 150 to 200 ms
+are computation. Moving the DSP into the worker, on its own threads, is what takes it off the
+thread that delivers frames. The jitter budget is measured at the browser, before and after,
+and that number decides whether the ADR-0014 relay is still needed.
+
 ## Latency, and where it really goes
 
 Inside the box, the spike stays mostly within the 50 ms budget. **The larger cost is the
@@ -131,9 +156,9 @@ saving is the cause.
   is what ADR-0003 rejected.
 - **Wrap GNU Radio flowgraphs as opaque adapters only** (ADR-0032). Reuses GNU Radio, but every
   flowgraph is a black box, which is the opposite of the transparency this tool exists for.
-- **The full ADR-0014 relay now** (Rust, shared memory). The right shape at scale, and more
-  than the spike needed to show the case. It stays the target for the data plane, and the
-  pipe is measured against it.
+- **The full ADR-0014 relay now** (Rust, shared memory). Its requirement is the jitter budget,
+  not the language, so it is built if the measurement after the move says the budget is still
+  missed, not before.
 
 ## Would change our mind
 
@@ -144,10 +169,7 @@ saving is the cause.
 
 ## Open questions
 
-1. Samples pass through Python in the spike (vector sink to stdout). ADR-0014 says the hot path
-   never touches Python. Is a pipe from the worker acceptable as the first step, measured, with
-   shared memory as the target?
-2. Filter edges: each on-demand block came back about 10 ms short (11,976 frames instead of
+1. Filter edges: each on-demand block came back about 10 ms short (11,976 frames instead of
    12,500), which contiguous playback has to absorb.
-3. The 220 ms retune outlier is unexplained.
-4. Which estimators read GNU Radio's taps directly, and which need a block of their own?
+2. The 220 ms retune outlier is unexplained.
+3. Which estimators read GNU Radio's taps directly, and which need a block of their own?
