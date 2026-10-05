@@ -438,8 +438,8 @@ const DETECTORS = {
       return {
         offsetHz: param(Math.round(off.value), 'auto', {
           from: off.confident
-            ? `the strongest bin, ${off.snrDb.toFixed(0)} dB over the floor`
-            : 'the strongest bin (no clear carrier)',
+            ? `the strongest frequency over ${off.seconds.toFixed(1)} s, ${off.snrDb.toFixed(0)} dB over the floor`
+            : `the strongest frequency over ${off.seconds.toFixed(1)} s — no clear carrier; drag the line onto it`,
           confident: off.confident,
         }),
         // where you want to hear it. A preference, not a measurement, so it starts
@@ -1462,7 +1462,8 @@ export class MockEngine extends Graph {
       // playhead at 50 ms, four fifths of that window is before the beginning, and an
       // estimator handed mostly silence reports "looks unmodulated" and picks a
       // deviation off the noise.
-      const { count, at } = this._peekWindow(fs, now);
+      // CW looks longer: a keyed carrier is absent for most of any quarter second.
+      const { count, at } = this._peekWindow(fs, now, op === 'core.cw' ? 1 : 0.25);
       const iq = this._readIQ(p, at, count);
       node.params = DETECTORS[op].derive(iq, count, fs);
       node.out = { kind: 'real', sampleRate: fs, centerHz: p.out.centerHz };

@@ -795,8 +795,18 @@ export function estimateSideband(iq, count, bins = 1024) {
  * instead of wherever the tuner happened to leave it.
  */
 export function estimateCarrierOffset(iq, count, sampleRate, bins = 1024) {
+  // Averaged over the whole window, not read off its first 1024 samples. Morse is mostly
+  // key-up: one short spectrum lands on a gap as often as not, and then the strongest bin
+  // is noise. Averaged, a carrier that is keyed for any of the window still stands out.
   const n = Math.min(count, bins);
-  const sp = spectrum(iq, n, 'Hann');
+  const segs = Math.max(1, Math.min(64, Math.floor(count / n)));
+  const stride = segs > 1 ? Math.floor((count - n) / (segs - 1)) : 0;
+  const avg = new Float64Array(n);
+  for (let s = 0; s < segs; s++) {
+    const sp = spectrum(iq.subarray(s * stride * 2, (s * stride + n) * 2), n, 'Hann');
+    for (let i = 0; i < n; i++) avg[i] += Math.pow(10, sp[i] / 10) / segs;
+  }
+  const sp = Array.from(avg, (v) => 10 * Math.log10(v + 1e-20));
   let best = -Infinity, at = n / 2;
   for (let i = 0; i < n; i++) if (sp[i] > best) { best = sp[i]; at = i; }
   // parabolic interpolation, so the answer is not quantized to a bin
@@ -804,11 +814,26 @@ export function estimateCarrierOffset(iq, count, sampleRate, bins = 1024) {
   const denom = l - 2 * best + r;
   const frac = denom !== 0 ? (0.5 * (l - r)) / denom : 0;
   const offsetHz = ((at + frac) - n / 2) * (sampleRate / n);
-  // a carrier stands out; noise does not
-  let sum = 0;
-  for (let i = 0; i < n; i++) sum += Math.pow(10, sp[i] / 10);
-  const meanDb = 10 * Math.log10(sum / n + 1e-20);
-  return { value: offsetHz, confident: best - meanDb > 12, snrDb: best - meanDb };
+  // A carrier stands out; noise does not. Against the median, not the mean: averaged,
+  // the noise is flat across the tuner's passband and low on its skirts, and the mean
+  // sits between the two — far enough under the passband that empty spectrum read as a
+  // confident carrier. Most of the channel is passband, so the median is its level.
+  const floorDb = [...sp].sort((a, b) => a - b)[n >> 1];
+  // And narrow. Averaging also brings up broad energy a single spectrum hides in the noise
+  // — the skirt of a neighbor's keyed bursts, say — which clears the median without being
+  // a carrier. A carrier is a spike: it stands over the bins just beside it, too.
+  const near = [];
+  for (let d = 4; d <= 24; d++) {
+    if (at - d >= 0) near.push(sp[at - d]);
+    if (at + d < n) near.push(sp[at + d]);
+  }
+  const nearDb = near.sort((a, b) => a - b)[near.length >> 1];
+  const snrDb = Math.min(best - floorDb, best - nearDb);
+  // 18 dB, measured rather than chosen: averaged, the GRCon26 signal-ID CW slot reads
+  // 23–28 dB and the scene's CW 24–30, while the weak narrow spurs averaging also brings
+  // up beside the scene's OOK train read 11–15. The single-spectrum version's 12 sat
+  // in the middle of the spurs.
+  return { value: offsetHz, confident: snrDb > 18, snrDb, seconds: count / sampleRate };
 }
 
 /**

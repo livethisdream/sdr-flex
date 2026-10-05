@@ -1017,7 +1017,8 @@ class App {
       this.renderAxis();
       this.renderCbarLabels();
     }
-    if (v === 'Spectrum') this.renderMarkers();
+    // `Both` has the spectrum stage too, and a demod opens on it.
+    if (this.hasSpectrum()) this.renderMarkers();
     if (v === 'Flow') this.renderFlow();
     if (v === 'Listen') this.renderAudio();
     if (v === 'Export') this.renderExport();
@@ -1037,7 +1038,7 @@ class App {
     const span = hi - lo;
     const host = $('#markers');
     const kids = this.engine.children(n.id).filter((k) => k.params && k.params.centerHz && k.params.widthHz);
-    host.innerHTML = this.sceneMarks(n, lo, span) + kids.map((k) => {
+    host.innerHTML = this.sceneMarks(n, lo, span) + this.cueMarks(n, lo, span) + kids.map((k) => {
       const w = k.params.widthHz.value;
       const left = ((k.params.centerHz.value - w / 2 - lo) / span) * 100;
       const width = (w / span) * 100;
@@ -1049,6 +1050,71 @@ class App {
       m.addEventListener('pointerdown', (e) => e.stopPropagation());
       m.addEventListener('click', (e) => { e.stopPropagation(); this.goChannel(m.dataset.id); });
     }
+    for (const c of host.querySelectorAll('.cue')) this.wireCue(c);
+  }
+
+  /**
+   * A CW demod's two frequencies, drawn where they are.
+   *
+   * `offsetHz` is where the carrier sits in the channel and `pitchHz` is the tone it is
+   * mixed down to, and neither meant anything as a number in a list: the carrier is a
+   * spike on the channel's spectrum, and the tone is a spike on the demod's. So each is
+   * a line on the spectrum it belongs to, labeled, and dragging it onto the spike sets it.
+   */
+  cueMarks(n, lo, span) {
+    const at = (hz) => ((hz - lo) / span) * 100;
+    const line = (id, key, hz, label, auto) => {
+      const x = at(hz);
+      if (x < 0 || x > 100) return '';
+      return `<div class="cue${auto ? ' auto' : ''}" data-id="${id}" data-key="${key}" style="left:${x}%"` +
+        ` title="drag onto the ${key === 'offsetHz' ? 'carrier' : 'tone'}"><span>${label}</span></div>`;
+    };
+    let html = '';
+    // The carrier of every CW demod on this channel, on the channel's own spectrum.
+    for (const k of this.engine.children(n.id)) {
+      if (k.op !== 'core.cw' || !k.params || !k.params.offsetHz) continue;
+      const o = k.params.offsetHz;
+      html += line(k.id, 'offsetHz', n.out.centerHz + o.value, `CW carrier ${Math.round(o.value)} Hz`, o.mode === 'auto');
+    }
+    // The tone, on the demod's own one-sided spectrum.
+    if (n.op === 'core.cw' && n.params && n.params.pitchHz && this.onRealSpectrum()) {
+      html += line(n.id, 'pitchHz', n.params.pitchHz.value, `pitch ${Math.round(n.params.pitchHz.value)} Hz`, false);
+    }
+    return html;
+  }
+
+  /** Dragging a cue line sets its parameter, by hand, to the frequency under it. */
+  wireCue(el) {
+    const stage = $('#stage');
+    el.addEventListener('pointerdown', (e) => {
+      e.stopPropagation(); e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch { /* not an active pointer */ }
+      const r = stage.getBoundingClientRect();
+      const { lo, hi } = this.viewHz();
+      const n = this.node();
+      const hzAt = (x) => lo + Math.max(0, Math.min(1, (x - r.left) / r.width)) * (hi - lo);
+      const value = (x) => Math.round(el.dataset.key === 'offsetHz' ? hzAt(x) - n.out.centerHz : hzAt(x));
+      let last = null;
+      const move = (ev) => {
+        el.style.left = `${((ev.clientX - r.left) / r.width) * 100}%`;
+        last = value(ev.clientX);
+        const label = el.querySelector('span');
+        if (label) label.textContent = `${el.dataset.key === 'offsetHz' ? 'CW carrier' : 'pitch'} ${last} Hz`;
+      };
+      const up = async () => {
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', up);
+        el.removeEventListener('pointercancel', up);
+        if (last == null) return;
+        this.metrics.interaction();
+        await this.engine.setParam(el.dataset.id, el.dataset.key, last, 'manual');
+        this._tsCache = null;
+        this.refresh();
+      };
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+    });
   }
 
   /**

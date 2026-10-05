@@ -812,6 +812,25 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 }
 .marker:hover span { background:var(--accent); }
 
+/* A frequency a demod is set to, on the spectrum it is about (cueMarks): a line you can
+   drag onto the spike it should sit on. Dashed while the app chose it, solid once you
+   did — the same auto/manual distinction every parameter carries (ADR-0017). The hit
+   area is wider than the line, because a 1px target is one you cannot grab with a finger. */
+.cue {
+  position:absolute; top:0; bottom:0; width:24px; margin-left:-12px;
+  pointer-events:auto; cursor:ew-resize; touch-action:none;
+}
+.cue::before {
+  content:""; position:absolute; top:0; bottom:0; left:11px; width:2px;
+  background:var(--accent);
+}
+.cue.auto::before { background:repeating-linear-gradient(var(--accent) 0 6px, transparent 6px 10px); }
+.cue span {
+  position:absolute; top:30px; left:15px; white-space:nowrap;
+  font-family:var(--mono); font-size:.6rem; color:var(--on-accent);
+  background:var(--accent); padding:.05rem .3rem; border-radius:2px;
+}
+
 /* a drawn box that is waiting on a decision says so, and is clickable */
 .selbox { pointer-events:none; }
 .selbox.armed { pointer-events:auto; cursor:pointer; }
