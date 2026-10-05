@@ -107,7 +107,7 @@ export const ADAPTERS = {
     command: 'multimon-ng',
     blurb: 'POCSAG, FLEX, AFSK, DTMF, ZVEI and more',
     // multimon-ng is fixed at 22.05 kHz signed 16-bit mono, and says so if you disagree
-    wants: { format: 's16', rate: 22_050 },
+    wants: { format: 's16', rate: 22_050, level: true },
     // The bandwidth floor, for Identify: Morse and DTMF fit in a 5 kS/s channel. The
     // 22.05 kS/s above is the format multimon-ng reads, which the stream is resampled to.
     minRate: 4_000,
@@ -689,7 +689,7 @@ export const ADAPTERS = {
     // Whisper's own rate. It resamples anything else internally, so converting here
     // instead is one resample rather than two and the note says which one happened.
     // WAV rather than raw: it reads through miniaudio, which wants a container.
-    wants: { format: 's16', rate: 16_000, container: 'wav' },
+    wants: { format: 's16', rate: 16_000, container: 'wav', level: true },
     // Voice is not a narrow channel and a decoder handed 3 kHz of a 12 kHz FM channel
     // has been given the part somebody can hear rather than the part that was sent.
     // Below about this there is not enough of a voice left to be worth the CPU. 5 kS/s
@@ -1162,6 +1162,13 @@ export function list() {
  */
 export const FORMATS = ['cu8', 'cs8', 'cs16', 'cf32', 'f32', 's16'];
 
+// Where audio is levelled before a decoder that asks for it (`wants.level`) sees it:
+// about -6 dBFS at the 99.9th percentile, when it arrives under AUDIO_QUIET or clipping.
+// Opt-in, because a symbol stream's values are the symbols — M17 packet mode reads ±1
+// and ±3 — and rescaling them is corrupting them.
+const AUDIO_LEVEL = 0.5;
+const AUDIO_QUIET = 0.25;
+
 export function convert(data, kind, fromRate, want) {
   const note = [];
   let out = data;
@@ -1180,6 +1187,32 @@ export function convert(data, kind, fromRate, want) {
       out = resample(data, fromRate, want.rate);
     }
     note.push(`resampled ${(fromRate / 1e3).toFixed(1)} → ${(want.rate / 1e3).toFixed(1)} kS/s`);
+  }
+
+  // Audio arrives at whatever level the demodulator left it, and a decoder is handed it
+  // as integers. A CW demod's output peaked at a tenth of full scale, so multimon-ng saw
+  // ±470 against its fixed dit threshold of 500 and heard the noise as keying; the same
+  // samples at a sensible level decode cleanly. SSB came out the other way, clipped.
+  // The speaker has its own gain; a decoder needed one too. Measured on the 99.9th
+  // percentile rather than the peak, so one spike does not set the level of the rest.
+  if (kind === 'real' && want.level && out.length) {
+    const step = Math.max(1, Math.floor(out.length / 20_000));
+    const mags = [];
+    for (let i = 0; i < out.length; i += step) mags.push(Math.abs(out[i]));
+    mags.sort((a, b) => a - b);
+    const ref = mags[Math.min(mags.length - 1, Math.floor(mags.length * 0.999))];
+    // Only when it is out of range: too quiet to clear a decoder's fixed thresholds, or
+    // clipping. Audio already at a working level is left exactly as it was, because the
+    // decoders that were passing on it were passing on those exact samples.
+    if (ref > 1e-9 && (ref < AUDIO_QUIET || ref > 1)) {
+      const g = AUDIO_LEVEL / ref;
+      {
+        const y = new Float32Array(out.length);
+        for (let i = 0; i < out.length; i++) y[i] = out[i] * g;
+        out = y;
+        note.push(`levelled ×${g < 10 ? g.toFixed(2) : g.toFixed(0)}`);
+      }
+    }
   }
 
   let bytes;
