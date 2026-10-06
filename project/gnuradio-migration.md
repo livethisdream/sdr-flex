@@ -62,3 +62,13 @@ the same samples playback gave.
 Recipes and the palette from GNU Radio's block definitions (ADR-0043) come after the broadcast
 chain proves the engine. So does the first real radio, which is decoded by the engine we keep.
 The phone's Wi-Fi latency is a separate investigation.
+
+## Progress
+
+**Step 0, done 2026-10-06.** `server/gr/worker.py` and `server/gr/worker.js`; a session starts
+one when `SDRFLEX_ENGINE=gnuradio` and stops it on close. Gates: worker up in 175 ms in a test
+and 197 ms in a session (gate 300); a killed worker is replaced and the session carries on; a
+known tone arrives intact on the data pipe, written by `file_descriptor_sink`, so no sample
+passes through Python. Found on the way: GNU Radio's C++ prints to stdout on its own, which is
+the control channel, so the worker keeps a private copy of it and sends fd 1 to stderr. Unit
+suite 536 pass (1 needs decoders installed); full image 561 pass, 0 fail.

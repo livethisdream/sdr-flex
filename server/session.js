@@ -20,6 +20,7 @@ import { Radio, list as listDrivers } from './radio.js';
 import * as adapters from './adapters.js';
 import { version } from './version.js';
 import { StreamOut } from './streamout.js';
+import { GrWorker } from './gr/worker.js';
 
 export const PROTOCOL = 1;
 
@@ -50,6 +51,13 @@ export class Session {
     this.radio = null;
     this.sinks = new Map();   // nodeId → StreamOut
     this.closed = false;
+    // GNU Radio as the engine (ADR-0044), one worker per session (ADR-0003). Opt-in while
+    // the migration is under way; unset, nothing about the session changes.
+    this.gr = process.env.SDRFLEX_ENGINE === 'gnuradio' ? new GrWorker({ log }) : null;
+    if (this.gr) {
+      this.gr.start().then(() => log(`GNU Radio ${this.gr.version} worker up in ${this.gr.startMs.toFixed(0)} ms`),
+                           (err) => log(`GNU Radio worker did not start: ${err.message}`));
+    }
 
     conn.on('message', (buf) => this._onMessage(buf));
     conn.on('close', () => { this.closed = true; this.dispose(); });
@@ -87,6 +95,7 @@ export class Session {
   }
 
   dispose() {
+    if (this.gr) { this.gr.stop(); this.gr = null; }
     for (const sink of this.sinks.values()) sink.close();
     this.sinks.clear();
     // A radio is a process and a file on disk; a tab going away has to take both with
