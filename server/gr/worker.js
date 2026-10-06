@@ -58,6 +58,9 @@ export class GrWorker {
 
   /** One request; resolves to `{ head, bytes }`, `bytes` a Buffer when the reply carries samples. */
   async request(req) {
+    // Stopped on purpose is final. A crash restarts the worker on the next request; a session
+    // that closed must not have its worker brought back by something still finishing.
+    if (this.stopped) throw new Error('GNU Radio worker was stopped');
     if (!this.proc) await this.start();
     else await this.ready;
     return this._send(req);
@@ -97,8 +100,14 @@ export class GrWorker {
   }
 
   stop() {
+    this.stopped = true;
     const proc = this.proc;
     this.proc = null;
+    // Whatever was waiting fails now rather than never: the exit handler ignores a worker
+    // that was stopped on purpose.
+    const err = new Error('GNU Radio worker was stopped');
+    for (const p of this.pending || []) p.reject(err);
+    this.pending = [];
     if (proc) { proc.stdin.end(); proc.kill(); }
   }
 }

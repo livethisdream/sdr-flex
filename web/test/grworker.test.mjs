@@ -63,3 +63,14 @@ test('a bad request is an error for that request, not for the worker', { skip: !
   assert.ok(head.ok);
   assert.equal(w.starts, 1);
 });
+
+test('a worker stopped on purpose stays stopped', { skip: !hasGr && 'GNU Radio is not installed' }, async (t) => {
+  // A crash restarts it; a session closing must not have its worker started again by
+  // whatever was still in flight, such as a prefetch.
+  const w = new GrWorker();
+  await w.start();
+  w.stop();
+  await assert.rejects(w.request({ op: 'ping' }), /stopped/);
+  assert.equal(w.proc, null);
+  assert.equal(w.starts, 1);
+});

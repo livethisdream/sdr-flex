@@ -89,3 +89,21 @@ suite 536 pass (1 needs decoders installed); full image 561 pass, 0 fail.
   playback moves past the window it prepared, so the next reads miss and the JS engine
   computes them on the server's one thread, which in turn delays draining the worker's pipe.
   The worker is fast enough; the way it is asked is not.
+
+**Step 1, resumed and done.** Fetching moved off the critical path: the engine keeps the
+worker about a second ahead of the playhead in the background, and a frame or audio call
+waits only for blocks that are missing, which in playback is none; a jump waits once. A
+worker stopped on purpose now stays stopped and fails what was pending, so a closing session
+cannot restart it. Reads before the capture starts (waterfall rows at t <= 0) are counted as
+outside rather than as misses.
+
+| frame jitter at the browser, sd | JS engine | GNU Radio tuner |
+|---|---|---|
+| stereo tab (spectrum + scope) | 49.3 ms | 35.5 / 36.1 ms (two runs) |
+| source spectrum | 16.9 ms | 14.8 / 15.1 ms |
+
+p95 on the stereo tab 159 ms -> 118-120 ms; frame rate 20.9 -> 24/s. Real misses 33-37
+against 122-126 reads served from GNU Radio (one per node added, when its parameters are
+derived, and the reads before the first prefetch). Still far from the 4 ms budget: the FM
+and stereo decoders downstream are still the JS engine's, which steps 2 and 3 move. Unit
+suite 536 pass (1 needs decoders installed); full image 566 pass, 0 fail.

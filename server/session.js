@@ -99,7 +99,8 @@ export class Session {
     if (this.gr) {
       const st = this.engine.grStats;
       if (st) this.log(`GNU Radio: ${st.blocks} blocks in ${st.ms.toFixed(0)} ms` +
-        ` (${st.blocks ? (st.ms / st.blocks).toFixed(1) : '-'} ms each), ${st.hits} reads from them, ${st.misses} fell back to JS`);
+        ` (${st.blocks ? (st.ms / st.blocks).toFixed(1) : '-'} ms each), ${st.hits} reads from them, ${st.misses} fell back to JS,` +
+        ` ${st.waits} frame or audio calls waited for a block, ${st.outside} outside the capture`);
       this.gr.stop(); this.gr = null;
     }
     for (const sink of this.sinks.values()) sink.close();
