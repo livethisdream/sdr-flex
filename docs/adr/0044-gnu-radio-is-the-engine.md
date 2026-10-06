@@ -167,6 +167,23 @@ saving is the cause.
 - If a block's run-in is too long for scrubbing to stay interactive.
 - If the transport between the worker and the server, not the DSP, turns out to dominate.
 
+## GNU Radio 4
+
+Considered in October 2026, at 4.0.0-RC3, and not adopted yet. It would make some of this easier:
+graphs reconfigured while running, microsecond scheduling without a thread per block, a
+reflection-based control API with message passing and an HTTP/ZeroMQ control service, a plugin
+system, and builds for WebAssembly. Against it, today: no final release, no Python bindings in
+4.0, a C++23 toolchain, a block library without the frequency-translating filter, FM demod, PLL
+or resampler this chain uses, and none of GNU Radio 3's OOT modules, which are the ecosystem
+this ADR exists to reuse. The bottleneck measured so far is the server's own thread, which a
+newer GNU Radio does not change.
+
+So the engine stays on GNU Radio 3, with its seams — the worker protocol, the graph compiler,
+the block descriptions — kept narrow enough to point at GNU Radio 4's control service later.
+Two things would change that: 4.0 released with the blocks a broadcast chain needs, or a spike
+showing GNU Radio 4 compiled to WebAssembly can be the in-browser engine, which would let the
+hosted copy and a phone run the same signal processing as the box, without the network hop.
+
 ## Open questions
 
 Engineering questions, answered by measurement during the migration rather than decided
