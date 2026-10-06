@@ -6,7 +6,9 @@
 //
 //   - a tuner on a recorded capture: GNU Radio's freq_xlating_fir_filter_ccf, computed by the
 //     session's worker in 0.25 s blocks on the same grid the JS tuner uses, and agreeing with
-//     it sample for sample (web/test/grtuner.test.mjs).
+//     it sample for sample (web/test/grtuner.test.mjs);
+//   - an FM demod on such a tuner: quadrature_demod_cf, in the same flowgraph as its tuner, so
+//     the tuner's samples never cross the pipe only to be demodulated (web/test/grfm.test.mjs).
 //
 // The engine's reads are synchronous and the worker answers over a pipe, so the two meet in a
 // cache: the session calls `prepare` before anything that reads samples, which fetches the
@@ -51,7 +53,26 @@ export class GrEngine extends MockEngine {
     const taps = dsp.lowPassTaps(node.params.taps.value, node.params.widthHz.value / 2, p.out.sampleRate);
     const offset = node.params.centerHz.value - p.out.centerHz;
     const sig = `${this.capture.path}|${p.out.sampleRate}|${decim}|${taps.length}|${node.params.widthHz.value}|${offset}`;
-    return { decim, taps, offset, sig, fsIn: p.out.sampleRate };
+    return { op: 'tuner', complex: true, decim, taps, offset, sig, fsIn: p.out.sampleRate };
+  }
+
+  /** Which of the operations GNU Radio computes this node is, or null. */
+  _grKind(node) {
+    if (this._grTuner(node)) return 'tuner';
+    if (node && node.op === 'core.fm_discriminator' && this._grTuner(this.node(node.parent))) return 'fm';
+    return null;
+  }
+
+  _grSpec(node) {
+    const kind = this._grKind(node);
+    if (kind === 'tuner') return this._tunerSpec(node);
+    if (kind === 'fm') {
+      const t = this._tunerSpec(this.node(node.parent));
+      // The JS discriminator's scale: full deviation is full scale (DETECTORS, engine.js).
+      const scale = (node.params.gain.value || 1) / Math.max(1, node.params.deviationHz.value);
+      return { ...t, op: 'fm', complex: false, scale, sig: `${t.sig}|fm|${scale}` };
+    }
+    return null;
   }
 
   _blocksOf(node, sig) {
@@ -59,20 +80,23 @@ export class GrEngine extends MockEngine {
     return node._grBlocks;
   }
 
-  /** The GNU Radio tuners a read of this node goes through. */
-  _grTunersOf(nodeId) {
-    const out = [];
+  /**
+   * The node whose GNU Radio blocks a read of this one will actually use: the first one up the
+   * chain that GNU Radio computes. A stereo decoder reads its FM demod, and the FM demod's
+   * blocks already contain the tuner, so the tuner's own blocks are not fetched for it.
+   */
+  _grNodesOf(nodeId) {
     for (let n = this.node(nodeId); n; n = n.parent != null ? this.node(n.parent) : null) {
-      if (this._grTuner(n)) out.push(n);
+      if (this._grKind(n)) return [n];
     }
-    return out;
+    return [];
   }
 
   _blockSize(node) { return Math.max(256, Math.round(BLOCK_S * node.out.sampleRate)); }
 
   /** One block, fetched once: a second ask while the first is in flight shares it. */
   _ensure(node, j) {
-    const spec = this._tunerSpec(node);
+    const spec = this._grSpec(node);
     const blocks = this._blocksOf(node, spec.sig);
     if (blocks.has(j)) return Promise.resolve();
     if (!node._grInflight || node._grInflightSig !== spec.sig) { node._grInflight = new Map(); node._grInflightSig = spec.sig; }
@@ -80,8 +104,9 @@ export class GrEngine extends MockEngine {
     const B = this._blockSize(node);
     const started = performance.now();
     const p = this.gr.request({
-      op: 'tuner', path: this.capture.path, format: this.capture.format, rate: spec.fsIn,
+      op: spec.op, path: this.capture.path, format: this.capture.format, rate: spec.fsIn,
       k0: j * B, count: B, taps: Array.from(spec.taps), decim: spec.decim, offset: spec.offset,
+      ...(spec.scale != null ? { scale: spec.scale } : {}),
     }).then(({ bytes }) => {
       blocks.set(j, new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)));
       this.grStats.blocks++;
@@ -116,11 +141,11 @@ export class GrEngine extends MockEngine {
    */
   async prepare(nodeId, at, spanS = 0) {
     if (!this.gr) return;
-    const tuners = this._grTunersOf(nodeId);
+    const tuners = this._grNodesOf(nodeId);
     for (const n of tuners) n._grAt = at;
     const waits = [];
     for (const n of tuners) {
-      const spec = this._tunerSpec(n);
+      const spec = this._grSpec(n);
       const blocks = this._blocksOf(n, spec.sig);
       for (const j of this._range(n, at - spanS - PREPARE_BEFORE_S, at + PREPARE_AFTER_S)) {
         if (!blocks.has(j)) waits.push(this._ensure(n, j));
@@ -140,8 +165,8 @@ export class GrEngine extends MockEngine {
         let next = null;
         for (const id of this._watched) {
           const n = this.node(id);
-          if (!n || !this._grTuner(n) || n._grAt == null) { this._watched.delete(id); continue; }
-          const blocks = this._blocksOf(n, this._tunerSpec(n).sig);
+          if (!n || !this._grKind(n) || n._grAt == null) { this._watched.delete(id); continue; }
+          const blocks = this._blocksOf(n, this._grSpec(n).sig);
           const j = this._range(n, n._grAt, n._grAt + AHEAD_S).find((k) => !blocks.has(k));
           if (j != null) { next = [n, j]; break; }
         }
@@ -151,6 +176,30 @@ export class GrEngine extends MockEngine {
     } finally {
       this._pumping = false;
     }
+  }
+
+  /**
+   * A whole span, read the way the JS engine reads it, with each chunk prepared just before it
+   * is read. A decoder reads all ninety seconds of a capture; fetching every block up front
+   * would evict the first ones from the cache before they were read.
+   */
+  async readSpan(nodeId, t0, t1, onProgress) {
+    const n = this.node(nodeId);
+    if (!n || (n.out.kind !== 'iq' && n.out.kind !== 'real')) return null;
+    const fs = n.out.sampleRate;
+    const total = Math.max(1, Math.floor((t1 - t0) * fs));
+    const chunk = 1 << 16;
+    const iq = n.out.kind === 'iq';
+    const out = new Float32Array(iq ? total * 2 : total);
+    for (let done = 0; done < total; done += chunk) {
+      const want = Math.min(chunk, total - done);
+      const at = t0 + (done + want) / fs;
+      await this.prepare(nodeId, at, want / fs);
+      const got = iq ? this._readIQ(n, at, want) : this._detectMono(n, at, want);
+      out.set(got.subarray(0, iq ? want * 2 : want), iq ? done * 2 : done);
+      if (onProgress) onProgress(Math.min(1, (done + want) / total));
+    }
+    return { data: out, sampleRate: fs, kind: n.out.kind, count: total };
   }
 
   _readIQ(node, tEnd, count) {
@@ -180,5 +229,30 @@ export class GrEngine extends MockEngine {
       }
     }
     return super._readIQ(node, tEnd, count);
+  }
+
+  _detectRaw(node, tEnd, count) {
+    if (this._grKind(node) === 'fm') {
+      const out = this._fromBlocks(node, tEnd, count, 1);
+      if (out) return out;
+    }
+    return super._detectRaw(node, tEnd, count);
+  }
+
+  /** `count` samples ending at `tEnd` from a node's GNU Radio blocks, or null if any is missing. */
+  _fromBlocks(node, tEnd, count, width) {
+    const blocks = this._blocksOf(node, this._grSpec(node).sig);
+    const fs = node.out.sampleRate, B = this._blockSize(node);
+    const kEnd = Math.floor(tEnd * fs), kStart = kEnd - count;
+    if (kStart < 0 || tEnd > this.duration()) { this.grStats.outside++; return null; }
+    const out = new Float32Array(count * width);
+    for (let j = Math.floor(kStart / B); j * B < kEnd; j++) {
+      const blk = blocks.get(j);
+      if (!blk) { this.grStats.misses++; return null; }
+      const a = Math.max(kStart, j * B), b = Math.min(kEnd, (j + 1) * B);
+      out.set(blk.subarray((a - j * B) * width, (b - j * B) * width), (a - kStart) * width);
+    }
+    this.grStats.hits++;
+    return out;
   }
 }

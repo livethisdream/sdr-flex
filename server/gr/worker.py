@@ -14,6 +14,9 @@ Requests:
   {"op": "tuner", "path", "format", "rate", "k0", "count", "taps", "decim", "offset"}
       -> {"ok", "bytes"}, then `count` complex64 on fd 3: the JS tuner's absolute output
          samples k0 .. k0+count-1, sample for sample and in the same phase
+  {"op": "fm", ...the tuner's fields, "scale"}
+      -> {"ok", "bytes"}, then `count` float32: the JS FM demod's outputs k0 .. k0+count-1,
+         in hertz times `scale` (gain / deviation)
 """
 import cmath
 import json
@@ -77,8 +80,8 @@ def capture_source(path, fmt, start, count):
     raise ValueError(f'no GNU Radio source for {fmt} yet')
 
 
-def op_tuner(req):
-    """The JS tuner's output samples k0 .. k0+count-1, computed by GNU Radio.
+def tuner_chain(tb, req, k0, count):
+    """Blocks producing the JS tuner's absolute outputs k0 .. k0+count-1; returns the last block.
 
     capture.js's tuner makes absolute output k from inputs k*decim - ntaps .. k*decim - 1, with
     its mixer's phase referenced to the capture's sample 0 (engine.js, `_readIQ`). GNU Radio's
@@ -88,16 +91,16 @@ def op_tuner(req):
     result is turned by the difference in phase reference. Measured to agree with the JS tuner
     at correlation 1.000000 (web/test/grtuner.test.mjs).
     """
-    fs, decim, count = float(req['rate']), int(req['decim']), int(req['count'])
+    fs, decim = float(req['rate']), int(req['decim'])
     taps = [float(t) for t in req['taps']]
-    nt, k0, f = len(taps), int(req['k0']), float(req['offset'])
+    nt, f = len(taps), float(req['offset'])
     skip = -(-(nt - 1) // decim)
     start = k0 * decim - 1 - skip * decim
     # Two decimation periods more than the arithmetic says: GNU Radio's decimating filter
     # can produce one output fewer than (n - ntaps) / decim suggests, depending on phase,
-    # and `head` cuts the output at exactly `count` either way.
+    # and the caller's `head` cuts the output at exactly what it promised either way.
     need = (skip + count - 1) * decim + nt + 2 * decim
-    # The reply promises a byte count before the flowgraph runs, so a span that runs off
+    # A reply promises a byte count before the flowgraph runs, so a span that runs off
     # either end of the file is refused here rather than delivered short.
     per = {'cf32': 8, 'cs16': 4, 'cu8': 2}.get(req['format'], 0)
     have = os.path.getsize(req['path']) // per if per else 0
@@ -105,7 +108,6 @@ def op_tuner(req):
         raise ValueError(f'span {start}+{need} is outside the capture (0..{have})')
     turn_by = -2 * math.pi * math.fmod(f * (start - (nt - 1) / 2), fs) / fs
     chain = capture_source(req['path'], req['format'], start, need)
-    tb = gr.top_block()
     prev = chain[0]
     for blk in chain[1:]:
         if blk == 'deinterleave':
@@ -121,13 +123,44 @@ def op_tuner(req):
     xl = grfilter.freq_xlating_fir_filter_ccf(decim, taps, f, fs)
     drop = blocks.skiphead(COMPLEX, skip)
     turn = blocks.multiply_const_cc(cmath.exp(1j * turn_by))
-    cut = blocks.head(COMPLEX, count)
-    sink = blocks.file_descriptor_sink(COMPLEX, os.dup(DATA_FD))
-    tb.connect(prev, xl, drop, turn, cut, sink)
-    reply({'ok': True, 'bytes': count * COMPLEX})
+    tb.connect(prev, xl, drop, turn)
+    return turn
+
+
+def finish(tb, last, itemsize, count):
+    """`last -> head(count) -> data pipe`, promised, run, and the promise kept."""
+    cut = blocks.head(itemsize, count)
+    sink = blocks.file_descriptor_sink(itemsize, os.dup(DATA_FD))
+    tb.connect(last, cut, sink)
+    reply({'ok': True, 'bytes': count * itemsize})
     tb.run()
-    keep_promise(cut, count, COMPLEX)
-    return None
+    keep_promise(cut, count, itemsize)
+
+
+def op_tuner(req):
+    """The JS tuner's absolute outputs k0 .. k0+count-1, sample for sample and in phase."""
+    tb = gr.top_block()
+    count = int(req['count'])
+    finish(tb, tuner_chain(tb, req, int(req['k0']), count), COMPLEX, count)
+
+
+def op_fm(req):
+    """The JS FM demod's outputs k0 .. k0+count-1: the tuner, then quadrature_demod_cf.
+
+    The JS discriminator makes output k from tuner outputs k-1 and k, in hertz, scaled by
+    gain / deviation. quadrature_demod_cf starts with one zero of history, so its first output
+    pairs that zero with its first input and is discarded; fed the tuner from k0-1, its next
+    output is the JS demod's k0. Its gain carries the radians-to-hertz and the scaling.
+    Measured to agree with the JS demod to 3e-7 rms (web/test/grfm.test.mjs).
+    """
+    tb = gr.top_block()
+    count, k0 = int(req['count']), int(req['k0'])
+    tuned = tuner_chain(tb, req, k0 - 1, count + 1)
+    fs_out = float(req['rate']) / int(req['decim'])
+    demod = analog.quadrature_demod_cf(fs_out / (2 * math.pi) * float(req['scale']))
+    drop = blocks.skiphead(gr.sizeof_float, 1)
+    tb.connect(tuned, demod, drop)
+    finish(tb, drop, gr.sizeof_float, count)
 
 
 def keep_promise(cut, count, itemsize):
@@ -140,7 +173,7 @@ def keep_promise(cut, count, itemsize):
         os.write(DATA_FD, bytes((count - made) * itemsize))
 
 
-OPS = {'ping': op_ping, 'tone': op_tone, 'tuner': op_tuner}
+OPS = {'ping': op_ping, 'tone': op_tone, 'tuner': op_tuner, 'fm': op_fm}
 
 
 def main():

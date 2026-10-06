@@ -107,3 +107,21 @@ against 122-126 reads served from GNU Radio (one per node added, when its parame
 derived, and the reads before the first prefetch). Still far from the 4 ms budget: the FM
 and stereo decoders downstream are still the JS engine's, which steps 2 and 3 move. Unit
 suite 536 pass (1 needs decoders installed); full image 566 pass, 0 fail.
+
+**Step 2, done 2026-10-06.** The FM demod is GNU Radio's `quadrature_demod_cf`, in one
+flowgraph with its tuner, so tuner samples never cross the pipe only to be demodulated. The
+deviation is still SDR Flex's estimate (ADR-0044), read from the GNU Radio tuner.
+
+- Alignment: `quadrature_demod_cf` starts with one zero of history, so its first output is
+  discarded; fed the tuner from k0-1 it then gives the JS demod's k0. Rms difference 3e-7.
+- Gates: a 1 kHz tone at 5 kHz deviation comes back at 1000 Hz, -0.053 dB; parity with the JS
+  demod 8.6e-7; reading the demod fetches its own blocks and not its tuner's. RDS on the
+  signal-ID broadcast slot decodes through GNU Radio's FM (station NUMBERS, radiotext),
+  130 blocks at 28.8 ms each, 120 reads served, 1 fallback (the node's own derivation).
+- A decoder's whole-capture read (`readSpan`) now prepares each chunk just before reading it.
+- Jitter on the stereo tab: 36.6 / 38.5 ms sd, the same as after step 1. Moving FM neither
+  helped nor hurt; the stereo decoder and the views it feeds are still the JS engine's on the
+  server's one thread, which step 3 moves.
+- Open, for step 3: in a live session blocks take about 160 ms against 29 ms alone, and misses
+  rise to 41, which points at queueing behind the JS work rather than at GNU Radio.
+- Unit suite 536 pass (1 needs decoders installed); full image 569 pass, 0 fail.
