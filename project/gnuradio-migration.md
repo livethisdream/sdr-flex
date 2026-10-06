@@ -197,3 +197,29 @@ the tuner's (~12 ms). Stereo-tab jitter 14.3 ms sd at 39 frames/s.
 
 On a phone over Wi-Fi the round trip measured earlier (11-338 ms) is larger than all of this,
 which no change on the box removes.
+
+**Step 4, live radio (L1), done 2026-10-06.** The playhead rides 0.3 s behind a radio's newest
+sample (`LIVE_LAG_S`), so everything it reads is whole blocks already on disk, and the GNU Radio
+engine reads a radio's ring the way it reads a file:
+
+- The worker reads a ring span that crosses the end of the file as two `file_source` pieces
+  joined by `stream_mux`. Blocks are fetched only when wholly on disk; one refused because it was
+  not written yet is asked for again after 0.3 s, not at once — at once, a refusal was a loop
+  that never yielded, which also kept a stopped worker's prefetch spinning.
+- A radio keeps its samples in a Ring it replaces when it retunes, and its own `samples` is a
+  count written, not the ring's size; the engine reads the ring and keys blocks to it, so a
+  retuned radio cannot be served the old ring's blocks. Before this, a live session silently
+  ran entirely on the JS engine (0 blocks), which the fallback counters showed.
+- Gates: a block across the ring's wrap matches the JS read (5.3e-4 on a 0.5 signal); a block
+  not yet written is fetched once it is; scrubbing back reads exactly what played live.
+
+| live synthetic radio, stereo tab | JS engine | GNU Radio |
+|---|---|---|
+| jitter (sd) | 44.4 ms | 14.9 ms |
+| p95 frame interval | 135 ms | 56 ms |
+| frames per second | 24.2 | 36.4 |
+| retune a channel while live | 18-488 ms | 18-116 ms (4 of 6 under 50) |
+
+The spike's 220 ms retune outlier did not reappear in the engine; that spike measured a level
+meter on a throttled flowgraph, which no longer exists here. Unit suite 536 pass (1 needs
+decoders installed); full image 578 pass, 0 fail.

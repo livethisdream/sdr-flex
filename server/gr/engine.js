@@ -29,8 +29,17 @@ const EDGE_S = BLOCK_S + 0.03;
 // How far past the playhead the worker keeps fetching while nothing is asking. At 37x real
 // time it stays ahead with room to spare.
 const AHEAD_S = 1.0;
+// How long a radio's block that was refused, because it was not on disk yet, waits before it
+// is asked for again.
+const RETRY_S = 0.3;
 const MAX_BLOCKS = 64;
 const FORMATS = new Set(['cf32', 'cs16', 'cu8']);
+const captureIds = new WeakMap();
+let captureCount = 0;
+const captureId = (c) => {
+  if (!captureIds.has(c)) captureIds.set(c, ++captureCount);
+  return captureIds.get(c);
+};
 
 export class GrEngine extends MockEngine {
   constructor(opts, worker) {
@@ -46,7 +55,24 @@ export class GrEngine extends MockEngine {
     if (!node || node.op !== 'core.tuner') return false;
     const p = this.node(node.parent);
     const c = this.capture;
-    return !!(p && p.op === 'core.source' && c && !c.live && c.path && FORMATS.has(c.format));
+    // A file, or a radio's ring (ADR-0030), which is a file whose start moves: GNU Radio reads
+    // it the same way, wrapping where the ring does, and only what is already on disk.
+    const st = this._store();
+    return !!(p && p.op === 'core.source' && st && FORMATS.has(st.format));
+  }
+
+  /**
+   * Where the samples are on disk. A file is its own; a radio keeps a Ring (server/ring.js),
+   * replaced whenever the radio retunes, so the ring and not the radio is what a block's
+   * identity is tied to. (A radio's own `samples` is how many it has written, not the ring's
+   * size, which is why this does not read it.)
+   */
+  _store() {
+    const c = this.capture;
+    if (!c) return null;
+    if (c.ring) return { path: c.ring.path, format: c.ring.format, ring: c.ring.samples, id: c.ring };
+    if (c.live) return c.path ? { path: c.path, format: c.format, ring: c.samples, id: c } : null;
+    return c.path ? { path: c.path, format: c.format, ring: 0, id: c } : null;
   }
 
   _tunerSpec(node) {
@@ -54,7 +80,9 @@ export class GrEngine extends MockEngine {
     const decim = node.params.decim.value;
     const taps = dsp.lowPassTaps(node.params.taps.value, node.params.widthHz.value / 2, p.out.sampleRate);
     const offset = node.params.centerHz.value - p.out.centerHz;
-    const sig = `${this.capture.path}|${p.out.sampleRate}|${decim}|${taps.length}|${node.params.widthHz.value}|${offset}`;
+    // The recording itself is part of what a block depends on: retuning a radio starts a new
+    // ring at the same path, and a block from the old one would be the wrong signal.
+    const sig = `${captureId(this._store().id)}|${p.out.sampleRate}|${decim}|${taps.length}|${node.params.widthHz.value}|${offset}`;
     return { op: 'tuner', complex: true, decim, taps, offset, sig, fsIn: p.out.sampleRate };
   }
 
@@ -144,7 +172,8 @@ export class GrEngine extends MockEngine {
     const B = this._blockSize(node);
     const started = performance.now();
     const p = this.gr.request({
-      op: spec.op, path: this.capture.path, format: this.capture.format, rate: spec.fsIn,
+      op: spec.op, path: this._store().path, format: this._store().format, rate: spec.fsIn,
+      ring: this._store().ring,
       k0: j * B, count: B, taps: Array.from(spec.taps), decim: spec.decim, offset: spec.offset,
       ...Object.fromEntries(['scale', 'audio_decim', 'mode', 'deemph_us', 'runin_s']
         .filter((k) => spec[k] != null).map((k) => [k, spec[k]])),
@@ -154,8 +183,17 @@ export class GrEngine extends MockEngine {
       this.grStats.ms += performance.now() - started;
     }, () => {
       // Off the end of the file, or the worker refused it: this block stays the JS engine's,
-      // and is not asked for again.
-      blocks.set(j, null);
+      // and is not asked for again — unless it is a radio's and simply has not been written
+      // yet, which is a block to ask for again once it has, and not before RETRY_S has passed:
+      // asked for at once, a refusal became a loop that never yielded.
+      if (this.gr.stopped) return;
+      const [, last] = this.span();
+      if (this.capture && this.capture.live && ((j + 1) * B) / node.out.sampleRate > last - 0.5) {
+        if (!node._grRetry) node._grRetry = new Map();
+        node._grRetry.set(j, performance.now());
+      } else {
+        blocks.set(j, null);
+      }
     }).finally(() => {
       node._grInflight.delete(j);
       if (blocks.size > MAX_BLOCKS) blocks.delete(blocks.keys().next().value);
@@ -164,9 +202,27 @@ export class GrEngine extends MockEngine {
     return p;
   }
 
+  /** Where the signal ends now: a file's length, or a radio's newest sample. */
+  _end() { return this.capture && this.capture.live ? this.span()[1] : this.duration(); }
+
+  /** The moments a block may come from: the file, or what of a radio's ring is on disk. */
+  _onDisk() {
+    if (this.capture && this.capture.live) {
+      const [first, last] = this.span();
+      // A block reads a little past its own end (the tuner's filter) and starts a little
+      // before (the stereo PLL's run-in), so it stays clear of both edges of the ring.
+      return [first + 0.1, last - 0.02];
+    }
+    return [0, this.duration()];
+  }
+
   _range(node, t0, t1) {
     const fs = node.out.sampleRate, B = this._blockSize(node);
-    const a = Math.floor((Math.max(0, t0) * fs) / B), b = Math.ceil((Math.min(this.duration(), t1) * fs) / B);
+    const [lo, hi] = this._onDisk();
+    const live = !!(this.capture && this.capture.live);
+    // Every block the span overlaps, as for a file; on a ring, none that is not wholly on disk.
+    const a = Math.max(Math.floor((t0 * fs) / B), live ? Math.ceil((lo * fs) / B) : 0);
+    const b = Math.min(Math.ceil((t1 * fs) / B), live ? Math.floor((hi * fs) / B) : Math.ceil((hi * fs) / B));
     const out = [];
     for (let j = a; j < b; j++) out.push(j);
     return out;
@@ -215,12 +271,15 @@ export class GrEngine extends MockEngine {
     this._pumping = true;
     try {
       for (;;) {
+        if (this.gr.stopped) return;
         let next = null;
+        const now = performance.now();
+        const waiting = (n, k) => n._grRetry && n._grRetry.has(k) && now - n._grRetry.get(k) < RETRY_S * 1000;
         for (const id of this._watched) {
           const n = this.node(id);
           if (!n || !this._grKind(n) || n._grAt == null) { this._watched.delete(id); continue; }
           const blocks = this._blocksOf(n, this._grSpec(n).sig);
-          const j = this._range(n, n._grAt, n._grAt + AHEAD_S).find((k) => !blocks.has(k));
+          const j = this._range(n, n._grAt, n._grAt + AHEAD_S).find((k) => !blocks.has(k) && !waiting(n, k));
           if (j != null) { next = [n, j]; break; }
         }
         if (!next) return;
@@ -263,7 +322,7 @@ export class GrEngine extends MockEngine {
       const kEnd = Math.floor(tEnd * fs), kStart = kEnd - count;
       // Before the capture starts or after it ends there is nothing to fetch: the JS engine's
       // answer there is silence, and it is not a miss.
-      if (kStart < 0 || tEnd > this.duration()) { this.grStats.outside++; return super._readIQ(node, tEnd, count); }
+      if (kStart < 0 || tEnd > this._end()) { this.grStats.outside++; return super._readIQ(node, tEnd, count); }
       const out = new Float32Array(count * 2);
       let whole = true;
       for (let j = Math.floor(kStart / B); j * B < kEnd; j++) {
@@ -298,7 +357,7 @@ export class GrEngine extends MockEngine {
     const blocks = this._blocksOf(node, this._grSpec(node).sig);
     const fs = node.out.sampleRate, B = this._blockSize(node);
     const kEnd = Math.floor(tEnd * fs), kStart = kEnd - count;
-    if (kStart < 0 || tEnd > this.duration()) { this.grStats.outside++; return null; }
+    if (kStart < 0 || tEnd > this._end()) { this.grStats.outside++; return null; }
     const out = new Float32Array(count * width);
     for (let j = Math.floor(kStart / B); j * B < kEnd; j++) {
       const blk = blocks.get(j);

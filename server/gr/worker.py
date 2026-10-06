@@ -70,18 +70,37 @@ def op_tone(req):
     return None
 
 
-def capture_source(path, fmt, start, count):
-    """`count` complex samples of a capture from sample `start`, scaled as capture.js scales them."""
+def capture_source(path, fmt, start, count, ring=0):
+    """`count` complex samples of a capture from sample `start`, scaled as capture.js scales them.
+
+    A radio's recording is a ring (server/ring.js): absolute sample i is at slot i % ring, so a
+    span that crosses the end of the file is read as two pieces, joined by stream_mux.
+    """
+    per = {'cf32': (COMPLEX, 1), 'cs16': (gr.sizeof_short, 2), 'cu8': (1, 2)}
+    if fmt not in per:
+        raise ValueError(f'no GNU Radio source for {fmt} yet')
+    item, k = per[fmt]
+    if ring:
+        if count > ring:
+            raise ValueError(f'span of {count} is longer than the ring ({ring})')
+        slot = start % ring
+        first = min(count, ring - slot)
+        parts = [blocks.file_source(item, path, False, slot * k, first * k)]
+        if first < count:
+            parts.append(blocks.file_source(item, path, False, 0, (count - first) * k))
+        if len(parts) == 2:
+            mux = blocks.stream_mux(item, [first * k, (count - first) * k])
+            raw = [parts, mux]
+        else:
+            raw = [parts[0]]
+    else:
+        raw = [blocks.file_source(item, path, False, start * k, count * k)]
     if fmt == 'cf32':
-        return [blocks.file_source(COMPLEX, path, False, start, count)]
+        return raw
     if fmt == 'cs16':
-        src = blocks.file_source(gr.sizeof_short, path, False, start * 2, count * 2)
-        return [src, blocks.interleaved_short_to_complex(False, False, 32768.0)]
-    if fmt == 'cu8':
-        src = blocks.file_source(1, path, False, start * 2, count * 2)
-        return [src, blocks.uchar_to_float(), blocks.add_const_ff(-127.5),
-                blocks.multiply_const_ff(1 / 127.5), 'deinterleave']
-    raise ValueError(f'no GNU Radio source for {fmt} yet')
+        return raw + [blocks.interleaved_short_to_complex(False, False, 32768.0)]
+    return raw + [blocks.uchar_to_float(), blocks.add_const_ff(-127.5),
+                  blocks.multiply_const_ff(1 / 127.5), 'deinterleave']
 
 
 def tuner_chain(tb, req, k0, count):
@@ -106,14 +125,28 @@ def tuner_chain(tb, req, k0, count):
     need = (skip + count - 1) * decim + nt + 2 * decim
     # A reply promises a byte count before the flowgraph runs, so a span that runs off
     # either end of the file is refused here rather than delivered short.
-    per = {'cf32': 8, 'cs16': 4, 'cu8': 2}.get(req['format'], 0)
-    have = os.path.getsize(req['path']) // per if per else 0
-    if start < 0 or start + need > have:
-        raise ValueError(f'span {start}+{need} is outside the capture (0..{have})')
+    ring = int(req.get('ring', 0))
+    if ring:
+        # The server asks only for what is on disk; the ring's window moves, so it is the one
+        # that knows which absolute samples that is.
+        if start < 0:
+            raise ValueError(f'span starts at {start}, before the recording')
+    else:
+        per = {'cf32': 8, 'cs16': 4, 'cu8': 2}.get(req['format'], 0)
+        have = os.path.getsize(req['path']) // per if per else 0
+        if start < 0 or start + need > have:
+            raise ValueError(f'span {start}+{need} is outside the capture (0..{have})')
     turn_by = -2 * math.pi * math.fmod(f * (start - (nt - 1) / 2), fs) / fs
-    chain = capture_source(req['path'], req['format'], start, need)
-    prev = chain[0]
-    for blk in chain[1:]:
+    chain = capture_source(req['path'], req['format'], start, need, ring)
+    first = chain[0]
+    if isinstance(first, list):
+        mux = chain[1]
+        for port, src in enumerate(first):
+            tb.connect(src, (mux, port))
+        prev, rest = mux, chain[2:]
+    else:
+        prev, rest = first, chain[1:]
+    for blk in rest:
         if blk == 'deinterleave':
             de = blocks.deinterleave(gr.sizeof_float)
             to_c = blocks.float_to_complex()

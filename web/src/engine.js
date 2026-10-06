@@ -9,7 +9,7 @@ import * as dsp from './dsp.js';
 import * as scene from './scene.js';
 import * as plugins from './plugins.js';
 import { plan as identifyPlan, MIN_DECODE_CHARS, textLength, say } from './identify.js';
-import { Graph, inputsOf } from './graph.js';
+import { Graph, inputsOf, LIVE_LAG_S } from './graph.js';
 import { alignment } from './delay.js';
 import * as frames from './frames.js';
 import * as spreading from './codes.js';
@@ -679,7 +679,7 @@ export class MockEngine extends Graph {
     // thing still in the buffer". The playhead starts at the live edge; scrubbing back
     // into what the ring already holds is then a deliberate move rather than the
     // state you happen to land in.
-    this.t = radio.durationS;
+    this.t = Math.max(0, radio.durationS - LIVE_LAG_S);
     return root;
   }
 

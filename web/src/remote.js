@@ -23,7 +23,7 @@
 // tailnet that is a millisecond. It is the correct behavior for a remote engine and
 // the reason the frame rate holds when the link gets worse.
 
-import { Graph } from './graph.js';
+import { Graph, LIVE_LAG_S } from './graph.js';
 import { encode, decode } from './proto.js';
 import * as plugins from './plugins.js';
 // The one piece of the mock engine a remote node still needs locally: a plugin node
@@ -174,7 +174,8 @@ export class RemoteEngine extends Graph {
     this._forget();
     const r = await this.call('openRadio', { kind, tuning });
     this.ended = false;
-    this.t = this.capture ? this.capture.durationS : 0;
+    // A little behind the newest sample, as `tick` keeps it (LIVE_LAG_S).
+    this.t = this.capture ? Math.max(0, this.capture.durationS - LIVE_LAG_S) : 0;
     return r;
   }
 
