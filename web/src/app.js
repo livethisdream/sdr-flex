@@ -1338,6 +1338,7 @@ class App {
           symbolUs: { label: 'symbol', unit: 'µs', fmt: (v) => String(Math.round(v)), step: 0.7, min: 20, integer: true, type: 'num' },
           deviationHz: { label: 'deviation', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 12, min: 100, integer: true, type: 'num' },
           sideband: { label: 'sideband', unit: '', type: 'enum', values: ['usb', 'lsb'], fmt: String },
+          part: { label: 'part', unit: '', type: 'enum', values: ['real', 'imag'], fmt: String },
           // `auto` reads the pilot every time it decodes; the other two overrule it.
           decode: { label: 'decode', unit: '', type: 'enum', values: ['auto', 'stereo', 'mono'], fmt: String },
           // Which node the other input comes from. The only control in the tool that

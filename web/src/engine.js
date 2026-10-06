@@ -1544,7 +1544,10 @@ export class MockEngine extends Graph {
       };
       node.label = 'Gain';
     } else if (op === 'core.real') {
-      node.params = {};
+      // Which half, as GNU Radio has complex_to_real and complex_to_imag. The imaginary part
+      // is not exotic: a coherent demodulation by a reference 90° away lands there, and the
+      // broadcast standard's stereo subcarrier, divided by the squared pilot, is exactly that.
+      node.params = { part: param('real', 'manual') };
       node.out = { kind: 'real', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'To real';
     } else if (op === 'core.symbols') {
@@ -2315,7 +2318,10 @@ export class MockEngine extends Graph {
     const p = this.node(node.parent);
     const fs = node.out.sampleRate;
     if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
-    if (node.op === 'core.real') return dsp.realPart(this._readIQ(p, tEnd, count), count);
+    if (node.op === 'core.real') {
+      const iq = this._readIQ(p, tEnd, count);
+      return node.params.part && node.params.part.value === 'imag' ? dsp.imagPart(iq, count) : dsp.realPart(iq, count);
+    }
     if (node.op === 'core.gain') return scaled(this._detect(p, tEnd, count), node.params.gainDb.value);
     if (node.op === 'core.symbols') return this._readSymbols(node, tEnd, count);
     if (node.op === 'core.stereo') {

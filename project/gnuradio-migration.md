@@ -125,3 +125,34 @@ deviation is still SDR Flex's estimate (ADR-0044), read from the GNU Radio tuner
 - Open, for step 3: in a live session blocks take about 160 ms against 29 ms alone, and misses
   rise to 41, which points at queueing behind the JS work rather than at GNU Radio.
 - Unit suite 536 pass (1 needs decoders installed); full image 569 pass, 0 fail.
+
+**Step 3, done 2026-10-06.** Stereo is GNU Radio's blocks — complex band-pass on the pilot,
+`pll_refout_cc`, the PLL squared for 38 kHz, the L-R mix, `fft_filter_fff` low-pass and
+decimation, the matrix, `fm_deemph` — arranged as `wfm_rcv_pll` arranges them, but fed by
+SDR Flex's FM node and able to decode as mono when the pilot evidence says so. Frame k is
+centered on FM sample k*decim, as the JS decoder's is, from the filters' known delays.
+
+- Known answer, from ITU-R BS.450: 66.4 dB of separation on a standard signal (gate 40).
+- **The channel is the limit, not the decoder.** A 200 kHz tuner gives 36 dB; 240 kHz gives
+  66 dB. Broadcast FM's sidebands reach past 200 kHz, and a narrower channel distorts the
+  composite before the decoder sees it. A stereo node could say so with evidence (ADR-0017).
+- The PLL locks within 5 ms; blocks start 20 ms early and discard it.
+- **The JS decoder and the test modulator are fixed to the standard** (reference -sin 2ψ, sin
+  pilot, sin subcarrier). JS separation on a standard signal: -4.6 dB before, 73.3 dB after.
+  The drawn-chain test now takes the imaginary part, for which `core.real` gained a `part`
+  setting (`real` or `imag`), as GNU Radio has complex_to_real and complex_to_imag.
+- The two decoders hear the same tones: within 0.6 dB and 0.1°. Each has one artifact ~35 dB
+  down: JS lets some 19 kHz pilot through its low-pass; GNU Radio's PLL, at wfm_rcv_pll's loop
+  bandwidth, puts sidebands 50 Hz either side of a tone.
+- The signal-ID broadcast slot is not standard (cos pilot, cos subcarrier), so it no longer
+  separates in SDR Flex, as it would not in any standard receiver.
+
+| frame jitter on the stereo tab | JS engine | after steps 1-2 | after step 3 |
+|---|---|---|---|
+| sd | 49.3 ms | 36.1-38.5 ms | 13.3 / 13.5 ms |
+| p99 | 169 ms | 147-167 ms | 59.6 / 59.8 ms |
+| frames per second | 20.9 | 23.5-24.4 | 33.7 / 34.5 |
+
+The source's own spectrum, which no GNU Radio stage touches, stays at 13.5-15.8 ms: the floor
+in this setup. Still above the 4 ms budget. Unit suite 536 pass (1 needs decoders installed);
+full image 573 pass, 0 fail.

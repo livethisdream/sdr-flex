@@ -555,6 +555,12 @@ export function realPart(iq, count) {
   return out;
 }
 
+export function imagPart(iq, count) {
+  const out = new Float32Array(count);
+  for (let i = 0; i < count; i++) out[i] = iq[i * 2 + 1];
+  return out;
+}
+
 // ── FM stereo ──────────────────────────────────────────────────────────────
 //
 // The composite an FM broadcast discriminator hands back is three things stacked in
@@ -706,11 +712,15 @@ export function stereoDecode(x, count, fs, { deemphasisUs = 75, stereo = 'auto',
   const bp = bandPassTaps(taps, PILOT_HZ, 1600, fs);
   const p = fir(span, bp.i), q = fir(span, bp.q);
 
+  // The reference is the one the broadcast standard fixes (ITU-R BS.450): the subcarrier is
+  // sin(2θ) for a pilot sin(θ). The analytic pilot here has phase ψ = θ - π/2, so that is
+  // -sin(2ψ). This decoder used cos(2ψ), 90° off; its test modulator made the same mistake,
+  // so it passed, and gave left = right on a real station.
   const mixI = new Float32Array(n), mixQ = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const m2 = p[i] * p[i] + q[i] * q[i] || 1e-20;
-    const ref = (p[i] * p[i] - q[i] * q[i]) / m2;       // cos 2ψ
-    const quad = (2 * p[i] * q[i]) / m2;                // sin 2ψ, which should be empty
+    const ref = -(2 * p[i] * q[i]) / m2;                // -sin 2ψ = sin 2θ
+    const quad = (p[i] * p[i] - q[i] * q[i]) / m2;      // cos 2ψ, which should be empty
     mixI[i] = span[i] * 2 * ref;
     mixQ[i] = span[i] * 2 * quad;
   }

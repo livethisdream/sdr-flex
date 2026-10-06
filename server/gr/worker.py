@@ -14,6 +14,9 @@ Requests:
   {"op": "tuner", "path", "format", "rate", "k0", "count", "taps", "decim", "offset"}
       -> {"ok", "bytes"}, then `count` complex64 on fd 3: the JS tuner's absolute output
          samples k0 .. k0+count-1, sample for sample and in the same phase
+  {"op": "stereo", ...the FM demod's fields, "audio_decim", "mode", "deemph_us", "runin_s"}
+      -> {"ok", "bytes"}, then 2*count float32: stereo frames k0 .. k0+count-1, L and R
+         interleaved, at the FM rate / audio_decim
   {"op": "fm", ...the tuner's fields, "scale"}
       -> {"ok", "bytes"}, then `count` float32: the JS FM demod's outputs k0 .. k0+count-1,
          in hertz times `scale` (gain / deviation)
@@ -24,7 +27,8 @@ import math
 import os
 import sys
 
-from gnuradio import analog, blocks, filter as grfilter, gr
+from gnuradio import analog, blocks, fft, filter as grfilter, gr
+from gnuradio.filter import firdes
 
 DATA_FD = int(os.environ.get('SDRFLEX_GR_DATA_FD', '3'))
 COMPLEX = gr.sizeof_gr_complex
@@ -154,13 +158,8 @@ def op_fm(req):
     Measured to agree with the JS demod to 3e-7 rms (web/test/grfm.test.mjs).
     """
     tb = gr.top_block()
-    count, k0 = int(req['count']), int(req['k0'])
-    tuned = tuner_chain(tb, req, k0 - 1, count + 1)
-    fs_out = float(req['rate']) / int(req['decim'])
-    demod = analog.quadrature_demod_cf(fs_out / (2 * math.pi) * float(req['scale']))
-    drop = blocks.skiphead(gr.sizeof_float, 1)
-    tb.connect(tuned, demod, drop)
-    finish(tb, drop, gr.sizeof_float, count)
+    count = int(req['count'])
+    finish(tb, fm_chain(tb, req, int(req['k0']), count), gr.sizeof_float, count)
 
 
 def keep_promise(cut, count, itemsize):
@@ -173,7 +172,88 @@ def keep_promise(cut, count, itemsize):
         os.write(DATA_FD, bytes((count - made) * itemsize))
 
 
-OPS = {'ping': op_ping, 'tone': op_tone, 'tuner': op_tuner, 'fm': op_fm}
+def fm_chain(tb, req, k0, count):
+    """Blocks producing the JS FM demod's outputs k0 .. k0+count-1; returns the last block."""
+    tuned = tuner_chain(tb, req, k0 - 1, count + 1)
+    fs_out = float(req['rate']) / int(req['decim'])
+    demod = analog.quadrature_demod_cf(fs_out / (2 * math.pi) * float(req['scale']))
+    drop = blocks.skiphead(gr.sizeof_float, 1)
+    tb.connect(tuned, demod, drop)
+    return drop
+
+
+def op_stereo(req):
+    """Stereo frames k0 .. k0+count-1 from the FM demod, interleaved L, R.
+
+    GNU Radio's own blocks, arranged as its wfm_rcv_pll arranges them: a complex band-pass
+    on the 19 kHz pilot, a PLL locked to it, the PLL squared for a 38 kHz reference, L-R
+    mixed down by it, both paths low-passed and decimated, the matrix, de-emphasis. Not
+    wfm_rcv_pll itself, because it demodulates FM on its own and cannot decode as mono; here
+    the FM demod is SDR Flex's node and mono is a decision the pilot evidence makes.
+
+    Frame k is centered on FM sample k*decim, as the JS decoder's is. The filters' delays are
+    known from their lengths, so the input starts early by those, plus a run-in for the PLL
+    to lock, and the outputs made before it are discarded.
+    """
+    count, k0, d = int(req['count']), int(req['k0']), int(req['audio_decim'])
+    fs = float(req['rate']) / int(req['decim'])          # the FM demod's rate
+    mono = req.get('mode') == 'mono'
+    tau = float(req.get('deemph_us', 75)) * 1e-6
+    win = fft.window.WIN_HAMMING
+    lpf = firdes.low_pass(1.0, fs, 15000, 1500, win, 6.76)
+    d_lpf = (len(lpf) - 1) // 2
+    if mono:
+        delay = d_lpf
+    else:
+        pilot = firdes.complex_band_pass(1.0, fs, 18980, 19020, 1500, win, 6.76)
+        carrier = firdes.band_pass(-2.0, fs, 37600, 38400, 400, win, 6.76)
+        samp_delay = (len(pilot) - 1) // 2 + (len(carrier) - 1) // 2
+        delay = d_lpf + samp_delay
+    runin = int(float(req.get('runin_s', 0.1)) * fs)
+    skip = -(-(delay + runin) // d)
+    start = k0 * d + delay - skip * d                      # FM sample the input starts at
+    n_in = (skip + count) * d + len(lpf) + 2 * d
+    tb = gr.top_block()
+    mpx = fm_chain(tb, req, start, n_in)
+    mono_lpf = grfilter.fft_filter_fff(d, lpf, 1)
+    if mono:
+        tb.connect(mpx, mono_lpf)
+        left = right = mono_lpf
+        add = sub = None
+    else:
+        pilot_bpf = grfilter.fir_filter_fcc(1, pilot)
+        pll = analog.pll_refout_cc(0.001, 2 * math.pi * 19200 / fs, 2 * math.pi * 18800 / fs)
+        square = blocks.multiply_cc(1)
+        imag = blocks.complex_to_imag(1)
+        carrier_bpf = grfilter.fft_filter_fff(1, carrier, 1)
+        delayed = blocks.delay(gr.sizeof_float, samp_delay)
+        mix = blocks.multiply_ff(1)
+        diff_lpf = grfilter.fft_filter_fff(d, lpf, 1)
+        tb.connect(mpx, pilot_bpf, pll)
+        tb.connect(pll, (square, 0)); tb.connect(pll, (square, 1))
+        tb.connect(square, imag, carrier_bpf, (mix, 1))
+        tb.connect(mpx, delayed)
+        tb.connect(delayed, (mix, 0))
+        tb.connect(delayed, mono_lpf)
+        tb.connect(mix, diff_lpf)
+        add, sub = blocks.add_ff(1), blocks.sub_ff(1)
+        tb.connect(mono_lpf, (add, 0)); tb.connect(diff_lpf, (add, 1))
+        tb.connect(mono_lpf, (sub, 0)); tb.connect(diff_lpf, (sub, 1))
+        left, right = add, sub
+    weave = blocks.interleave(gr.sizeof_float, 1)
+    for port, side in enumerate((left, right)):
+        last = side
+        if tau > 0:
+            emph = analog.fm_deemph(fs=fs / d, tau=tau)
+            tb.connect(side, emph)
+            last = emph
+        tb.connect(last, (weave, port))
+    drop = blocks.skiphead(gr.sizeof_float, 2 * skip)
+    tb.connect(weave, drop)
+    finish(tb, drop, gr.sizeof_float, 2 * count)
+
+
+OPS = {'ping': op_ping, 'tone': op_tone, 'tuner': op_tuner, 'fm': op_fm, 'stereo': op_stereo}
 
 
 def main():

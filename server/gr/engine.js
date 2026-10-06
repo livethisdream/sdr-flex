@@ -8,7 +8,9 @@
 //     session's worker in 0.25 s blocks on the same grid the JS tuner uses, and agreeing with
 //     it sample for sample (web/test/grtuner.test.mjs);
 //   - an FM demod on such a tuner: quadrature_demod_cf, in the same flowgraph as its tuner, so
-//     the tuner's samples never cross the pipe only to be demodulated (web/test/grfm.test.mjs).
+//     the tuner's samples never cross the pipe only to be demodulated (web/test/grfm.test.mjs);
+//   - a stereo decoder on such a demod: GNU Radio's pilot PLL and matrix blocks, arranged as
+//     its wfm_rcv_pll arranges them, following the broadcast standard (web/test/grstereo.test.mjs).
 //
 // The engine's reads are synchronous and the worker answers over a pipe, so the two meet in a
 // cache: the session calls `prepare` before anything that reads samples, which fetches the
@@ -60,6 +62,7 @@ export class GrEngine extends MockEngine {
   _grKind(node) {
     if (this._grTuner(node)) return 'tuner';
     if (node && node.op === 'core.fm_discriminator' && this._grTuner(this.node(node.parent))) return 'fm';
+    if (node && node.op === 'core.stereo' && this._grKind(this.node(node.parent)) === 'fm') return 'stereo';
     return null;
   }
 
@@ -71,6 +74,21 @@ export class GrEngine extends MockEngine {
       // The JS discriminator's scale: full deviation is full scale (DETECTORS, engine.js).
       const scale = (node.params.gain.value || 1) / Math.max(1, node.params.deviationHz.value);
       return { ...t, op: 'fm', complex: false, scale, sig: `${t.sig}|fm|${scale}` };
+    }
+    if (kind === 'stereo') {
+      const p = this.node(node.parent);
+      const f = this._grSpec(p);
+      const extra = {
+        audio_decim: Math.round(p.out.sampleRate / node.out.sampleRate),
+        // Mono is what the pilot evidence decided, or what a person chose (ADR-0031): with no
+        // pilot there is no phase reference, and a difference decoded against noise is not a
+        // quiet decode.
+        mode: node.params.decode.value === 'mono' ? 'mono' : 'stereo',
+        deemph_us: Number(node.params.deemphasisUs.value) || 0,
+        runin_s: 0.02,
+      };
+      return { ...f, ...extra, op: 'stereo', width: 2,
+               sig: `${f.sig}|stereo|${extra.audio_decim}|${extra.mode}|${extra.deemph_us}` };
     }
     return null;
   }
@@ -106,7 +124,8 @@ export class GrEngine extends MockEngine {
     const p = this.gr.request({
       op: spec.op, path: this.capture.path, format: this.capture.format, rate: spec.fsIn,
       k0: j * B, count: B, taps: Array.from(spec.taps), decim: spec.decim, offset: spec.offset,
-      ...(spec.scale != null ? { scale: spec.scale } : {}),
+      ...Object.fromEntries(['scale', 'audio_decim', 'mode', 'deemph_us', 'runin_s']
+        .filter((k) => spec[k] != null).map((k) => [k, spec[k]])),
     }).then(({ bytes }) => {
       blocks.set(j, new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)));
       this.grStats.blocks++;
@@ -232,8 +251,9 @@ export class GrEngine extends MockEngine {
   }
 
   _detectRaw(node, tEnd, count) {
-    if (this._grKind(node) === 'fm') {
-      const out = this._fromBlocks(node, tEnd, count, 1);
+    const kind = this._grKind(node);
+    if (kind === 'fm' || kind === 'stereo') {
+      const out = this._fromBlocks(node, tEnd, count, kind === 'stereo' ? 2 : 1);
       if (out) return out;
     }
     return super._detectRaw(node, tEnd, count);

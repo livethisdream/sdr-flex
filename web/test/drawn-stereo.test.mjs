@@ -132,7 +132,7 @@ test('the way back out is a node, and adds no delay', async () => {
  * ```
  *   FM demod ──┬─▶ Tune  0 kHz ──────────────────▶ To real ─▶ Gain ─▶ sum
  *              ├─▶ Tune 19 kHz ─▶ Math a×b ──┐  (the pilot, squared)
- *              └─▶ Tune 38 kHz ─▶ Math a÷b ──┘─▶ To real ─▶ Gain ─▶ diff
+ *              └─▶ Tune 38 kHz ─▶ Math a÷b ──┘─▶ To real (imag) ─▶ Gain ─▶ diff
  * ```
  *
  * The division rather than a conjugate product is what makes the two branches
@@ -166,13 +166,16 @@ async function drawn(e, fm) {
   const coh = await e.addNode({ parent: lr.id, op: 'core.math', at: 0.3, withNode: ref.id });
   await e.setParam(coh.id, 'op', 'a/b');
 
-  const level = async (parent) => {
+  const level = async (parent, part = 'real') => {
     const r = await e.addNode({ parent: parent.id, op: 'core.real', at: 0.6 });
+    if (part !== 'real') await e.setParam(r.id, 'part', part);
     const g = await e.addNode({ parent: r.id, op: 'core.gain', at: 0.6 });
     return e.node(g.id);
   };
   const sumR = await level(sum);
-  const diffR = await level(e.node(coh.id));
+  // In the imaginary part: the standard's subcarrier is sin(2θ) for a pilot sin(θ), and the
+  // tuned pilot squared is a cosine reference, 90° from it (ITU-R BS.450).
+  const diffR = await level(e.node(coh.id), 'imag');
   return { sumR, diffR, rate: rate / DECIM, nodes: { sum, pilot, lr, ref, coh } };
 }
 
