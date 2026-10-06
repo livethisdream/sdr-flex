@@ -1,6 +1,6 @@
 # ADR-0043: A recipe is a hier block; a plugin adds a block
 
-**Status:** Proposed — builds the saved chain [ADR-0024](0024-composable-decode-chain.md)
+**Status:** Accepted 2026-10-06 — builds the saved chain [ADR-0024](0024-composable-decode-chain.md)
 decided on, on the engine [ADR-0044](0044-gnu-radio-is-the-engine.md) settled; supersedes the
 first draft of this ADR, which treated GNU Radio as an opaque subprocess
 
@@ -107,10 +107,11 @@ the rest of the JS engine (ADR-0044); sessions that contain it still load.
 - If GRC's format cannot carry what the sidecar needs without fighting it, the sidecar becomes the
   format and GRC an export.
 
-## Open questions
+## Settled with the decision
 
-These are for the person, unlike ADR-0044's.
-
-1. On a phone, does an opened recipe show as one folded tab, or as its blocks?
-2. Should a saved recipe pin the versions of the OOT modules it uses?
-3. Who may overwrite a recipe on the box: anyone with the page, or only the operator, by file?
+1. **On a phone, an opened recipe folds into one tab** with the recipe's name, opened like the
+   folded path; its blocks are one tap away rather than a row of tabs.
+2. **A saved recipe pins the versions of the OOT modules it uses**, as a pack pins the program
+   it drives, so a recipe that worked keeps meaning the same thing.
+3. **Only the operator overwrites a recipe on the box, by file**, for now. The page saves new
+   recipes and never replaces one; that changes when the page has authentication.
