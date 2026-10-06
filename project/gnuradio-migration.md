@@ -173,3 +173,27 @@ Server-side, the tuner's own frame now waits 22 ms on average for its block and 
 0.7 ms. What remains is other frames computing on the server's one thread — a stereo spectrum
 up to 257 ms, the source's spectrum up to 110 ms, mostly reads falling back to JS and JS FFTs —
 during which nothing else on the server moves. Stereo-tab jitter stays at 14-15 ms sd, 38 frames/s.
+
+**Step 4, option 1 (clear the server's thread), done; the gate is met at the median, not at p95.**
+- A waterfall's prefill computes 64 rows per request; that held the server's thread for up to
+  250 ms after each retune. Batches now give way every 8 ms.
+- Live frame requests are marked `live`; every request carries its moment, so the server had
+  been serving live views at the lower priority.
+- One worker in the pool (now four) is kept for blocks a live view waits on.
+- A frame waits only for the blocks its read touches: a tuner's IQ exactly, anything read
+  through the detector cache rounded to its 0.25 s blocks; the margins are fetched behind.
+
+Event-loop delay on the server during the retune test (`monitorEventLoopDelay`, 5 ms resolution):
+
+| | p50 | p95 | p99 | max |
+|---|---|---|---|---|
+| JS engine | 5.1 ms | 299.9 | 685.8 | 1336.9 |
+| GNU Radio engine | 5.1 ms | 5.6-5.9 | 6.8-23.8 | 320-525 (session start) |
+
+Retune to its frame, server side: 10-51 ms with 3 of 16 at 103-125 ms (median ~23 ms); end to
+end in the headless browser, which is painting at 39 frames/s meanwhile, 34-171 ms (median ~80).
+The remaining spikes look like live stereo views (~50 ms blocks) sharing the reserved lane with
+the tuner's (~12 ms). Stereo-tab jitter 14.3 ms sd at 39 frames/s.
+
+On a phone over Wi-Fi the round trip measured earlier (11-338 ms) is larger than all of this,
+which no change on the box removes.

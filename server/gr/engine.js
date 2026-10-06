@@ -188,12 +188,21 @@ export class GrEngine extends MockEngine {
     for (const n of tuners) {
       const spec = this._grSpec(n);
       const blocks = this._blocksOf(n, spec.sig);
-      // Nearest the playhead first: the worker answers in order, and after a change the block a
-      // spectrum needs is the one at the playhead, not the one a second behind it.
+      // Wait only for the blocks this read touches. A tuner's IQ is read exactly, so that is
+      // the span itself; anything read through the detector cache (`_detectCached`) is read in
+      // whole 0.25 s blocks with a 30 ms margin, so it rounds out to those. Waiting on a margin
+      // either side as well tripled what a retuned spectrum waited for, on one reserved lane.
+      // The rest is fetched behind, at the prefetch's priority.
       const fs = n.out.sampleRate, B = this._blockSize(n), here = Math.floor((at * fs) / B);
-      const missing = this._range(n, at - spanS - EDGE_S, at + EDGE_S).filter((j) => !blocks.has(j));
-      missing.sort((x, y) => Math.abs(x - here) - Math.abs(y - here));
-      for (const j of missing) waits.push(this._ensure(n, j, priority));
+      const exact = n.id === nodeId && n.out.kind === 'iq';
+      const t0 = exact ? at - spanS : Math.floor((at - spanS) / BLOCK_S) * BLOCK_S - 0.03;
+      const t1 = exact ? at : Math.ceil(at / BLOCK_S) * BLOCK_S + 0.03;
+      const need = this._range(n, t0, t1).filter((j) => !blocks.has(j));
+      need.sort((x, y) => Math.abs(x - here) - Math.abs(y - here));
+      for (const j of need) waits.push(this._ensure(n, j, priority));
+      for (const j of this._range(n, at - spanS - EDGE_S, at + EDGE_S)) {
+        if (!blocks.has(j) && !need.includes(j)) this._ensure(n, j, PRIORITY.prefetch);
+      }
     }
     if (waits.length) { this.grStats.waits++; await Promise.all(waits); }
     this._pump(tuners);
@@ -293,7 +302,14 @@ export class GrEngine extends MockEngine {
     const out = new Float32Array(count * width);
     for (let j = Math.floor(kStart / B); j * B < kEnd; j++) {
       const blk = blocks.get(j);
-      if (!blk) { this.grStats.misses++; return null; }
+      if (!blk) {
+        this.grStats.misses++;
+        if (process.env.SDRFLEX_GR_DEBUG) {
+          const caller = new Error().stack.split('\n').slice(3, 7).map((l) => l.trim().replace(/^at /, '').replace(/ \(.*\/(\w+\.js):(\d+):\d+\)/, ' $1:$2')).join(' < ');
+          console.error(`gr miss ${node.op}: block ${j} ${blocks.has(j) ? '(refused)' : '(not fetched)'}, read ending ${tEnd.toFixed(3)} for ${(count / fs).toFixed(3)} s, playhead ${node._grAt == null ? '-' : node._grAt.toFixed(3)} | ${caller}`);
+        }
+        return null;
+      }
       const a = Math.max(kStart, j * B), b = Math.min(kEnd, (j + 1) * B);
       out.set(blk.subarray((a - j * B) * width, (b - j * B) * width), (a - kStart) * width);
     }

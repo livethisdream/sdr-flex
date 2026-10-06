@@ -2,15 +2,15 @@
 //
 // One worker answered in arrival order, so after a retune the block a spectrum was waiting on
 // (about 12 ms of work) sat behind stereo blocks other views and the prefetch had asked for
-// (about 50 ms each). The queue here lets what a frame is waiting on go first, and the pool
-// lets independent blocks compute at the same time. Each worker is still one session's alone
+// (about 50 ms each). The queue here lets what a frame is waiting on go first, the pool lets
+// independent blocks compute at the same time, and one worker is kept for frames alone. Each worker is still one session's alone
 // (ADR-0003); a crash in one fails its request and the next starts a replacement.
 import { GrWorker } from './worker.js';
 
 export const PRIORITY = { frame: 0, read: 1, prefetch: 2 };
 
 export class GrPool {
-  constructor({ size = Number(process.env.SDRFLEX_GR_WORKERS) || 3, log = () => {} } = {}) {
+  constructor({ size = Number(process.env.SDRFLEX_GR_WORKERS) || 4, log = () => {} } = {}) {
     this.workers = Array.from({ length: Math.max(1, size) }, () => new GrWorker({ log }));
     this.busy = new Set();
     this.queue = [];              // { req, priority, seq, resolve, reject }
@@ -42,12 +42,19 @@ export class GrPool {
   _next() {
     for (const w of this.workers) {
       if (this.busy.has(w) || !this.queue.length) continue;
+      // The first worker is kept for what a view is waiting on. A queue alone could put a
+      // retuned spectrum's block first in line and still leave it waiting for whichever ~50 ms
+      // stereo block finished first; with a lane of its own it starts at once.
+      const reserved = this.workers.length > 1 && w === this.workers[0];
       // Highest priority first, oldest first within it.
-      let at = 0;
-      for (let i = 1; i < this.queue.length; i++) {
-        const a = this.queue[i], b = this.queue[at];
-        if (a.priority < b.priority || (a.priority === b.priority && a.seq < b.seq)) at = i;
+      let at = -1;
+      for (let i = 0; i < this.queue.length; i++) {
+        const a = this.queue[i];
+        if (reserved && a.priority !== PRIORITY.frame) continue;
+        const b = at < 0 ? null : this.queue[at];
+        if (!b || a.priority < b.priority || (a.priority === b.priority && a.seq < b.seq)) at = i;
       }
+      if (at < 0) continue;
       const job = this.queue.splice(at, 1)[0];
       this.busy.add(w);
       w.request(job.req).then(job.resolve, job.reject).finally(() => { this.busy.delete(w); this._next(); });

@@ -21,6 +21,7 @@ import * as adapters from './adapters.js';
 import { version } from './version.js';
 import { StreamOut } from './streamout.js';
 import { GrPool, PRIORITY } from './gr/pool.js';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { GrEngine } from './gr/engine.js';
 
 export const PROTOCOL = 1;
@@ -55,6 +56,7 @@ export class Session {
     this.radio = null;
     this.sinks = new Map();   // nodeId → StreamOut
     this.closed = false;
+    if (process.env.SDRFLEX_GR_DEBUG) { this._loop = monitorEventLoopDelay({ resolution: 5 }); this._loop.enable(); }
     if (this.gr) {
       this.gr.start().then(() => log(`GNU Radio ${this.gr.version} worker up in ${this.gr.startMs.toFixed(0)} ms`),
                            (err) => log(`GNU Radio worker did not start: ${err.message}`));
@@ -96,6 +98,11 @@ export class Session {
   }
 
   dispose() {
+    if (this._loop) {
+      const h = this._loop, ms = (v) => (v / 1e6).toFixed(1);
+      this.log(`event loop delay: p50 ${ms(h.percentile(50))} ms, p95 ${ms(h.percentile(95))}, p99 ${ms(h.percentile(99))}, max ${ms(h.max)}`);
+      h.disable(); this._loop = null;
+    }
     if (this.gr) {
       const st = this.engine.grStats;
       if (st) this.log(`GNU Radio: ${st.blocks} blocks in ${st.ms.toFixed(0)} ms` +
@@ -139,6 +146,9 @@ export class Session {
     }
   }
 }
+
+// How long a batch of frames runs before letting other requests in.
+const YIELD_MS = 8;
 
 const METHODS = {
   async hello() {
@@ -241,6 +251,7 @@ const METHODS = {
       return { rebuilt: true, retuned: true };
     }
     const r = await this.engine.setParam(nodeId, key, value, mode);
+    if (process.env.SDRFLEX_GR_DEBUG) this._lastSet = { nodeId, t: performance.now() };
     return { rebuilt: r.rebuilt };
   },
 
@@ -264,16 +275,33 @@ const METHODS = {
     // themselves are synchronous.
     const t0 = performance.now();
     if (this.engine.prepare) {
-      for (const { nodeId, opts } of reqs) {
+      for (const { nodeId, opts, live } of reqs) {
         const at = opts && opts.at != null ? opts.at : this.engine.effectiveTime(nodeId);
         await this.engine.prepare(nodeId, at, this.engine.frameSpan(nodeId, opts || {}),
-                                  opts && opts.at != null ? PRIORITY.read : PRIORITY.frame);
+                                  live ? PRIORITY.frame : PRIORITY.read);
       }
     }
     const t1 = performance.now();
-    const frames = reqs.map(({ nodeId, opts }) => {
-      try { return this.engine.frame(nodeId, opts || {}); } catch { return { kind: 'none' }; }
-    });
+    // A waterfall's prefill asks for 64 rows at once, and computing them in one go held the
+    // server's thread for up to 250 ms — after a retune, the retuned spectrum waited behind
+    // the waterfall refilling its history. So a batch gives way every few milliseconds, and a
+    // live view's request runs in between its rows.
+    const frames = [];
+    let since = performance.now();
+    for (const { nodeId, opts } of reqs) {
+      try { frames.push(this.engine.frame(nodeId, opts || {})); } catch { frames.push({ kind: 'none' }); }
+      if (reqs.length > 1 && performance.now() - since > YIELD_MS) {
+        await new Promise((r) => setImmediate(r));
+        since = performance.now();
+      }
+    }
+    if (process.env.SDRFLEX_GR_DEBUG && performance.now() - t1 > 30) {
+      this.log(`slow frame compute ${(performance.now() - t1).toFixed(0)} ms: ${reqs.map(({ nodeId, opts }) => `${this.engine.node(nodeId)?.op}${opts?.domain ? '/' + opts.domain : ''}${opts?.at != null ? '@' + opts.at.toFixed(2) : ''}`).join(', ')}`);
+    }
+    if (this._lastSet && reqs.length === 1 && reqs[0].nodeId === this._lastSet.nodeId && reqs[0].live) {
+      this.log(`retune -> its frame computed, server side: ${(performance.now() - this._lastSet.t).toFixed(1)} ms (request arrived ${(t0 - this._lastSet.t).toFixed(1)} ms after setParam returned)`);
+      this._lastSet = null;
+    }
     if (process.env.SDRFLEX_GR_DEBUG && reqs.length === 1) {
       const { nodeId, opts } = reqs[0], n = this.engine.node(nodeId);
       this.log(`frame ${n ? n.op : '?'}${opts && opts.domain ? '/' + opts.domain : ''}: prepare ${(t1 - t0).toFixed(1)} ms, compute ${(performance.now() - t1).toFixed(1)} ms`);

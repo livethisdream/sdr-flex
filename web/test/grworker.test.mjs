@@ -90,3 +90,21 @@ test('the pool runs what a frame is waiting on before the prefetch, and can rais
   await Promise.all(all);
   assert.deepEqual(done, ['first', 'raised', 'frame', 'read', 'prefetch']);
 });
+
+test('one worker is kept for what a view is waiting on', { skip: !hasGr && 'GNU Radio is not installed' }, async (t) => {
+  const { GrPool, PRIORITY } = await import('../../server/gr/pool.js');
+  const pool = new GrPool({ size: 2 });
+  t.after(() => pool.stop());
+  await pool.start();
+  const slow = { op: 'tone', hz: 1000, rate: 48_000, count: 4_000_000 };
+  const done = [];
+  // Background work fills the other worker and queues behind it; the reserved one stays idle.
+  const background = [1, 2, 3].map((k) => pool.request(slow, PRIORITY.prefetch).then(() => done.push(`prefetch ${k}`)));
+  await new Promise((r) => setTimeout(r, 20));
+  const t0 = performance.now();
+  await pool.request({ op: 'tone', hz: 1000, rate: 48_000, count: 100 }, PRIORITY.frame).then(() => done.push('frame'));
+  const waited = performance.now() - t0;
+  t.diagnostic(`a frame's job waited ${waited.toFixed(1)} ms with background work queued`);
+  assert.equal(done[0], 'frame', 'the frame finished before any background job');
+  await Promise.all(background);
+});

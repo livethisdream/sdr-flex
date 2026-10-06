@@ -487,7 +487,9 @@ export class RemoteEngine extends Graph {
   }
 
   _send(group) {
-    this.call('frames', { reqs: group.map((b) => ({ nodeId: b.nodeId, opts: b.opts })) })
+    // `live` says this is what a view is showing now, not a row being filled in behind it,
+    // which the server cannot tell from the request: every request carries its moment.
+    this.call('frames', { reqs: group.map((b) => ({ nodeId: b.nodeId, opts: b.opts, live: b.live })) })
       .then((r) => {
         r.frames.forEach((f, i) => {
           const b = group[i];
