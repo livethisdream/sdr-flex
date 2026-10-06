@@ -48,7 +48,6 @@ export class RemoteEngine extends Graph {
     this._inflight = new Set();    // keys with a request outstanding
     this._pre = new Map();         // key|time → frame, from prefetch
     this._queue = [];              // frame requests waiting for the next flush
-    this._flushing = false;
     this._batching = false;
     this._onStatus = () => {};
   }
@@ -474,22 +473,31 @@ export class RemoteEngine extends Graph {
   }
 
   _flush() {
-    if (this._flushing || !this._queue.length || !this.ready) return;
+    if (!this._queue.length || !this.ready) return;
     const batch = this._queue;
     this._queue = [];
-    this._flushing = true;
-    this.call('frames', { reqs: batch.map((b) => ({ nodeId: b.nodeId, opts: b.opts })) })
+    // Each live view on its own call, and the rest together. One batch for everything meant a
+    // quick spectrum waited for the slowest view in it: after a retune, the stereo scope's
+    // second of fresh history held the tuner's spectrum back by most of a second. A view
+    // still has one request in flight at a time (`_inflight`), so this does not flood.
+    const groups = batch.filter((b) => b.live).map((b) => [b]);
+    const rows = batch.filter((b) => !b.live);
+    if (rows.length) groups.push(rows);
+    for (const group of groups) this._send(group);
+  }
+
+  _send(group) {
+    this.call('frames', { reqs: group.map((b) => ({ nodeId: b.nodeId, opts: b.opts })) })
       .then((r) => {
         r.frames.forEach((f, i) => {
-          const b = batch[i];
+          const b = group[i];
           if (b.live) this._live.set(b.key, f);
           else this._pre.set(`${b.key}@${b.opts.at.toFixed(6)}`, f);
           this._inflight.delete(b.key);
         });
         this._trim();
       })
-      .catch(() => { for (const b of batch) this._inflight.delete(b.key); })
-      .finally(() => { this._flushing = false; if (this._queue.length) this._flush(); });
+      .catch(() => { for (const b of group) this._inflight.delete(b.key); });
   }
 
   _trim() {

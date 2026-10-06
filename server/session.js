@@ -20,7 +20,7 @@ import { Radio, list as listDrivers } from './radio.js';
 import * as adapters from './adapters.js';
 import { version } from './version.js';
 import { StreamOut } from './streamout.js';
-import { GrWorker } from './gr/worker.js';
+import { GrPool, PRIORITY } from './gr/pool.js';
 import { GrEngine } from './gr/engine.js';
 
 export const PROTOCOL = 1;
@@ -41,7 +41,7 @@ export class Session {
     this.pluginDir = pluginDir;
     // GNU Radio as the engine (ADR-0044), one worker per session (ADR-0003). Opt-in while
     // the migration is under way; unset, nothing about the session changes.
-    this.gr = process.env.SDRFLEX_ENGINE === 'gnuradio' ? new GrWorker({ log }) : null;
+    this.gr = process.env.SDRFLEX_ENGINE === 'gnuradio' ? new GrPool({ log }) : null;
     this.engine = this.gr ? new GrEngine({ latency: false }, this.gr) : new Engine({ latency: false });
     // Somebody else's decoders, offered to the graph. Only the server can know which of
     // them are installed, and only the server can run one (ADR-0013).
@@ -262,15 +262,23 @@ const METHODS = {
   async frames({ reqs }) {
     // The GNU Radio engine fetches the blocks these reads will touch first; the reads
     // themselves are synchronous.
+    const t0 = performance.now();
     if (this.engine.prepare) {
       for (const { nodeId, opts } of reqs) {
         const at = opts && opts.at != null ? opts.at : this.engine.effectiveTime(nodeId);
-        await this.engine.prepare(nodeId, at, 0);
+        await this.engine.prepare(nodeId, at, this.engine.frameSpan(nodeId, opts || {}),
+                                  opts && opts.at != null ? PRIORITY.read : PRIORITY.frame);
       }
     }
-    return { frames: reqs.map(({ nodeId, opts }) => {
+    const t1 = performance.now();
+    const frames = reqs.map(({ nodeId, opts }) => {
       try { return this.engine.frame(nodeId, opts || {}); } catch { return { kind: 'none' }; }
-    }) };
+    });
+    if (process.env.SDRFLEX_GR_DEBUG && reqs.length === 1) {
+      const { nodeId, opts } = reqs[0], n = this.engine.node(nodeId);
+      this.log(`frame ${n ? n.op : '?'}${opts && opts.domain ? '/' + opts.domain : ''}: prepare ${(t1 - t0).toFixed(1)} ms, compute ${(performance.now() - t1).toFixed(1)} ms`);
+    }
+    return { frames };
   },
 
   async readSpan({ nodeId, t0, t1 }, id) {

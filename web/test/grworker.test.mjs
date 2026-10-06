@@ -74,3 +74,19 @@ test('a worker stopped on purpose stays stopped', { skip: !hasGr && 'GNU Radio i
   assert.equal(w.proc, null);
   assert.equal(w.starts, 1);
 });
+
+test('the pool runs what a frame is waiting on before the prefetch, and can raise a queued job', { skip: !hasGr && 'GNU Radio is not installed' }, async (t) => {
+  const { GrPool, PRIORITY } = await import('../../server/gr/pool.js');
+  const pool = new GrPool({ size: 1 });
+  t.after(() => pool.stop());
+  await pool.start();
+  const done = [];
+  const job = (name, priority, key) => pool.request({ op: 'tone', hz: 1000, rate: 48_000, count: 48_000 }, priority, key)
+    .then(() => done.push(name));
+  // The first starts at once; the rest queue behind it on the single worker.
+  const all = [job('first', PRIORITY.prefetch), job('prefetch', PRIORITY.prefetch), job('read', PRIORITY.read),
+               job('raised', PRIORITY.prefetch, 'k'), job('frame', PRIORITY.frame)];
+  pool.raise('k', PRIORITY.frame);
+  await Promise.all(all);
+  assert.deepEqual(done, ['first', 'raised', 'frame', 'read', 'prefetch']);
+});

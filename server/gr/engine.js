@@ -20,12 +20,12 @@
 // how that shows up in a measurement rather than in a wrong answer.
 import { MockEngine } from '../../web/src/engine.js';
 import * as dsp from '../../web/src/dsp.js';
+import { PRIORITY } from './pool.js';
 
 const BLOCK_S = 0.25;
-// Around the moment a read ends: the scope's trigger looks back about a second, and the
-// detector cache (`_detectCached`) asks for whole blocks plus a margin either side.
-const PREPARE_BEFORE_S = 1.4;
-const PREPARE_AFTER_S = 0.35;
+// Beyond what a read itself spans: the detector cache (`_detectCached`) computes whole
+// 0.25 s blocks with a 30 ms margin either side, so a read can reach that far past its ends.
+const EDGE_S = BLOCK_S + 0.03;
 // How far past the playhead the worker keeps fetching while nothing is asking. At 37x real
 // time it stays ahead with room to spare.
 const AHEAD_S = 1.0;
@@ -99,6 +99,22 @@ export class GrEngine extends MockEngine {
   }
 
   /**
+   * How far back a display frame of this node reads, in seconds: what `frame` asks for.
+   * A spectrum needs its FFT; a scope needs its trigger's search window, which is the longest.
+   */
+  frameSpan(nodeId, opts = {}) {
+    const n = this.node(nodeId);
+    if (!n) return 0;
+    const fs = n.out.sampleRate, bins = opts.bins || 1024;
+    if (n.out.kind === 'iq') return bins / fs;
+    if (n.out.kind !== 'real') return 0;
+    if (opts.domain === 'frequency') return (bins * 2) / fs;
+    const span = opts.spanS || 0.12;
+    const search = opts.trigger === 'free' ? span : Math.max(1.05, span);
+    return Math.min(search, Math.floor(131072 / this._upstreamRatio(n)) / fs);
+  }
+
+  /**
    * The node whose GNU Radio blocks a read of this one will actually use: the first one up the
    * chain that GNU Radio computes. A stereo decoder reads its FM demod, and the FM demod's
    * blocks already contain the tuner, so the tuner's own blocks are not fetched for it.
@@ -113,12 +129,18 @@ export class GrEngine extends MockEngine {
   _blockSize(node) { return Math.max(256, Math.round(BLOCK_S * node.out.sampleRate)); }
 
   /** One block, fetched once: a second ask while the first is in flight shares it. */
-  _ensure(node, j) {
+  _ensure(node, j, priority = PRIORITY.read) {
     const spec = this._grSpec(node);
     const blocks = this._blocksOf(node, spec.sig);
     if (blocks.has(j)) return Promise.resolve();
     if (!node._grInflight || node._grInflightSig !== spec.sig) { node._grInflight = new Map(); node._grInflightSig = spec.sig; }
-    if (node._grInflight.has(j)) return node._grInflight.get(j);
+    const key = `${node.id}|${spec.sig}|${j}`;
+    if (node._grInflight.has(j)) {
+      // Already asked for, perhaps by the prefetch at its low priority; a frame waiting on it
+      // now should not wait behind the prefetch's queue.
+      if (this.gr.raise) this.gr.raise(key, priority);
+      return node._grInflight.get(j);
+    }
     const B = this._blockSize(node);
     const started = performance.now();
     const p = this.gr.request({
@@ -126,7 +148,7 @@ export class GrEngine extends MockEngine {
       k0: j * B, count: B, taps: Array.from(spec.taps), decim: spec.decim, offset: spec.offset,
       ...Object.fromEntries(['scale', 'audio_decim', 'mode', 'deemph_us', 'runin_s']
         .filter((k) => spec[k] != null).map((k) => [k, spec[k]])),
-    }).then(({ bytes }) => {
+    }, priority, key).then(({ bytes }) => {
       blocks.set(j, new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)));
       this.grStats.blocks++;
       this.grStats.ms += performance.now() - started;
@@ -158,7 +180,7 @@ export class GrEngine extends MockEngine {
    * that waits, once, for the blocks around where it landed. Fetching on the critical path
    * made playback outrun its own blocks and fall back to the JS engine on every other read.
    */
-  async prepare(nodeId, at, spanS = 0) {
+  async prepare(nodeId, at, spanS = 0, priority = PRIORITY.read) {
     if (!this.gr) return;
     const tuners = this._grNodesOf(nodeId);
     for (const n of tuners) n._grAt = at;
@@ -166,9 +188,12 @@ export class GrEngine extends MockEngine {
     for (const n of tuners) {
       const spec = this._grSpec(n);
       const blocks = this._blocksOf(n, spec.sig);
-      for (const j of this._range(n, at - spanS - PREPARE_BEFORE_S, at + PREPARE_AFTER_S)) {
-        if (!blocks.has(j)) waits.push(this._ensure(n, j));
-      }
+      // Nearest the playhead first: the worker answers in order, and after a change the block a
+      // spectrum needs is the one at the playhead, not the one a second behind it.
+      const fs = n.out.sampleRate, B = this._blockSize(n), here = Math.floor((at * fs) / B);
+      const missing = this._range(n, at - spanS - EDGE_S, at + EDGE_S).filter((j) => !blocks.has(j));
+      missing.sort((x, y) => Math.abs(x - here) - Math.abs(y - here));
+      for (const j of missing) waits.push(this._ensure(n, j, priority));
     }
     if (waits.length) { this.grStats.waits++; await Promise.all(waits); }
     this._pump(tuners);
@@ -190,7 +215,7 @@ export class GrEngine extends MockEngine {
           if (j != null) { next = [n, j]; break; }
         }
         if (!next) return;
-        await this._ensure(next[0], next[1]);
+        await this._ensure(next[0], next[1], PRIORITY.prefetch);
       }
     } finally {
       this._pumping = false;

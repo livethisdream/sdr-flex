@@ -156,3 +156,20 @@ centered on FM sample k*decim, as the JS decoder's is, from the filters' known d
 The source's own spectrum, which no GNU Radio stage touches, stays at 13.5-15.8 ms: the floor
 in this setup. Still above the 4 ms budget. Unit suite 536 pass (1 needs decoders installed);
 full image 573 pass, 0 fail.
+
+**Step 4, part A (fix the frame pipeline), done; the 50 ms gate is not met yet.**
+Knob to visible was 0.7-2.6 s on both engines, with `setParam` itself taking 2-16 ms: the time
+was all in getting a fresh frame. Changes: each live view's frame request travels alone, so a
+fast view no longer waits for the slowest one in a batch; each frame prepares only what it reads
+(`frameSpan`), nearest the playhead first; a session has a pool of three workers behind a
+queue that serves what a frame waits on before what a read needs before the prefetch, and
+raises a queued job when a frame starts waiting on it (`server/gr/pool.js`).
+
+| retune to a new frame, ms | JS engine | GNU Radio, before | after A |
+|---|---|---|---|
+| eight retunes | 49-2919 | 668-1719 | 66-305 (median ~165) |
+
+Server-side, the tuner's own frame now waits 22 ms on average for its block and computes in
+0.7 ms. What remains is other frames computing on the server's one thread — a stereo spectrum
+up to 257 ms, the source's spectrum up to 110 ms, mostly reads falling back to JS and JS FFTs —
+during which nothing else on the server moves. Stereo-tab jitter stays at 14-15 ms sd, 38 frames/s.
