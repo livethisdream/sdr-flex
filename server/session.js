@@ -21,6 +21,7 @@ import * as adapters from './adapters.js';
 import { version } from './version.js';
 import { StreamOut } from './streamout.js';
 import { GrWorker } from './gr/worker.js';
+import { GrEngine } from './gr/engine.js';
 
 export const PROTOCOL = 1;
 
@@ -38,7 +39,10 @@ export class Session {
     this.log = log;
     this.ringDir = ringDir;
     this.pluginDir = pluginDir;
-    this.engine = new Engine({ latency: false });
+    // GNU Radio as the engine (ADR-0044), one worker per session (ADR-0003). Opt-in while
+    // the migration is under way; unset, nothing about the session changes.
+    this.gr = process.env.SDRFLEX_ENGINE === 'gnuradio' ? new GrWorker({ log }) : null;
+    this.engine = this.gr ? new GrEngine({ latency: false }, this.gr) : new Engine({ latency: false });
     // Somebody else's decoders, offered to the graph. Only the server can know which of
     // them are installed, and only the server can run one (ADR-0013).
     this.engine.adapters = adapters.list();
@@ -51,9 +55,6 @@ export class Session {
     this.radio = null;
     this.sinks = new Map();   // nodeId → StreamOut
     this.closed = false;
-    // GNU Radio as the engine (ADR-0044), one worker per session (ADR-0003). Opt-in while
-    // the migration is under way; unset, nothing about the session changes.
-    this.gr = process.env.SDRFLEX_ENGINE === 'gnuradio' ? new GrWorker({ log }) : null;
     if (this.gr) {
       this.gr.start().then(() => log(`GNU Radio ${this.gr.version} worker up in ${this.gr.startMs.toFixed(0)} ms`),
                            (err) => log(`GNU Radio worker did not start: ${err.message}`));
@@ -95,7 +96,12 @@ export class Session {
   }
 
   dispose() {
-    if (this.gr) { this.gr.stop(); this.gr = null; }
+    if (this.gr) {
+      const st = this.engine.grStats;
+      if (st) this.log(`GNU Radio: ${st.blocks} blocks in ${st.ms.toFixed(0)} ms` +
+        ` (${st.blocks ? (st.ms / st.blocks).toFixed(1) : '-'} ms each), ${st.hits} reads from them, ${st.misses} fell back to JS`);
+      this.gr.stop(); this.gr = null;
+    }
     for (const sink of this.sinks.values()) sink.close();
     this.sinks.clear();
     // A radio is a process and a file on disk; a tab going away has to take both with
@@ -253,6 +259,14 @@ const METHODS = {
    * hundred and sixty round trips for what the engine computes in a few milliseconds.
    */
   async frames({ reqs }) {
+    // The GNU Radio engine fetches the blocks these reads will touch first; the reads
+    // themselves are synchronous.
+    if (this.engine.prepare) {
+      for (const { nodeId, opts } of reqs) {
+        const at = opts && opts.at != null ? opts.at : this.engine.effectiveTime(nodeId);
+        await this.engine.prepare(nodeId, at, 0);
+      }
+    }
     return { frames: reqs.map(({ nodeId, opts }) => {
       try { return this.engine.frame(nodeId, opts || {}); } catch { return { kind: 'none' }; }
     }) };
@@ -369,6 +383,11 @@ const METHODS = {
   },
 
   async readAudio({ nodeId, t0, count }) {
+    if (this.engine.prepare) {
+      const n = this.engine.node(nodeId);
+      const fs = n ? n.out.sampleRate : 0;
+      if (fs) await this.engine.prepare(nodeId, t0 + count / fs, count / fs);
+    }
     return await this.engine.readAudio(nodeId, t0, count);
   },
 };

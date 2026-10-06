@@ -72,3 +72,20 @@ known tone arrives intact on the data pipe, written by `file_descriptor_sink`, s
 passes through Python. Found on the way: GNU Radio's C++ prints to stdout on its own, which is
 the control channel, so the worker keeps a private copy of it and sends fd 1 to stderr. Unit
 suite 536 pass (1 needs decoders installed); full image 561 pass, 0 fail.
+
+**Step 1, gates on correctness pass; the jitter gate fails, and the step is stopped there.**
+`server/gr/engine.js` (`GrEngine`) computes a tuner on a recorded capture with GNU Radio's
+`freq_xlating_fir_filter_ccf`, in 0.25 s blocks the session fetches before frames and audio.
+
+- Passing: a known tone comes out at 5000.0 Hz (one bin is 24.4) and 0.014 dB from its level;
+  GNU Radio matches the JS tuner sample for sample (shift 0, correlation 1.000000, difference
+  5.3e-4 on a 0.5 signal) after an exact alignment of history and mixer phase; adjacent reads
+  join exactly; every block is full length, so the 10 ms short block is gone. A tuner block on
+  its own: GNU Radio 11.9 ms, JS 18.3 ms.
+- Failing: in a session the frame jitter got slightly worse (stereo tab 53.9 ms sd against
+  49.5; source spectrum 16.2 against 13.2). The session log shows why: blocks averaged 167 ms
+  in place of 11.9, and 504 reads fell back to JS against 77 served from GNU Radio.
+- Cause: fetching on the critical path. A frame request awaits its blocks; while it waits,
+  playback moves past the window it prepared, so the next reads miss and the JS engine
+  computes them on the server's one thread, which in turn delays draining the worker's pipe.
+  The worker is fast enough; the way it is asked is not.
