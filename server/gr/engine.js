@@ -107,14 +107,13 @@ export class GrEngine extends MockEngine {
       return { ...t, op: 'fm', complex: false, scale, sig: `${t.sig}|fm|${scale}` };
     }
     if (kind === 'cw') {
-      const t = this._tunerSpec(this.node(node.parent));
-      const fs = this.node(node.parent).out.sampleRate, p = node.params;
-      // No filter is a filter of one tap, so GNU Radio runs one chain either way.
-      const cw = dsp.cwTapsOf(p, fs) || new Float32Array([1]);
-      const extra = { cw_offset: p.offsetHz.value, pitch: p.pitchHz.value, gain: p.gain.value || 1,
-                      cw_taps: Array.from(cw) };
-      return { ...t, ...extra, op: 'cw', complex: false,
-               sig: `${t.sig}|cw|${extra.cw_offset}|${extra.pitch}|${extra.gain}|${cw.length}|${p.filterHz ? p.filterHz.value : ''}` };
+      // The CW recipe (recipes/cw.grc), whose parameters are this node's. Its filter is the
+      // design `dsp.cwTaps` mirrors, which is what keeps the JS demod a faithful fallback.
+      const t = this._tunerSpec(this.node(node.parent)), p = node.params;
+      const args = { offset: p.offsetHz.value, pitch: p.pitchHz.value, gain: p.gain.value || 1,
+                     width: p.filterHz ? Number(p.filterHz.value) : dsp.CW_FILTER_HZ };
+      return { ...t, op: 'recipe', recipe: 'cw', args, complex: false,
+               sig: `${t.sig}|cw|${args.offset}|${args.pitch}|${args.gain}|${args.width}` };
     }
     if (kind === 'stereo') {
       const p = this.node(node.parent);
@@ -188,7 +187,7 @@ export class GrEngine extends MockEngine {
       op: spec.op, path: this._store().path, format: this._store().format, rate: spec.fsIn,
       ring: this._store().ring,
       k0: j * B, count: B, taps: Array.from(spec.taps), decim: spec.decim, offset: spec.offset,
-      ...Object.fromEntries(['scale', 'audio_decim', 'mode', 'deemph_us', 'runin_s', 'cw_offset', 'pitch', 'gain', 'cw_taps']
+      ...Object.fromEntries(['scale', 'audio_decim', 'mode', 'deemph_us', 'runin_s', 'recipe', 'args']
         .filter((k) => spec[k] != null).map((k) => [k, spec[k]])),
     }, priority, key).then(({ bytes }) => {
       blocks.set(j, new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)));

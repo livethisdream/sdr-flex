@@ -80,8 +80,29 @@ installed on the box by file, like an OOT module.
 CW is the case that started this: a narrow channel filter on the carrier, a product detector
 whose oscillator puts the carrier at the pitch, and a band-pass around it, with multimon-ng on
 MORSE_CW as an optional last step. Built from GNU Radio blocks as a hier block, with the carrier
-offset derived by the existing estimator and the pitch exposed. The native `core.cw` retires with
-the rest of the JS engine (ADR-0044); sessions that contain it still load.
+offset derived by the existing estimator and the pitch exposed.
+
+**As built (2026-10-07):** `recipes/cw.grc` is the hier block: a mixer that moves the carrier to
+zero, `fir_filter_ccf` with `firdes.low_pass` (Hann, half the filter's width), a mixer up to the
+pitch, the real part, a gain. `recipes/cw.recipe.json` is its sidecar: which node parameter fills
+each block parameter, which the stream fills (the sample rate; the capture sample the first
+input is, which the mixers reference their phase to so blocks join without a click), and the
+variable naming how much history its filter needs. The worker compiles it with `grcc`, the same
+compile GRC does, and runs it on the tuner. multimon-ng after it already starts on MORSE_CW.
+
+Two things differ from the plan above, both on purpose:
+
+- **The folded node keeps the op id `core.cw`.** It is the recipe's "a few knobs" step: offset
+  (derived, with its evidence), pitch, filter width, gain. Keeping the id means every saved
+  session loads and opens the same chain, with no translation table to maintain. The menu calls
+  it "CW (Morse)".
+- **The JS CW demod stays, as the recipe's mirror,** for the in-tab engine and as the fallback a
+  missed block falls back to. Its filter is GNU Radio's design ported tap for tap, and
+  `web/test/grcw.test.mjs` holds the two to the same taps and the same samples, so they cannot
+  drift. It retires with the rest of the JS engine (ADR-0044), not before.
+
+From a 20 kHz box, the width a finger draws on a 500 kHz spectrum, the signal-ID capture's Morse
+went from no decode to a clean one; noise away from the pitch is 30 dB down.
 
 ## Consequences
 

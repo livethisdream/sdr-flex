@@ -156,8 +156,11 @@ export const OPS = {
   'core.ssb': {
     name: 'SSB demod', group: 'Demodulate', rank: 22, in: 'iq', out: 'real',
   },
+  // The CW recipe (ADR-0043): recipes/cw.grc, a GNU Radio hier block that the GNU Radio engine
+  // runs as it is, folded into this one node with its parameters as the node's. The JS here is
+  // the same filter and mixers, for the in-tab engine and as the fallback (web/test/grcw.test.mjs).
   'core.cw': {
-    name: 'CW demod', group: 'Demodulate', rank: 23, in: 'iq', out: 'real',
+    name: 'CW (Morse)', group: 'Demodulate', rank: 23, in: 'iq', out: 'real',
   },
   // The one operation that takes a real stream and returns a real stream, and the only
   // one that returns two channels (ADR-0037). It is grouped with the demodulators
@@ -443,7 +446,7 @@ const DETECTORS = {
     },
   },
   'core.cw': {
-    label: 'CW demod',
+    label: 'CW (Morse)',
     derive(iq, count, fs) {
       const off = dsp.estimateCarrierOffset(iq, count, fs);
       return {

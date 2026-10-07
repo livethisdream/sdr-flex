@@ -13,6 +13,7 @@ WORKDIR /app
 
 COPY web ./web
 COPY server ./server
+COPY recipes ./recipes
 
 # Captures are mounted, not baked in. Read-only is the intent: this tool analyzes
 # captures and never writes to them.

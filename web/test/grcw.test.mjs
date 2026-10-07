@@ -111,6 +111,7 @@ test('blocks join: two reads end to end are one read', async (t) => {
 test('GNU Radio gives the JS CW demod\'s samples, across block boundaries', { skip }, async (t) => {
   const { js, gr } = await engines(t);
   assert.equal(gr.e._grKind(gr.cw), 'cw');
+  assert.equal(gr.e._grSpec(gr.cw).recipe, 'cw', 'run as the recipe, recipes/cw.grc');
   const fs = gr.cw.out.sampleRate, count = Math.round(fs * 0.4), at = 1.3;   // spans two block seams
   // Adding the node measured the carrier from the tuner, unprepared; that read is not this one.
   gr.e.grStats.misses = 0;
@@ -127,4 +128,18 @@ test('the filter\'s length is its delay', () => {
   const taps = dsp.cwTaps(25_000, 500);
   assert.equal(taps.length % 2, 1);
   assert.ok(taps.length / 25_000 < 0.03, 'shorter than the detector cache\'s margin');
+});
+
+test('the JS filter is the recipe\'s: GNU Radio\'s firdes.low_pass, tap for tap', { skip }, () => {
+  for (const [fs, width] of [[25_000, 500], [6_250, 250], [62_500, 2_400]]) {
+    const py = spawnSync(python, ['-c', `from gnuradio.filter import firdes
+from gnuradio.fft import window
+print(list(firdes.low_pass(1.0, ${fs}, ${width / 2}, ${width / 2}, window.WIN_HANN)))`], { encoding: 'utf8' });
+    const want = JSON.parse(py.stdout);
+    const got = dsp.cwTaps(fs, width);
+    assert.equal(got.length, want.length, `${fs} S/s, ${width} Hz: length`);
+    let worst = 0;
+    for (let i = 0; i < want.length; i++) worst = Math.max(worst, Math.abs(got[i] - want[i]));
+    assert.ok(worst < 1e-7, `${fs} S/s, ${width} Hz: differs by ${worst}`);
+  }
 });

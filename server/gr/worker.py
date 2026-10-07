@@ -17,17 +17,23 @@ Requests:
   {"op": "stereo", ...the FM demod's fields, "audio_decim", "mode", "deemph_us", "runin_s"}
       -> {"ok", "bytes"}, then 2*count float32: stereo frames k0 .. k0+count-1, L and R
          interleaved, at the FM rate / audio_decim
-  {"op": "cw", ...the tuner's fields, "cw_offset", "pitch", "cw_taps", "gain"}
-      -> {"ok", "bytes"}, then `count` float32: the JS CW demod's outputs k0 .. k0+count-1
+  {"op": "recipe", ...the tuner's fields, "recipe", "args"}
+      -> {"ok", "bytes"}, then `count` outputs k0 .. k0+count-1 of the recipe (ADR-0043) named,
+         a GRC hier block in recipes/, run on the tuner with `args` as its parameters
   {"op": "fm", ...the tuner's fields, "scale"}
       -> {"ok", "bytes"}, then `count` float32: the JS FM demod's outputs k0 .. k0+count-1,
          in hertz times `scale` (gain / deviation)
 """
 import cmath
+import hashlib
+import importlib.util
 import json
 import math
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 
 from gnuradio import analog, blocks, fft, filter as grfilter, gr
 from gnuradio.filter import firdes
@@ -288,46 +294,82 @@ def op_stereo(req):
     finish(tb, drop, gr.sizeof_float, 2 * count)
 
 
-def mixer(hz, index, fs):
-    """A mixer at `hz` whose phase is referenced to the capture's sample index, as dsp.js's are:
-    rotator_cc starts at zero on the first sample it sees, which is sample `index`, so a
-    constant turn makes up the difference."""
-    turn = blocks.multiply_const_cc(cmath.exp(1j * 2 * math.pi * math.fmod(hz * index, fs) / fs))
-    return [blocks.rotator_cc(2 * math.pi * hz / fs), turn]
+RECIPES = os.environ.get('SDRFLEX_RECIPES') or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), '..', '..', 'recipes')
+_recipes = {}
 
 
-def cw_chain(tb, req, k0, count):
-    """Blocks producing the JS CW demod's outputs k0 .. k0+count-1; returns the last block.
+def recipe(name):
+    """A recipe's hier block class and its sidecar, compiled from its .grc by GNU Radio's own
+    grcc. A recipe is a file GRC opens too; this is the same compile GRC does."""
+    if name in _recipes:
+        return _recipes[name]
+    if not name.replace('_', '').isalnum():
+        raise ValueError(f'no recipe called {name!r}')
+    with open(os.path.join(RECIPES, f'{name}.recipe.json')) as f:
+        side = json.load(f)
+    # Compiled once per version of the file, into a cache every worker and session shares:
+    # grcc takes most of a second, and a session has several workers.
+    grc = os.path.join(RECIPES, side['grc'])
+    with open(grc, 'rb') as f:
+        digest = hashlib.sha256(f.read()).hexdigest()[:16]
+    cache = os.path.join(tempfile.gettempdir(), 'sdrflex-recipes')
+    os.makedirs(cache, exist_ok=True)
+    out = os.path.join(cache, f'{name}-{digest}')
+    if not os.path.exists(os.path.join(out, side['block'] + '.py')):
+        tmp = tempfile.mkdtemp(prefix=f'{name}-', dir=cache)
+        # grcc keeps its preferences under $HOME, which a container's user may not be able to write.
+        done = subprocess.run(['grcc', '-o', tmp, grc], capture_output=True, text=True, env={**os.environ, 'HOME': tmp})
+        if done.returncode:
+            raise RuntimeError(f'grcc could not compile {name}: {done.stderr.strip()[-400:]}')
+        try:
+            os.rename(tmp, out)   # whole, or not at all; a worker that lost the race uses the winner's
+        except OSError:
+            shutil.rmtree(tmp, ignore_errors=True)
+    spec = importlib.util.spec_from_file_location(side['block'], os.path.join(out, side['block'] + '.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _recipes[name] = (getattr(mod, side['block']), side)
+    return _recipes[name]
 
-    The carrier moved to zero, a low-pass of half the CW filter's width, the carrier moved up to
-    the pitch, the real part: a band-pass around the pitch, which is what a receiver's CW filter
-    is. The filter is causal, as `cwDemod` in dsp.js is, so output k is made from tuner outputs
-    k - taps + 1 .. k: the tuner is read from that much earlier and the outputs made partly of
-    the filter's zero history are dropped. Both mixers are referenced to the tuner's sample
-    index, so blocks join without a click.
+
+def recipe_chain(tb, req, k0, count):
+    """Blocks producing a recipe's outputs k0 .. k0+count-1 on the tuner; returns the last block.
+
+    The sidecar says which of the block's parameters SDR Flex fills from the stream rather than
+    from the node: the input's sample rate, and the capture sample its first input is, which a
+    recipe's mixers reference their phase to so blocks join without a click. A recipe that
+    filters names a variable holding how many inputs come before its first whole output; the
+    tuner is read from that much earlier and those outputs are dropped.
     """
+    cls, side = recipe(req['recipe'])
     fs = float(req['rate']) / int(req['decim'])
-    taps = [float(t) for t in req['cw_taps']]
-    h = len(taps) - 1
+    args, start_param = dict(req.get('args', {})), None
+    for pname, how in side['params'].items():
+        if how.get('from') == 'input sample rate':
+            args[pname] = fs
+        elif how.get('from') == 'first input sample':
+            start_param, args[pname] = pname, 0
+    blk = cls(**args)
+    h = int(getattr(blk, 'get_' + side['history'])()) if side.get('history') else 0
+    if start_param:
+        getattr(blk, 'set_' + start_param)(k0 - h)
     tuned = tuner_chain(tb, req, k0 - h, count + h)
-    down = mixer(-float(req['cw_offset']), k0 - h, fs)
-    fir = grfilter.fir_filter_ccf(1, taps)
-    drop = blocks.skiphead(COMPLEX, h)
-    up = mixer(float(req['pitch']), k0, fs)
-    real = blocks.complex_to_real(1)
-    gain = blocks.multiply_const_ff(float(req.get('gain', 1)))
-    tb.connect(tuned, *down, fir, drop, *up, real, gain)
-    return gain
+    size = gr.sizeof_float if side['out'] == 'real' else COMPLEX
+    drop = blocks.skiphead(size, h)
+    tb.connect(tuned, blk, drop)
+    return drop, size
 
 
-def op_cw(req):
+def op_recipe(req):
     tb = gr.top_block()
     count = int(req['count'])
-    finish(tb, cw_chain(tb, req, int(req['k0']), count), gr.sizeof_float, count)
+    last, size = recipe_chain(tb, req, int(req['k0']), count)
+    finish(tb, last, size, count)
 
 
 OPS = {'ping': op_ping, 'tone': op_tone, 'tuner': op_tuner, 'fm': op_fm, 'stereo': op_stereo,
-       'cw': op_cw}
+       'recipe': op_recipe}
 
 
 def main():

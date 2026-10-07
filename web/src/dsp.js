@@ -547,13 +547,32 @@ export function cwBeat(iq, count, sampleRate, offsetHz, pitchHz, startIndex = 0)
  * Without it every hertz of the channel reaches the speaker and the decoder along with the
  * beat: from a 20 kHz box, which is what a finger draws on a 500 kHz spectrum, the keying is
  * under ten times its own bandwidth of noise and MORSE_CW decodes nothing. A receiver's CW
- * filter is 250 to 500 Hz for that reason. The transition is half the width, so the filter is
- * as short as that allows: about 13 ms at 20 kS/s.
+ * filter is 250 to 500 Hz for that reason. The design is the CW recipe's own
+ * (recipes/cw.grc): GNU Radio's `firdes.low_pass` with a Hann window, transition half the
+ * width, so both engines filter with the same taps.
  */
 export function cwTaps(fs, widthHz) {
   if (!(widthHz > 0) || widthHz >= fs / 2) return null;
-  const n = Math.ceil((3.3 * fs) / (widthHz / 2)) | 1;
-  return lowPassTaps(n, widthHz / 2, fs);
+  return firdesLowPass(1, fs, widthHz / 2, widthHz / 2);
+}
+
+/**
+ * GNU Radio's `firdes.low_pass(gain, fs, cutoff, transition, window.WIN_HANN)`, tap for tap:
+ * the length from the window's 44 dB of attenuation, a windowed sinc, normalized to `gain` at DC.
+ */
+export function firdesLowPass(gain, fs, cutoffHz, transitionHz) {
+  let n = Math.floor((44 * fs) / (22 * transitionHz));
+  if ((n & 1) === 0) n++;
+  const M = (n - 1) / 2, w0 = (2 * Math.PI * cutoffHz) / fs;
+  const taps = new Float32Array(n);
+  for (let k = -M; k <= M; k++) {
+    const win = 0.5 - 0.5 * Math.cos((2 * Math.PI * (k + M)) / (n - 1));
+    taps[k + M] = (k === 0 ? w0 / Math.PI : Math.sin(k * w0) / (k * Math.PI)) * win;
+  }
+  let dc = taps[M];
+  for (let k = 1; k <= M; k++) dc += 2 * taps[k + M];
+  for (let i = 0; i < n; i++) taps[i] *= gain / dc;
+  return taps;
 }
 
 /** A CW demod's filter taps. A node saved before it had a filter gets the default one. */

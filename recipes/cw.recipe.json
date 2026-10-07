@@ -1,0 +1,17 @@
+{
+  "name": "CW (Morse)",
+  "grc": "cw.grc",
+  "block": "sdrflex_cw",
+  "in": "iq",
+  "out": "real",
+  "node": "core.cw",
+  "params": {
+    "samp_rate": { "from": "input sample rate" },
+    "offset": { "param": "offsetHz", "derived": "strongest-carrier" },
+    "pitch": { "param": "pitchHz" },
+    "width": { "param": "filterHz" },
+    "gain": { "param": "gain" },
+    "start_index": { "from": "first input sample" }
+  },
+  "history": "history"
+}

@@ -223,3 +223,16 @@ engine reads a radio's ring the way it reads a file:
 The spike's 220 ms retune outlier did not reappear in the engine; that spike measured a level
 meter on a throttled flowgraph, which no longer exists here. Unit suite 536 pass (1 needs
 decoders installed); full image 578 pass, 0 fail.
+
+**After step 4: the synthetic scene, and stale prefills, 2026-10-07.** With no capture open the
+scene was computed in JS, so GNU Radio did nothing, and a dropped tuner's waterfall prefill
+queued batches that ran side by side and starved each other (up to 54 s; a 1.3 s stall). The
+server now records the scene's first 60 s at startup on a worker thread and reads it like a
+capture, and a newer prefill for a view stops older ones. Worst stall 0.18 s.
+
+**CW, the first recipe (ADR-0043), 2026-10-07.** `recipes/cw.grc`, compiled by `grcc` in the
+worker and run on the tuner; the JS demod mirrors it tap for tap. Gates: a carrier in a 20 kHz
+noisy channel lands on the pitch, noise away from it 30 dB down; GNU Radio and JS agree to 1e-3 of
+peak across block seams; the JS taps equal `firdes.low_pass` to 1e-7; the signal-ID Morse decodes
+through multimon-ng from 1, 2, 5 and 20 kHz boxes (20 kHz decoded nothing before).
+
