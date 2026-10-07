@@ -812,6 +812,28 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   background:var(--accent); padding:.03rem .26rem; border-radius:2px;
 }
 .marker:hover span { background:var(--accent); }
+.marker { touch-action:none; }
+.marker.dragging { background:var(--accent-lo); }
+/* The band's edges, grabbed to resize it. Wider than they look and centered on the edge,
+   because a 1px border is not something a finger can find. */
+.marker .mh {
+  position:absolute; top:0; bottom:0; width:22px; cursor:ew-resize;
+}
+.marker .mh[data-edge="l"] { left:-11px; }
+.marker .mh[data-edge="r"] { right:-11px; }
+/* Too narrow for two straddling handles and a middle: the handles move outside the band,
+   so the middle is still there to grab. */
+.marker.narrow .mh[data-edge="l"] { left:-22px; }
+.marker.narrow .mh[data-edge="r"] { right:-22px; }
+/* The grip sits near the top, on the spectrum, where the eye already is; the whole edge is
+   still the handle. */
+.marker .mh::after {
+  content:""; position:absolute; top:34px; left:9px; width:4px; height:22px;
+  border-radius:2px; background:var(--accent-mid);
+}
+.marker.narrow .mh[data-edge="l"]::after { left:16px; }
+.marker.narrow .mh[data-edge="r"]::after { left:2px; }
+.marker:hover .mh::after, .marker.dragging .mh::after { background:var(--accent); }
 
 /* A frequency a demod is set to, on the spectrum it is about (cueMarks): a line you can
    drag onto the spike it should sit on. Dashed while the app chose it, solid once you
@@ -1000,6 +1022,15 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   margin-top:.4rem; font-family:var(--mono); font-size:.86rem; color:var(--bright);
   font-variant-numeric:tabular-nums; text-align:center;
 }
+.popval:has(.popin) { display:flex; align-items:center; justify-content:center; gap:.4rem; }
+.popin {
+  width:9.5em; box-sizing:border-box; text-align:right;
+  font:inherit; font-family:var(--mono); font-size:.86rem; font-variant-numeric:tabular-nums;
+  color:var(--bright); background:var(--sunken); caret-color:var(--accent);
+  border:1px solid var(--rule); border-radius:6px; padding:.3rem .45rem;
+}
+.popin:focus { outline:none; border-color:var(--accent); }
+.popval .popin + span { color:var(--dim); font-size:.74rem; }
 .popnote { margin-top:.45rem; font-size:.66rem; color:var(--dim); line-height:1.45; }
 
 .pill.more { border-left-color:var(--rule); color:var(--dim); gap:.25rem; padding:.28rem .5rem; }
