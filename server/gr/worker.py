@@ -38,6 +38,8 @@ import tempfile
 from gnuradio import analog, blocks, fft, filter as grfilter, gr
 from gnuradio.filter import firdes
 
+import recipes
+
 DATA_FD = int(os.environ.get('SDRFLEX_GR_DATA_FD', '3'))
 # Which way round the real part of the squared pilot reference is, against dsp.js's `phase`;
 # held to it by web/test/grstereo.test.mjs.
@@ -304,23 +306,23 @@ def op_stereo(req):
     finish(tb, drop, gr.sizeof_float, 2 * count)
 
 
-RECIPES = os.environ.get('SDRFLEX_RECIPES') or os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), '..', '..', 'recipes')
 _recipes = {}
 
 
 def recipe(name):
-    """A recipe's hier block class and its sidecar, compiled from its .grc by GNU Radio's own
-    grcc. A recipe is a file GRC opens too; this is the same compile GRC does."""
+    """A recipe's hier block class and its description (recipes.py), compiled from its .grc
+    by GNU Radio's own grcc: the same compile GRC does, with SDR Flex's recipe block on the
+    block path so its metadata block is known to it."""
     if name in _recipes:
         return _recipes[name]
     if not name.replace('_', '').isalnum():
         raise ValueError(f'no recipe called {name!r}')
-    with open(os.path.join(RECIPES, f'{name}.recipe.json')) as f:
-        side = json.load(f)
+    grc = os.path.join(recipes.RECIPES, f'{name}.grc')
+    side = recipes.describe(grc)
+    if side['kind'] != 'node':
+        raise ValueError(f'{name} expands into a chain of nodes; it is not run as one block')
     # Compiled once per version of the file, into a cache every worker and session shares:
     # grcc takes most of a second, and a session has several workers.
-    grc = os.path.join(RECIPES, side['grc'])
     with open(grc, 'rb') as f:
         digest = hashlib.sha256(f.read()).hexdigest()[:16]
     cache = os.path.join(tempfile.gettempdir(), 'sdrflex-recipes')
@@ -328,8 +330,11 @@ def recipe(name):
     out = os.path.join(cache, f'{name}-{digest}')
     if not os.path.exists(os.path.join(out, side['block'] + '.py')):
         tmp = tempfile.mkdtemp(prefix=f'{name}-', dir=cache)
-        # grcc keeps its preferences under $HOME, which a container's user may not be able to write.
-        done = subprocess.run(['grcc', '-o', tmp, grc], capture_output=True, text=True, env={**os.environ, 'HOME': tmp})
+        # grcc keeps its preferences under $HOME, which a container's user may not be able to
+        # write; and it has to be able to find the recipe block.
+        path = os.pathsep.join(filter(None, [recipes.GRC_BLOCKS, os.environ.get('GRC_BLOCKS_PATH')]))
+        done = subprocess.run(['grcc', '-o', tmp, grc], capture_output=True, text=True,
+                              env={**os.environ, 'HOME': tmp, 'GRC_BLOCKS_PATH': path})
         if done.returncode:
             raise RuntimeError(f'grcc could not compile {name}: {done.stderr.strip()[-400:]}')
         try:
@@ -346,26 +351,25 @@ def recipe(name):
 def recipe_chain(tb, req, k0, count):
     """Blocks producing a recipe's outputs k0 .. k0+count-1 on the tuner; returns the last block.
 
-    The sidecar says which of the block's parameters SDR Flex fills from the stream rather than
-    from the node: the input's sample rate, and the capture sample its first input is, which a
-    recipe's mixers reference their phase to so blocks join without a click. A recipe that
-    filters names a variable holding how many inputs come before its first whole output; the
-    tuner is read from that much earlier and those outputs are dropped.
+    Two of a recipe's parameters are filled from the stream rather than from the node: the
+    input's sample rate (`samp_rate`), and the capture sample its first input is
+    (`start_index`), which a recipe's mixers reference their phase to so blocks join without a
+    click. A recipe that filters names a variable holding how many inputs come before its first
+    whole output; the tuner is read from that much earlier and those outputs are dropped.
     """
     cls, side = recipe(req['recipe'])
     fs = float(req['rate']) / int(req['decim'])
-    args, start_param = dict(req.get('args', {})), None
-    for pname, how in side['params'].items():
-        if how.get('from') == 'input sample rate':
-            args[pname] = fs
-        elif how.get('from') == 'first input sample':
-            start_param, args[pname] = pname, 0
+    args = {k: v for k, v in dict(req.get('args', {})).items() if k in side['params']}
+    if 'samp_rate' in side['params']:
+        args['samp_rate'] = fs
+    if 'start_index' in side['params']:
+        args['start_index'] = 0
     blk = cls(**args)
-    h = int(getattr(blk, 'get_' + side['history'])()) if side.get('history') else 0
-    if start_param:
-        getattr(blk, 'set_' + start_param)(k0 - h)
+    h = int(getattr(blk, 'get_' + side['history'])()) if side['history'] else 0
+    if 'start_index' in side['params']:
+        blk.set_start_index(k0 - h)
     tuned = tuner_chain(tb, req, k0 - h, count + h)
-    size = gr.sizeof_float if side['out'] == 'real' else COMPLEX
+    size = COMPLEX if side['output'] == 'iq' else gr.sizeof_float
     drop = blocks.skiphead(size, h)
     tb.connect(tuned, blk, drop)
     return drop, size

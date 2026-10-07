@@ -26,14 +26,24 @@ Flex opens in GRC on a desktop, and a hier block built in GRC opens in SDR Flex.
 on-ramp the plugin guide asked for ("from prototyped in GRC to a first-class operation"), and it
 costs no format of our own.
 
-A recipe carries a small sidecar for what GRC has no place for:
+What GRC has no place for is in the recipe itself, in an **SDR Flex recipe block**
+(`grc/sdrflex_recipe.block.yml`, 2026-10-07; this replaced a JSON sidecar beside each `.grc`).
+It is a block defined by one YAML file, with no ports and no code: GRC draws it, gives it a
+form and checks its fields, and the program GRC generates contains nothing for it. Its fields:
 
-- **`in` and `out` as semantic stream types** (ADR-0006), so the palette offers it where it fits.
-- **Which exposed parameters are derived**, and by which estimator, so the "none" and "a few"
-  steps work. A parameter not listed is the person's.
-- **Placement rules** for a tuner inside it: relative to the node it lands on, never an absolute
-  frequency, either at a fixed offset or by a named rule (`strongest-carrier`) the estimator
-  evaluates and explains.
+- **kind:** folds into one node, which runs as this hier block in the worker (CW), or expands
+  into a chain of SDR Flex nodes, one or more per block (WBFM);
+- **input and output as semantic stream types** (ADR-0006): iq, real, stereo, audio;
+- **which parameters are derived**, and by which estimator (`offsetHz=strongest-carrier`); a
+  parameter not listed is the person's;
+- **the history variable**, for a recipe that filters, and **whether it ends in Listen**.
+
+The rest is GRC's own. Parameters are named as SDR Flex's settings are (`offsetHz`,
+`widthHz`), so a recipe's parameter is a node's setting with no mapping; `samp_rate` and
+`start_index` are filled from the stream. Which SDR Flex steps a GNU Radio block is
+(`analog_wfm_rcv_pll` is an FM demod and a stereo decode) is one table in SDR Flex
+(`web/src/recipes.js`), not a file per recipe. Opening a recipe in GRC on a desktop needs the
+one YAML file copied into a GRC blocks folder; without it GRC reports the block as unknown.
 
 ## The palette comes from GNU Radio
 
@@ -103,6 +113,15 @@ Two things differ from the plan above, both on purpose:
 
 From a 20 kHz box, the width a finger draws on a 500 kHz spectrum, the signal-ID capture's Morse
 went from no decode to a clean one; noise away from the pitch is 30 dB down.
+
+## WBFM broadcast, the first chain (2026-10-07)
+
+`recipes/wbfm.grc` is GNU Radio's `analog_wfm_rcv_pll` between an IQ input and left and right
+outputs, with `widthHz` 240 kHz, `deviationHz` 75 kHz and `deemphasisUs` 75 as its parameters.
+Picked from the menu over a drawn box, it builds a 240 kHz channel there, an FM demod and a
+stereo decode given those settings, and Listen; every node carries the recipe, and its tabs
+fold into one, "WBFM broadcast · 3 steps", which opens into the steps when tapped again. It is
+ranked just after `Tune here` in the menu, ahead of any one demodulator.
 
 ## Consequences
 

@@ -1,0 +1,156 @@
+options:
+  parameters:
+    author: SDR Flex
+    category: '[SDR Flex]'
+    description: 'WBFM broadcast: a broadcast FM station demodulated and decoded to left and
+      right, with de-emphasis. In SDR Flex it expands into a chain you can open: a channel
+      widthHz wide, an FM demod at deviationHz, a stereo decode, and Listen.'
+    generate_options: hb
+    hier_block_src_path: '.:'
+    id: sdrflex_wbfm
+    output_language: python
+    title: WBFM broadcast
+  states:
+    coordinate: [8, 8]
+    rotation: 0
+    state: enabled
+
+blocks:
+- name: recipe
+  id: sdrflex_recipe
+  parameters:
+    kind: chain
+    node: ''
+    input: iq
+    output: stereo
+    derived: ''
+    history: ''
+    listen: 'yes'
+    comment: ''
+  states:
+    coordinate: [8, 120]
+    rotation: 0
+    state: enabled
+- name: samp_rate
+  id: parameter
+  parameters:
+    hide: none
+    label: Sample rate
+    short_id: ''
+    type: eng_float
+    value: '250000'
+  states:
+    coordinate: [200, 8]
+    rotation: 0
+    state: enabled
+- name: widthHz
+  id: parameter
+  parameters:
+    comment: 'The channel the station is tuned as: a broadcast station''s sidebands reach
+      past 200 kHz, and a narrower channel costs stereo separation.'
+    hide: none
+    label: Channel width (Hz)
+    short_id: ''
+    type: eng_float
+    value: '240000'
+  states:
+    coordinate: [344, 8]
+    rotation: 0
+    state: enabled
+- name: deviationHz
+  id: parameter
+  parameters:
+    comment: Broadcast FM's peak deviation.
+    hide: none
+    label: Deviation (Hz)
+    short_id: ''
+    type: eng_float
+    value: '75000'
+  states:
+    coordinate: [520, 8]
+    rotation: 0
+    state: enabled
+- name: deemphasisUs
+  id: parameter
+  parameters:
+    comment: 75 in the Americas, 50 most other places.
+    hide: none
+    label: De-emphasis (us)
+    short_id: ''
+    type: eng_float
+    value: '75'
+  states:
+    coordinate: [680, 8]
+    rotation: 0
+    state: enabled
+- name: audio_decim
+  id: variable
+  parameters:
+    comment: ''
+    value: max(1, int(samp_rate // 48000))
+  states:
+    coordinate: [200, 120]
+    rotation: 0
+    state: enabled
+- name: pad_source_0
+  id: pad_source
+  parameters:
+    comment: ''
+    label: in
+    num_streams: '1'
+    optional: 'False'
+    type: complex
+    vlen: '1'
+  states:
+    coordinate: [8, 232]
+    rotation: 0
+    state: enabled
+- name: analog_wfm_rcv_pll_0
+  id: analog_wfm_rcv_pll
+  parameters:
+    affinity: ''
+    alias: ''
+    audio_decimation: audio_decim
+    comment: ''
+    deemph_tau: deemphasisUs * 1e-6
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    quad_rate: samp_rate
+  states:
+    coordinate: [200, 216]
+    rotation: 0
+    state: enabled
+- name: pad_sink_0
+  id: pad_sink
+  parameters:
+    comment: ''
+    label: left
+    num_streams: '1'
+    optional: 'False'
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [480, 200]
+    rotation: 0
+    state: enabled
+- name: pad_sink_1
+  id: pad_sink
+  parameters:
+    comment: ''
+    label: right
+    num_streams: '1'
+    optional: 'False'
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [480, 264]
+    rotation: 0
+    state: enabled
+
+connections:
+- [pad_source_0, '0', analog_wfm_rcv_pll_0, '0']
+- [analog_wfm_rcv_pll_0, '0', pad_sink_0, '0']
+- [analog_wfm_rcv_pll_0, '1', pad_sink_1, '0']
+
+metadata:
+  file_format: 1

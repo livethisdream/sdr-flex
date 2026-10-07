@@ -2,6 +2,7 @@
 // contextual menu on drag-release, cell strip. The engine behind it is the mock
 // (ADR-0021) — the client cannot tell, which is the point.
 
+import { chainOf, settingsFor, RECIPE_RANK } from './recipes.js';
 import { dragBand } from './band.js';
 import { MockEngine, OPS, LATENCY, demodsFor, cleanName } from './engine.js';
 import { RemoteEngine } from './remote.js';
@@ -821,25 +822,53 @@ class App {
     const key = this.tabKey();
     if (key !== 'spectrum' && key !== 'flow' && !blocks.some((b) => b.id === key)) this.setTab('spectrum');
 
+    // A recipe's steps fold into one tab with the recipe's name (ADR-0043): the recipe as one
+    // thing, the "a few knobs" step. Tapping it shows what it makes; tapping it again while
+    // there opens it into its steps, each a tab of its own.
+    if (!this._unfolded) this._unfolded = new Set();
+    const folded = [];
+    for (const b of blocks) {
+      const g = b.recipe && b.recipe.group;
+      const last = folded[folded.length - 1];
+      if (g && !this._unfolded.has(g) && last && last.group === g) last.nodes.push(b);
+      else folded.push(g && !this._unfolded.has(g) ? { group: g, title: b.recipe.title, nodes: [b] } : { node: b });
+    }
     const items = [{ k: 'spectrum', label: 'Spectrum' }]
-      .concat(blocks.map((b) => ({ k: b.id, label: this.tag(b), kind: b.out.kind, del: b.id, node: b,
+      .concat(folded.map((f) => {
+        if (!f.group || f.nodes.length < 2) return this.tabItem(f.node || f.nodes[0]);
+        // What the recipe makes: its last step that is not a speaker.
+        const show = [...f.nodes].reverse().find((n) => n.out.kind !== 'audio') || f.nodes[f.nodes.length - 1];
+        const here = f.nodes.some((n) => n.id === key);
+        return { k: here ? key : show.id, label: f.title, kind: show.out.kind, del: f.nodes[0].id, node: show,
+                 recipe: f.group, steps: f.nodes.length,
+                 live: f.nodes.some((n) => n.out.kind === 'audio' && this.mixer.has(n.id)) };
+      }))
+      .concat([{ k: 'flow', label: 'Flow' }]);
+    this._renderTabItems(items);
+  }
+
+  /** One block's tab. */
+  tabItem(b) {
+    return { k: b.id, label: this.tag(b), kind: b.out.kind, del: b.id, node: b,
                                    live: b.out.kind === 'audio' && this.mixer.has(b.id),
                                    // ADR-0013 requires a node you cannot see inside to
                                    // look different from one you can. `opaque` is set
                                    // by the engine when the work happens in somebody
                                    // else's program.
-                                   ext: !!b.opaque || !!b.plugin || !!(OPS[b.op] && OPS[b.op].external) })))
-      .concat([{ k: 'flow', label: 'Flow' }]);
+                                   ext: !!b.opaque || !!b.plugin || !!(OPS[b.op] && OPS[b.op].external) };
+  }
 
+  _renderTabItems(items) {
     const el = $('#tabs');
     el.innerHTML = items.map((it) => {
       if (it.node && this.renaming && this.renaming.id === it.node.id) {
         return this.renameField(it.node, 'tab on naming');
       }
-      return `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}${it.live ? ' live' : ''}" data-k="${it.k}"` +
+      return `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}${it.live ? ' live' : ''}${it.recipe ? ' recipe' : ''}" data-k="${it.k}"` +
+      (it.recipe ? ` data-recipe="${it.recipe}"` : '') +
       (it.node ? ` data-menu="${it.node.id}" title="${attr(this.titleOf(it.node))}"` : '') + '>' +
       `${it.live ? '<span class="spk">\u{1F508}</span>' : ''}` +
-      `${it.label}${it.kind ? `<span class="tk">${it.kind}</span>` : ''}` +
+      `${it.label}${it.steps ? `<span class="tk">${it.steps} steps</span>` : it.kind ? `<span class="tk">${it.kind}</span>` : ''}` +
       `${it.live ? '<i class="alvl"></i>' : ''}` +
       (it.del && it.k === this.tabKey()
         ? `<i class="x" data-del="${it.del}" role="button" tabindex="0" title="remove ${attr(it.label)} and everything after it">✕</i>` : '') +
@@ -856,6 +885,8 @@ class App {
     for (const b of el.querySelectorAll('.tab[data-k]')) {
       b.addEventListener('click', () => {
         this.clearSelection();
+        // A folded recipe you are already in opens into its steps.
+        if (b.dataset.recipe && b.classList.contains('on')) this._unfolded.add(b.dataset.recipe);
         this.setTab(b.dataset.k);
         this.metrics.interaction();
         this.refresh();
@@ -1732,8 +1763,19 @@ class App {
         ? [{ id: '__identify', name: 'Identify', group: '', lead: true, key: '?',
              hint: 'try every decoder that could read this stream' }].concat(shown)
         : shown;
-      this.menu.open(x, y, rows, (opId) => {
+      // Recipes that expand into a chain, where their input fits (ADR-0043). A recipe that
+      // folds into one node is already in the list as that node (CW). Ranked just after
+      // `Tune here` and ahead of any one demodulator, by the rule the menu ranks by: a recipe
+      // takes the signal further than any one step — a box over a station to stereo in the
+      // ears is one tap.
+      const here = this.node();
+      const recipes = (this.engine.recipes || [])
+        .filter((r) => r.kind === 'chain' && r.input === here.out.kind)
+        .map((r) => ({ id: `__recipe:${r.name}`, name: r.title, group: 'Recipes', rank: RECIPE_RANK,
+                       hint: r.description.split(':')[0] || r.title }));
+      this.menu.open(x, y, rows.concat(recipes), (opId) => {
         if (opId === '__identify') { this.openIdentify(x, y); return; }
+        if (opId.startsWith('__recipe:')) { this.applyRecipe(opId.slice(9), selection); return; }
         this.applyOp(opId, selection);
       });
     });
@@ -1746,6 +1788,62 @@ class App {
    * built a node its own way would be a second implementation of the only thing this
    * application does, and the two would disagree within a month.
    */
+  /**
+   * A chain recipe, built: a channel at the recipe's own width where one was drawn, then a node
+   * per step, each given the recipe's settings of the same name, then Listen if it ends in one.
+   * Every node carries the recipe and this application of it, so its tabs fold together.
+   */
+  async applyRecipe(name, selection) {
+    const r = (this.engine.recipes || []).find((x) => x.name === name);
+    if (!r) return;
+    let ops;
+    try { ops = chainOf(r); } catch (err) { this.notify(err.message, 8000); return; }
+    const tag = { name: r.name, title: r.title, group: `${r.name}-${Date.now().toString(36)}` };
+    const settle = async (n) => {
+      for (const [k, v] of Object.entries(settingsFor(r, n))) await this.engine.setParam(n.id, k, v, 'manual');
+    };
+    try {
+      let parent = this.current, channel = null;
+      const here = this.node();
+      if (r.input === 'iq' && here.out.kind === 'iq') {
+        // Centered where the box was, at the width the recipe asks for, inside the band.
+        const sel = selection || this.defaultSelection();
+        const band = bandOf(here);
+        const w = Math.min(Number(r.params.widthHz && r.params.widthHz.value) || sel.f1 - sel.f0, band.max - band.min);
+        const c = Math.max(band.min + w / 2, Math.min(band.max - w / 2, (sel.f0 + sel.f1) / 2));
+        const t = await this.engine.addNode({ parent, op: 'core.tuner', selection: { ...sel, f0: c - w / 2, f1: c + w / 2 }, recipe: tag });
+        channel = t.id;
+        parent = t.id;
+      }
+      let last = null;
+      for (const op of ops) {
+        const n = await this.engine.addNode({ parent, op, recipe: tag });
+        await settle(this.engine.node(n.id));
+        parent = n.id;
+        last = n.id;
+      }
+      if (r.listen) {
+        const a = await this.engine.addNode({ parent, op: 'core.audio', recipe: tag });
+        const ok = await this.mixer.add(a.id, this.engine.effectiveTime(parent), this.engine.node(a.id).params.volume.value);
+        if (!ok) this.setStageBadge('this browser has no audio output');
+      }
+      this.clearSelection();
+      if (channel) {
+        this.channel = channel;
+        this.current = channel;
+        this.vp(channel);
+        this.resetSpectrum();
+      }
+      this.setTab(last);
+      this._tsCache = null;
+      this.metrics.endOp();
+      this.refresh();
+    } catch (err) {
+      this.notify(`could not build ${r.title}: ${err.message}`, 8000);
+      this.refresh();
+    }
+  }
+
   async applyOp(opId, selection) {
     const sel = selection || this.defaultSelection();
     const node = await this.engine.addNode({ parent: this.current, op: opId, selection: sel });

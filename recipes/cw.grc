@@ -29,7 +29,7 @@ blocks:
     coordinate: [200, 8]
     rotation: 0
     state: enabled
-- name: offset
+- name: offsetHz
   id: parameter
   parameters:
     hide: none
@@ -41,7 +41,7 @@ blocks:
     coordinate: [328, 8]
     rotation: 0
     state: enabled
-- name: pitch
+- name: pitchHz
   id: parameter
   parameters:
     hide: none
@@ -53,7 +53,7 @@ blocks:
     coordinate: [480, 8]
     rotation: 0
     state: enabled
-- name: width
+- name: filterHz
   id: parameter
   parameters:
     hide: none
@@ -89,6 +89,21 @@ blocks:
     coordinate: [888, 8]
     rotation: 0
     state: enabled
+- name: recipe
+  id: sdrflex_recipe
+  parameters:
+    kind: node
+    node: core.cw
+    input: iq
+    output: real
+    derived: offsetHz=strongest-carrier
+    history: history
+    listen: 'no'
+    comment: ''
+  states:
+    coordinate: [8, 320]
+    rotation: 0
+    state: enabled
 - name: imports
   id: import
   parameters:
@@ -100,8 +115,8 @@ blocks:
 - name: taps
   id: variable
   parameters:
-    value: '[1.0] if width <= 0 or width >= samp_rate / 2 else firdes.low_pass(1.0, samp_rate,
-      width / 2, width / 2, window.WIN_HANN)'
+    value: '[1.0] if filterHz <= 0 or filterHz >= samp_rate / 2 else firdes.low_pass(1.0, samp_rate,
+      filterHz / 2, filterHz / 2, window.WIN_HANN)'
   states:
     coordinate: [200, 120]
     rotation: 0
@@ -117,7 +132,7 @@ blocks:
 - name: turn
   id: variable
   parameters:
-    value: cmath.exp(2j * math.pi * math.fmod((pitch - offset) * start_index, samp_rate)
+    value: cmath.exp(2j * math.pi * math.fmod((pitchHz - offsetHz) * start_index, samp_rate)
       / samp_rate)
   states:
     coordinate: [608, 120]
@@ -148,7 +163,7 @@ blocks:
 - name: blocks_rotator_cc_0
   id: blocks_rotator_cc
   parameters:
-    phase_inc: -2 * math.pi * offset / samp_rate
+    phase_inc: -2 * math.pi * offsetHz / samp_rate
     tag_inc_update: 'False'
   states:
     coordinate: [304, 232]
@@ -168,7 +183,7 @@ blocks:
 - name: blocks_rotator_cc_1
   id: blocks_rotator_cc
   parameters:
-    phase_inc: 2 * math.pi * pitch / samp_rate
+    phase_inc: 2 * math.pi * pitchHz / samp_rate
     tag_inc_update: 'False'
   states:
     coordinate: [640, 232]

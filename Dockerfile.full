@@ -309,6 +309,7 @@ WORKDIR /app
 COPY web ./web
 COPY server ./server
 COPY recipes ./recipes
+COPY grc ./grc
 COPY fixtures ./fixtures
 COPY seed-captures.mjs ./
 

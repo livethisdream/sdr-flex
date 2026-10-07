@@ -1,0 +1,68 @@
+# The SDR Flex recipe block (ADR-0043): what SDR Flex needs to know about a recipe that a
+# GRC hier block has no place for. No ports, no samples, nothing at run time: GRC shows it on
+# the canvas, checks its fields, and the generated program contains nothing for it.
+#
+# To open SDR Flex's recipes in GNU Radio Companion on a desktop, copy this file into a GRC
+# blocks folder (~/.local/state/gnuradio/grc/blocks, or any folder on GRC_BLOCKS_PATH).
+id: sdrflex_recipe
+label: SDR Flex recipe
+category: '[SDR Flex]'
+flags: [ show_id, python ]
+
+parameters:
+-   id: kind
+    label: Kind
+    dtype: enum
+    default: node
+    options: [node, chain]
+    option_labels: [Folds into one node, Expands into a chain of nodes]
+-   id: node
+    label: Node it folds into
+    dtype: string
+    default: ''
+    hide: ${ 'none' if kind == 'node' else 'all' }
+-   id: input
+    label: Input
+    dtype: enum
+    default: iq
+    options: [iq, real, audio]
+-   id: output
+    label: Output
+    dtype: enum
+    default: real
+    options: [iq, real, stereo, audio]
+-   id: derived
+    label: Derived settings
+    dtype: string
+    default: ''
+-   id: history
+    label: History variable
+    dtype: string
+    default: ''
+-   id: listen
+    label: Ends in a Listen node
+    dtype: enum
+    default: 'no'
+    options: ['no', 'yes']
+
+templates:
+    imports: ''
+
+documentation: |-
+    Read by SDR Flex, ignored by GNU Radio.
+
+    Kind: a recipe that folds into one node runs as this hier block in SDR Flex's GNU Radio
+    worker, with the node's settings as its parameters; one that expands becomes a chain of
+    SDR Flex nodes, one per block, each with its own view.
+
+    Parameters named like SDR Flex's (offsetHz, widthHz) are the node's settings. Two are
+    filled from the stream rather than by a person: samp_rate, the input's sample rate, and
+    start_index, the capture sample the first input is.
+
+    Derived settings: which of them SDR Flex measures, and how, as name=estimator pairs
+    separated by commas, e.g. offsetHz=strongest-carrier.
+
+    History variable: for a recipe that filters, the variable holding how many inputs come
+    before its first whole output.
+
+file_format: 1

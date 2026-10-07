@@ -25,6 +25,9 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { GrEngine } from './gr/engine.js';
 import { sceneRecording } from './gr/scene.js';
 import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 export const PROTOCOL = 1;
 
@@ -172,6 +175,26 @@ const STREAM_CHUNK = 1 << 16;
 const STREAM_IDLE_MS = 60_000;
 const STREAM_SETTLE_MS = 30;
 
+/**
+ * The recipes on this box (ADR-0043), read once from their .grc files by server/gr/recipes.py:
+ * the files are YAML, and GNU Radio's Python reads YAML already. A box without GNU Radio has
+ * none to offer, which the CW node does not need — it is a node of its own either way.
+ */
+let RECIPES = null;
+function recipeList(log) {
+  if (RECIPES) return RECIPES;
+  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'gr', 'recipes.py');
+  const r = spawnSync(process.env.SDRFLEX_GR_PYTHON || 'python3', [script], { encoding: 'utf8', timeout: 20_000 });
+  try {
+    const got = JSON.parse(r.stdout);
+    for (const e of got.errors) log(`recipe not loaded: ${e}`);
+    RECIPES = got.recipes;
+  } catch {
+    RECIPES = [];
+  }
+  return RECIPES;
+}
+
 export const METHODS = {
   async hello() {
     const table = adapters.list();
@@ -185,7 +208,8 @@ export const METHODS = {
              // sent once, and the client needs it to work out what `Identify` is about
              // to try *before* the first decoder answers — a panel that can only grow
              // as results land reads as "nothing found" for the first second.
-             adapterTable: table };
+             adapterTable: table,
+             recipes: recipeList(this.log) };
   },
 
   async createSession() {
@@ -247,8 +271,8 @@ export const METHODS = {
     return { ops: await this.engine.palette(nodeId) };
   },
 
-  async addNode({ parent, op, selection, at, withNode = null }) {
-    const n = await this.engine.addNode({ parent, op, selection, at, withNode });
+  async addNode({ parent, op, selection, at, withNode = null, recipe = null }) {
+    const n = await this.engine.addNode({ parent, op, selection, at, withNode, recipe });
     return { id: n.id };
   },
 
