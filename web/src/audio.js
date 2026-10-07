@@ -104,7 +104,20 @@ export class AudioMixer {
       // Two channels when the node upstream produces two (ADR-0037). This was
       // `createBuffer(1, …)` for as long as there was nothing that could produce a
       // pair — which is why two Listen blocks made a mixer and never a stereo image.
-      const nch = Math.max(1, Math.min(2, got.channels || 1));
+      let nch = Math.max(1, Math.min(2, got.channels || 1));
+      // What a pair goes to the ears as. Stereo by default; the others put one signal in
+      // both ears — a channel on its own, the sum, or the difference, which is where
+      // anything carried only in the stereo subcarrier is, with the program cancelled out.
+      const mix = (n.params.mix && n.params.mix.value) || 'stereo';
+      if (nch === 2 && mix !== 'stereo') {
+        const m = Math.floor(got.data.length / 2), one = new Float32Array(m);
+        for (let i = 0; i < m; i++) {
+          const l = got.data[2 * i], r = got.data[2 * i + 1];
+          one[i] = mix === 'left' ? l : mix === 'right' ? r : mix === 'difference' ? (l - r) / 2 : (l + r) / 2;
+        }
+        got.data = one;
+        nch = 1;
+      }
       const frames = Math.floor(got.data.length / nch);
       const buf = this.ctx.createBuffer(nch, frames, rate);
       const chans = [];

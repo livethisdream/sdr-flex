@@ -1680,6 +1680,8 @@ export class MockEngine extends Graph {
     } else if (op === 'core.audio') {
       node.params = {
         volume: param(0.5),
+        // How a pair reaches the ears; only offered when there is a pair.
+        mix: param('stereo', 'manual'),
         // off by default: a squelch that arrives closed looks exactly like a
         // broken decoder, and the difference takes a while to work out
         squelch: param(0),
@@ -2556,8 +2558,14 @@ export class MockEngine extends Graph {
     const ch = node.out.channels || 1;
     if (ch === 1 || !which || which === 'sum') return this._detectMono(node, tEnd, count);
     const data = this._detect(node, tEnd, count);
-    const c = Math.min(which === 'right' ? 1 : 0, ch - 1);
     const out = new Float32Array(count);
+    // The difference is what the sum leaves out: on FM stereo, L-R, the signal the
+    // subcarrier carries, with the program common to both channels cancelled.
+    if (which === 'difference' && ch === 2) {
+      for (let i = 0; i < count; i++) out[i] = (data[i * 2] - data[i * 2 + 1]) / 2;
+      return out;
+    }
+    const c = Math.min(which === 'right' ? 1 : 0, ch - 1);
     for (let i = 0; i < count; i++) out[i] = data[i * ch + c];
     return out;
   }

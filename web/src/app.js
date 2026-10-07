@@ -1412,6 +1412,8 @@ class App {
       const live = !n.params.timeMode || n.params.timeMode.value === 'live';
       for (const [key, pr] of Object.entries(n.params)) {
         if (live && (key === 't0' || key === 't1' || key === 'rate')) continue;
+        // A mix is a choice about two channels; above one it is a control for nothing.
+        if (key === 'mix' && ((((this.engine.node(n.parent) || {}).out || {}).channels) || 1) < 2) continue;
         const meta = {
           // Typed in the units they are shown in (`scale`), and kept where they mean something:
           // the center inside the band it was cut from, the width under the tuner's own rate,
@@ -1462,6 +1464,8 @@ class App {
                       fmt: (v) => (Number(v) > 0 ? String(v) : 'off') },
           pitchHz: { label: 'pitch', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2, min: 200, max: 2000, integer: true, type: 'num' },
           volume: { label: 'volume', unit: '', fmt: (v) => (v * 100).toFixed(0) + '%', step: 0.004, min: 0, max: 1, type: 'num' },
+          mix: { label: 'mix', unit: '', type: 'enum', values: ['stereo', 'sum', 'left', 'right', 'difference'], fmt: String,
+                 hint: 'difference is L−R: what only the stereo channel carries, with the program cancelled' },
           squelch: { label: 'squelch', unit: '', fmt: (v) => (v > 0 ? v.toFixed(3) : 'off'), step: 0.0004, min: 0, max: 0.4, type: 'num' },
           gain: { label: 'gain', unit: '×', fmt: (v) => (v < 10 ? v.toFixed(1) : String(Math.round(v))), step: 0.02, min: 0.1, max: 60, type: 'num' },
           // A sync word is typed, not slid to.
@@ -1556,7 +1560,7 @@ class App {
     // has one channel is a control for a decision nobody is making.
     const channelCells = this.channels() > 1
       ? [{ key: 'channel', label: 'channel', unit: '', type: 'enum', value: p.channel,
-           values: ['sum', 'left', 'right'] }]
+           values: ['sum', 'left', 'right', 'difference'] }]
       : [];
     const viewCells = domainCells.concat(channelCells);
 
