@@ -391,6 +391,11 @@ export class RemoteEngine extends Graph {
     return await this.call('runRecordsSpan', { nodeId, t0, t1 });
   }
 
+  /** A decoder fed continuously up to `t` on the server; null if it is not one that can be. */
+  async decodeTo(nodeId, t) {
+    return await this.call('decodeTo', { nodeId, t });
+  }
+
   /** The decoder runs here; only its input crosses the wire, and that is kilobytes. */
   async runPlugin(nodeId) {
     const n = this.node(nodeId);

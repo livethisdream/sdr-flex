@@ -2747,6 +2747,8 @@ class App {
     const n = this.node();
     if (!n || n.out.kind !== 'events' || !n.adapter) return;
     if (this._streamBusy) return;
+    const info = (this.engine.adapters || []).find((a) => a.id === n.adapter);
+    if (info && info.stream && this.engine.decodeTo) return this.streamDecode(n);
     // A whole-capture run already answered this, and its answer covers every block.
     // Appending to it would double what it found; replacing it would throw away more
     // than this can put back. Opening the pane while paused runs the capture; opening
@@ -2805,6 +2807,43 @@ class App {
   }
 
   /**
+   * Decoding as it plays, for a decoder that can be fed continuously.
+   *
+   * There are no blocks: the server keeps one decoder running and feeds it up to the playhead
+   * (`decodeTo`), so nothing is cut where a block used to end. Each answer is what it said since
+   * the last one, and the line it is partway through. A run that starts over — a seek, a change
+   * upstream — says where from, and what an earlier run said from there on is dropped, since it
+   * is about to be said again.
+   */
+  async streamDecode(n) {
+    if (n._records && !n._records.streamed) return;
+    const now = this.engine.effectiveTime(n.id);
+    this._streamBusy = true;
+    let out = null;
+    try {
+      out = await this.engine.decodeTo(n.id, now);
+    } catch (err) {
+      this.notify(`decoding failed: ${err.message}`, 6000);
+    } finally {
+      this._streamBusy = false;
+    }
+    const live = this.engine.node(n.id);
+    if (!live || !out) return;
+    const acc = live._records && live._records.streamed
+      ? live._records : { records: [], note: '', streamed: true, continuous: true };
+    if (acc.from !== out.from) {
+      acc.records = acc.records.filter((r) => r.at < out.from);
+      acc.from = out.from;
+    }
+    acc.records = acc.records.concat(out.records || []);
+    acc.partial = out.partial || '';
+    acc.error = out.error;
+    acc.note = `as it plays, continuously · ${out.note} · decoded to ${out.at.toFixed(1)} s`;
+    live._records = acc;
+    if (this.current === live.id && this.view() === 'Events') this.renderEvents();
+  }
+
+  /**
    * The Events pane.
    *
    * It leads with the count, and that is not decoration. A decoder can return many
@@ -2856,8 +2895,8 @@ class App {
       const extra = Object.entries(rec).filter(([k]) => k !== 'text' && k !== 'at')
         .map(([k, v]) => `<span class="evk">${k}</span> ${v}`).join(' ');
       const when = rec.at != null
-        ? `<span class="evat" title="the ${STREAM_BLOCK_S} s block it came from">${
-            rec.at.toFixed(0)}s</span>` : '';
+        ? `<span class="evat" title="${r.continuous ? 'when it was heard' : `the ${STREAM_BLOCK_S} s block it came from`}">${
+            rec.at.toFixed(r.continuous ? 1 : 0)}s</span>` : '';
       return `<li><i>${i + 1}</i>${when}<span class="evt">${(rec.text ?? JSON.stringify(rec))
         .replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span>${extra}</li>`;
     }).join('');
@@ -2869,7 +2908,9 @@ class App {
           <button class="exgo" id="evrun">Run again</button>
         </div>
         ${r.error ? `<div class="everr">${r.error}</div>` : ''}
-        ${r.records.length ? `<ol class="evlist">${rows}</ol>`
+        ${r.records.length || r.partial ? `<ol class="evlist">${rows}${r.partial
+            ? `<li class="evpartial" title="still arriving"><i>…</i><span class="evt">${r.partial
+              .replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span></li>` : ''}</ol>`
           : streaming || (this.engine.playing && n.adapter)
             ? '<div class="empty">listening — records appear as the playhead crosses them</div>'
             : this.renderNoDecode(r, n)}

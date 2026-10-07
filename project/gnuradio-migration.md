@@ -236,3 +236,15 @@ noisy channel lands on the pitch, noise away from it 30 dB down; GNU Radio and J
 peak across block seams; the JS taps equal `firdes.low_pass` to 1e-7; the signal-ID Morse decodes
 through multimon-ng from 1, 2, 5 and 20 kHz boxes (20 kHz decoded nothing before).
 
+**Decoders fed by GNU Radio, and streamed (ADR-0013), 2026-10-07.** Played, a decoder was fed
+five-second jobs, which cut a Morse character every fifth second; sigid's flag never read
+cleanly on the phone. Now the session keeps one multimon-ng running per node, fed up to the
+playhead through `server/gr/feed.py` (GNU Radio resampler and format conversion, piped straight
+into the program), and every job goes through the same feed. Gates: Morse fed in 0.37 s pieces
+reads exactly as Morse read whole; four AFSK packets fed in 0.1 s pieces are four records, none
+doubled; a tone fed in pieces leaves the feed byte for byte as it does whole; a session streams a
+CW channel, restarts on a seek and stops with its node; through the app, sigid's flag reads
+cleanly as it plays, and the synthetic radio decodes live 0.3 s behind its newest sample. The
+decoder suite passes through the new feed (M17's voice on its short fixture: 0.52 s, against
+0.56 s through the JS resampler).
+

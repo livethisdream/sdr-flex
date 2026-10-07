@@ -116,6 +116,8 @@ export class Session {
     }
     for (const sink of this.sinks.values()) sink.close();
     this.sinks.clear();
+    for (const s of (this.streams || new Map()).values()) s.stream.close();
+    this.streams = null;
     // A radio is a process and a file on disk; a tab going away has to take both with
     // it, or a box accumulates dead dongles and gigabytes of ring nobody is watching.
     if (this.radio) { this.radio.stop(); this.radio = null; }
@@ -140,6 +142,14 @@ export class Session {
       // on its own — so it carries the two numbers that say how far back history now
       // goes. Thirty times a second, for free, the mirror stays honest about a window
       // nothing the client did has changed.
+      // `decodeTo` is asked a few times a second while a decoder is open and cannot change
+      // the graph either, so it does not carry it. It carries a live source's window, as
+      // `frames` does: with the Events pane open nothing asks for frames, and a mirror that
+      // never heard the radio move held the playhead where the pane was opened.
+      if (m === 'decodeTo') {
+        this._send({ id, t: 'ok', v, live: this.engine.isLive() ? this.engine.span() : null });
+        return;
+      }
       this._send(m === 'frames'
         ? { id, t: 'ok', v, live: this.engine.isLive() ? this.engine.span() : null,
             radio: this.radio ? { status: this.radio.status, dropped: this.radio.ring?.dropped || 0 } : null }
@@ -153,8 +163,16 @@ export class Session {
 
 // How long a batch of frames runs before letting other requests in.
 const YIELD_MS = 8;
+// A decoder fed as the capture plays: how far ahead of the feed the playhead may get before
+// the stream starts again from it, how much is fed per read, how long a stream nobody is
+// asking about is kept, and how long a feed waits for what it made the decoder print.
+const STREAM_JUMP_S = 10;
+const STREAM_RUNIN_S = 2;
+const STREAM_CHUNK = 1 << 16;
+const STREAM_IDLE_MS = 60_000;
+const STREAM_SETTLE_MS = 30;
 
-const METHODS = {
+export const METHODS = {
   async hello() {
     const table = adapters.list();
     return { protocol: PROTOCOL, engine: 'node', captures: !!this.library, radios: true,
@@ -240,6 +258,10 @@ const METHODS = {
     const sink = this.sinks.get(id);
     if (sink) { sink.close(); this.sinks.delete(id); }
     await this.engine.removeNode(id);
+    // And a decoder being fed stops with its node, or with any node above it.
+    for (const [nodeId, s] of this.streams || []) {
+      if (!this.engine.node(nodeId)) { s.stream.close(); this.streams.delete(nodeId); }
+    }
     return {};
   },
 
@@ -429,6 +451,66 @@ const METHODS = {
   },
 
   /** One block of it, for a decoder being watched while the capture plays. */
+  /**
+   * Decode up to `t` seconds, continuously (adapters.DecoderStream): what the decoder has said
+   * since the last call, the line it is partway through, and how far it has been fed.
+   *
+   * The stream picks up where the last call left it, so the samples it sees are one unbroken
+   * run. It starts again, a run-in before `t`, when that cannot be true: a seek backwards, a jump forward
+   * too far to feed, or a change to the decoder or anything upstream of it. `from` says where
+   * the current run began, so the client can drop what an earlier run said about the same
+   * stretch rather than show it twice.
+   */
+  async decodeTo({ nodeId, t }) {
+    const e = this.engine, n = e.node(nodeId);
+    const a = n && n.adapter ? adapters.spec(n.adapter) : null;
+    if (!a || !a.stream) return null;
+    const p = e.node(n.parent);
+    if (!p || (p.out.kind !== 'iq' && p.out.kind !== 'real')) return { records: [], error: 'nothing upstream' };
+    if (!this.streams) this.streams = new Map();
+    const now = performance.now();
+    for (const [id, s] of this.streams) {
+      if (now - s.used > STREAM_IDLE_MS) { s.stream.close(); this.streams.delete(id); }
+    }
+    const fs = p.out.sampleRate;
+    const params = {};
+    for (const [k, v] of Object.entries(n.params)) params[k] = v.value;
+    const sig = `${e._chainSig(p)}|${JSON.stringify(params)}`;
+    const kNow = Math.floor(t * fs), kFirst = Math.ceil(e.span()[0] * fs);
+    let s = this.streams.get(nodeId);
+    if (!s || s.sig !== sig || s.stream.closed || kNow < s.k - fs * 0.05 || kNow - s.k > fs * STREAM_JUMP_S) {
+      if (s) s.stream.close();
+      // A little before the playhead: playback that has just started has already moved on by
+      // the time it first asks, and a decoder started mid-character needs one to find its feet.
+      const k = Math.max(kFirst, kNow - Math.round(STREAM_RUNIN_S * fs));
+      s = { sig, k, from: k / fs, busy: false,
+            stream: new adapters.DecoderStream(n.adapter, { kind: p.out.kind, sampleRate: fs, centerHz: p.out.centerHz, params }) };
+      this.streams.set(nodeId, s);
+    }
+    s.used = now;
+    // One feed at a time: a second call while one is feeding reports, and leaves the feeding
+    // to the first.
+    if (!s.busy) {
+      s.busy = true;
+      try {
+        while (s.k < kNow && !s.stream.closed) {
+          const count = Math.min(kNow - s.k, STREAM_CHUNK);
+          // Half a sample past the last one, so the engine's floor lands on it exactly.
+          const tEnd = (s.k + count + 0.5) / fs;
+          if (e.prepare) await e.prepare(p.id, tEnd, count / fs);
+          const data = p.out.kind === 'iq' ? e._readIQ(p, tEnd, count) : e._detectMono(p, tEnd, count);
+          s.k += count;
+          await s.stream.write(data, s.k / fs);
+        }
+      } finally {
+        s.busy = false;
+      }
+      // What those samples made the decoder print arrives a moment after they went in.
+      await new Promise((r) => setTimeout(r, STREAM_SETTLE_MS));
+    }
+    return { ...s.stream.take(), at: s.k / fs, from: s.from };
+  },
+
   async runRecordsSpan({ nodeId, t0, t1 }) {
     const r = await this.engine.runRecordsSpan(nodeId, t0, t1);
     return r || null;

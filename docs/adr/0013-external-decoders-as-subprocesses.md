@@ -94,3 +94,29 @@ decoder's stderr is where it says the useful things, so it needs surfacing when 
 came back and suppressing when something did; and version drift is live from day one —
 the same fixture pins *what this version actually does*, including packet grouping we
 would not have guessed.
+
+## Decoders that stream (2026-10-07)
+
+A decoder is run two ways, and it says which it can take.
+
+**As a job**, as above: a span goes in, stdin closes, records come back. Identify, and a
+decode of the whole capture while paused, run this way, and every decoder can.
+
+**As a stream**, for a decoder that declares `stream: true`: while the capture plays, the
+session keeps one process running per decoder node and feeds it up to the playhead
+(`decodeTo`), so it sees one unbroken run of samples. Fed in five-second jobs instead, a decode
+was cut wherever a job ended: on the signal-ID capture every fifth second lost a Morse
+character, and the flag never read cleanly. A run starts two seconds before the playhead and
+starts again after a seek, a jump it cannot feed, or a change to the decoder or anything above
+it. Records are stamped with the moment of the capture that had just been fed; a line the
+program is still printing is shown as it arrives, and one that never ends (MORSE_CW prints one
+for as long as there is Morse) is broken at a space into records. multimon-ng streams; the
+others stay jobs until each is checked, and whisper and HD Radio stay jobs for good, because
+they need the whole recording before they answer.
+
+**The input is made by GNU Radio either way** (ADR-0044): `server/gr/feed.py` resamples
+(rational where the ratio allows it, polyphase otherwise), levels and converts to the format
+the program asked for, and for a stream it is piped straight into the program's stdin, so the
+resampler's state runs from one feed into the next. The JS resampler is no longer on any
+decoder's path. A decoder that is itself a GNU Radio flowgraph (LoRa) will take the same
+blocks at its own front, in the worker, rather than through a second process.
