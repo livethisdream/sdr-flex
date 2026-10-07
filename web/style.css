@@ -782,8 +782,6 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .dropcard b { color:var(--bright); font-size:.95rem; }
 .dropcard span { color:var(--dim); font-family:var(--mono); font-size:.68rem; }
 
-.hint { position:fixed; left:50%; bottom:170px; transform:translateX(-50%); z-index:30; background:var(--raised); border:1px solid var(--rule); border-radius:4px; padding:.5rem .8rem; font-size:.78rem; color:var(--body); box-shadow:0 14px 34px -14px var(--shadow); transition:opacity .25s ease; }
-.hint.gone { opacity:0; pointer-events:none; }
 
 @media (prefers-reduced-motion: reduce) { * { transition-duration:.001ms !important; } }
 

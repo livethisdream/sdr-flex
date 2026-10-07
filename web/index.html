@@ -119,16 +119,7 @@
 <input type="file" id="file" multiple hidden>
 
 <div class="tip" id="tip" hidden></div>
-<div class="hint" id="hint">Drag a box across the spectrum — the menu opens where you release. Drop an IQ file anywhere to open your own capture.</div>
 
 <script type="module" src="src/app.js"></script>
-<script>
-  // the on-ramp is an empty state, not permanent chrome (law 11)
-  addEventListener('pointerup', function once() {
-    const h = document.getElementById('hint');
-    if (h) h.classList.add('gone');
-    removeEventListener('pointerup', once);
-  });
-</script>
 </body>
 </html>
