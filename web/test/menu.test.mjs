@@ -22,7 +22,7 @@ test('on IQ, Identify leads on its own, then the chain, then a fold', () => {
   const m = arrange([...catalog('iq'), identify]);
   assert.equal(m.lead.id, '__identify');
   assert.deepEqual(m.top.map((o) => o.name),
-    ['Tune here', 'AM demod', 'FM demod', 'SSB demod', 'CW demod', 'De-hop']);
+    ['Tune here', 'AM demod', 'FM demod', 'SSB demod', 'CW (Morse)', 'De-hop']);
   assert.ok(m.folded > 0);
   assert.deepEqual(m.groups, []);
 });

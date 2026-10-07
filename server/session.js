@@ -20,6 +20,11 @@ import { Radio, list as listDrivers } from './radio.js';
 import * as adapters from './adapters.js';
 import { version } from './version.js';
 import { StreamOut } from './streamout.js';
+import { GrPool, PRIORITY } from './gr/pool.js';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { GrEngine } from './gr/engine.js';
+import { sceneRecording } from './gr/scene.js';
+import os from 'node:os';
 
 export const PROTOCOL = 1;
 
@@ -37,7 +42,12 @@ export class Session {
     this.log = log;
     this.ringDir = ringDir;
     this.pluginDir = pluginDir;
-    this.engine = new Engine({ latency: false });
+    // GNU Radio as the engine (ADR-0044), one worker per session (ADR-0003). Opt-in while
+    // the migration is under way; unset, nothing about the session changes.
+    this.gr = process.env.SDRFLEX_ENGINE === 'gnuradio' ? new GrPool({ log }) : null;
+    this.engine = this.gr
+      ? new GrEngine({ latency: false }, this.gr, { scene: sceneRecording(ringDir || os.tmpdir(), { log }) })
+      : new Engine({ latency: false });
     // Somebody else's decoders, offered to the graph. Only the server can know which of
     // them are installed, and only the server can run one (ADR-0013).
     this.engine.adapters = adapters.list();
@@ -50,6 +60,11 @@ export class Session {
     this.radio = null;
     this.sinks = new Map();   // nodeId → StreamOut
     this.closed = false;
+    if (process.env.SDRFLEX_GR_DEBUG) { this._loop = monitorEventLoopDelay({ resolution: 5 }); this._loop.enable(); }
+    if (this.gr) {
+      this.gr.start().then(() => log(`GNU Radio ${this.gr.version} worker up in ${this.gr.startMs.toFixed(0)} ms`),
+                           (err) => log(`GNU Radio worker did not start: ${err.message}`));
+    }
 
     conn.on('message', (buf) => this._onMessage(buf));
     conn.on('close', () => { this.closed = true; this.dispose(); });
@@ -87,8 +102,22 @@ export class Session {
   }
 
   dispose() {
+    if (this._loop) {
+      const h = this._loop, ms = (v) => (v / 1e6).toFixed(1);
+      this.log(`event loop delay: p50 ${ms(h.percentile(50))} ms, p95 ${ms(h.percentile(95))}, p99 ${ms(h.percentile(99))}, max ${ms(h.max)}`);
+      h.disable(); this._loop = null;
+    }
+    if (this.gr) {
+      const st = this.engine.grStats;
+      if (st) this.log(`GNU Radio: ${st.blocks} blocks in ${st.ms.toFixed(0)} ms` +
+        ` (${st.blocks ? (st.ms / st.blocks).toFixed(1) : '-'} ms each), ${st.hits} reads from them, ${st.misses} fell back to JS,` +
+        ` ${st.waits} frame or audio calls waited for a block, ${st.outside} outside the capture`);
+      this.gr.stop(); this.gr = null;
+    }
     for (const sink of this.sinks.values()) sink.close();
     this.sinks.clear();
+    for (const s of (this.streams || new Map()).values()) s.stream.close();
+    this.streams = null;
     // A radio is a process and a file on disk; a tab going away has to take both with
     // it, or a box accumulates dead dongles and gigabytes of ring nobody is watching.
     if (this.radio) { this.radio.stop(); this.radio = null; }
@@ -113,6 +142,14 @@ export class Session {
       // on its own — so it carries the two numbers that say how far back history now
       // goes. Thirty times a second, for free, the mirror stays honest about a window
       // nothing the client did has changed.
+      // `decodeTo` is asked a few times a second while a decoder is open and cannot change
+      // the graph either, so it does not carry it. It carries a live source's window, as
+      // `frames` does: with the Events pane open nothing asks for frames, and a mirror that
+      // never heard the radio move held the playhead where the pane was opened.
+      if (m === 'decodeTo') {
+        this._send({ id, t: 'ok', v, live: this.engine.isLive() ? this.engine.span() : null });
+        return;
+      }
       this._send(m === 'frames'
         ? { id, t: 'ok', v, live: this.engine.isLive() ? this.engine.span() : null,
             radio: this.radio ? { status: this.radio.status, dropped: this.radio.ring?.dropped || 0 } : null }
@@ -124,7 +161,18 @@ export class Session {
   }
 }
 
-const METHODS = {
+// How long a batch of frames runs before letting other requests in.
+const YIELD_MS = 8;
+// A decoder fed as the capture plays: how far ahead of the feed the playhead may get before
+// the stream starts again from it, how much is fed per read, how long a stream nobody is
+// asking about is kept, and how long a feed waits for what it made the decoder print.
+const STREAM_JUMP_S = 10;
+const STREAM_RUNIN_S = 2;
+const STREAM_CHUNK = 1 << 16;
+const STREAM_IDLE_MS = 60_000;
+const STREAM_SETTLE_MS = 30;
+
+export const METHODS = {
   async hello() {
     const table = adapters.list();
     return { protocol: PROTOCOL, engine: 'node', captures: !!this.library, radios: true,
@@ -210,6 +258,10 @@ const METHODS = {
     const sink = this.sinks.get(id);
     if (sink) { sink.close(); this.sinks.delete(id); }
     await this.engine.removeNode(id);
+    // And a decoder being fed stops with its node, or with any node above it.
+    for (const [nodeId, s] of this.streams || []) {
+      if (!this.engine.node(nodeId)) { s.stream.close(); this.streams.delete(nodeId); }
+    }
     return {};
   },
 
@@ -225,6 +277,7 @@ const METHODS = {
       return { rebuilt: true, retuned: true };
     }
     const r = await this.engine.setParam(nodeId, key, value, mode);
+    if (process.env.SDRFLEX_GR_DEBUG) this._lastSet = { nodeId, t: performance.now() };
     return { rebuilt: r.rebuilt };
   },
 
@@ -243,10 +296,54 @@ const METHODS = {
    * arbitrary moments, and asking for those one at a time over a network is two
    * hundred and sixty round trips for what the engine computes in a few milliseconds.
    */
-  async frames({ reqs }) {
-    return { frames: reqs.map(({ nodeId, opts }) => {
-      try { return this.engine.frame(nodeId, opts || {}); } catch { return { kind: 'none' }; }
-    }) };
+  async frames({ reqs, prefill = null, prefillKey = null }) {
+    // A waterfall prefill is several batches sent at once, and a retune starts a new one. The
+    // newest is the one anyone will see: an older one stops where it is and answers the rows it
+    // got to, rather than holding the server for seconds computing rows for a picture that is
+    // already gone. Batches that run side by side otherwise pile up until none finishes.
+    if (prefill != null) {
+      if (!this._prefills) this._prefills = new Map();
+      if (prefill > (this._prefills.get(prefillKey) || 0)) this._prefills.set(prefillKey, prefill);
+    }
+    const stale = () => prefill != null && this._prefills.get(prefillKey) !== prefill;
+    // The GNU Radio engine fetches the blocks these reads will touch first; the reads
+    // themselves are synchronous.
+    const t0 = performance.now();
+    if (this.engine.prepare) {
+      for (const { nodeId, opts, live } of reqs) {
+        if (stale()) return { frames: [] };
+        const at = opts && opts.at != null ? opts.at : this.engine.effectiveTime(nodeId);
+        await this.engine.prepare(nodeId, at, this.engine.frameSpan(nodeId, opts || {}),
+                                  live ? PRIORITY.frame : PRIORITY.read);
+      }
+    }
+    const t1 = performance.now();
+    // A waterfall's prefill asks for 64 rows at once, and computing them in one go held the
+    // server's thread for up to 250 ms — after a retune, the retuned spectrum waited behind
+    // the waterfall refilling its history. So a batch gives way every few milliseconds, and a
+    // live view's request runs in between its rows.
+    const frames = [];
+    let since = performance.now();
+    for (const { nodeId, opts } of reqs) {
+      try { frames.push(this.engine.frame(nodeId, opts || {})); } catch { frames.push({ kind: 'none' }); }
+      if (reqs.length > 1 && performance.now() - since > YIELD_MS) {
+        await new Promise((r) => setImmediate(r));
+        since = performance.now();
+        if (stale()) break;
+      }
+    }
+    if (process.env.SDRFLEX_GR_DEBUG && performance.now() - t1 > 30) {
+      this.log(`slow frame compute ${(performance.now() - t1).toFixed(0)} ms: ${reqs.map(({ nodeId, opts }) => `${this.engine.node(nodeId)?.op}${opts?.domain ? '/' + opts.domain : ''}${opts?.at != null ? '@' + opts.at.toFixed(2) : ''}`).join(', ')}`);
+    }
+    if (this._lastSet && reqs.length === 1 && reqs[0].nodeId === this._lastSet.nodeId && reqs[0].live) {
+      this.log(`retune -> its frame computed, server side: ${(performance.now() - this._lastSet.t).toFixed(1)} ms (request arrived ${(t0 - this._lastSet.t).toFixed(1)} ms after setParam returned)`);
+      this._lastSet = null;
+    }
+    if (process.env.SDRFLEX_GR_DEBUG && reqs.length === 1) {
+      const { nodeId, opts } = reqs[0], n = this.engine.node(nodeId);
+      this.log(`frame ${n ? n.op : '?'}${opts && opts.domain ? '/' + opts.domain : ''}: prepare ${(t1 - t0).toFixed(1)} ms, compute ${(performance.now() - t1).toFixed(1)} ms`);
+    }
+    return { frames };
   },
 
   async readSpan({ nodeId, t0, t1 }, id) {
@@ -354,12 +451,77 @@ const METHODS = {
   },
 
   /** One block of it, for a decoder being watched while the capture plays. */
+  /**
+   * Decode up to `t` seconds, continuously (adapters.DecoderStream): what the decoder has said
+   * since the last call, the line it is partway through, and how far it has been fed.
+   *
+   * The stream picks up where the last call left it, so the samples it sees are one unbroken
+   * run. It starts again, a run-in before `t`, when that cannot be true: a seek backwards, a jump forward
+   * too far to feed, or a change to the decoder or anything upstream of it. `from` says where
+   * the current run began, so the client can drop what an earlier run said about the same
+   * stretch rather than show it twice.
+   */
+  async decodeTo({ nodeId, t }) {
+    const e = this.engine, n = e.node(nodeId);
+    const a = n && n.adapter ? adapters.spec(n.adapter) : null;
+    if (!a || !a.stream) return null;
+    const p = e.node(n.parent);
+    if (!p || (p.out.kind !== 'iq' && p.out.kind !== 'real')) return { records: [], error: 'nothing upstream' };
+    if (!this.streams) this.streams = new Map();
+    const now = performance.now();
+    for (const [id, s] of this.streams) {
+      if (now - s.used > STREAM_IDLE_MS) { s.stream.close(); this.streams.delete(id); }
+    }
+    const fs = p.out.sampleRate;
+    const params = {};
+    for (const [k, v] of Object.entries(n.params)) params[k] = v.value;
+    const sig = `${e._chainSig(p)}|${JSON.stringify(params)}`;
+    const kNow = Math.floor(t * fs), kFirst = Math.ceil(e.span()[0] * fs);
+    let s = this.streams.get(nodeId);
+    if (!s || s.sig !== sig || s.stream.closed || kNow < s.k - fs * 0.05 || kNow - s.k > fs * STREAM_JUMP_S) {
+      if (s) s.stream.close();
+      // A little before the playhead: playback that has just started has already moved on by
+      // the time it first asks, and a decoder started mid-character needs one to find its feet.
+      const k = Math.max(kFirst, kNow - Math.round(STREAM_RUNIN_S * fs));
+      s = { sig, k, from: k / fs, busy: false,
+            stream: new adapters.DecoderStream(n.adapter, { kind: p.out.kind, sampleRate: fs, centerHz: p.out.centerHz, params }) };
+      this.streams.set(nodeId, s);
+    }
+    s.used = now;
+    // One feed at a time: a second call while one is feeding reports, and leaves the feeding
+    // to the first.
+    if (!s.busy) {
+      s.busy = true;
+      try {
+        while (s.k < kNow && !s.stream.closed) {
+          const count = Math.min(kNow - s.k, STREAM_CHUNK);
+          // Half a sample past the last one, so the engine's floor lands on it exactly.
+          const tEnd = (s.k + count + 0.5) / fs;
+          if (e.prepare) await e.prepare(p.id, tEnd, count / fs);
+          const data = p.out.kind === 'iq' ? e._readIQ(p, tEnd, count) : e._detectMono(p, tEnd, count);
+          s.k += count;
+          await s.stream.write(data, s.k / fs);
+        }
+      } finally {
+        s.busy = false;
+      }
+      // What those samples made the decoder print arrives a moment after they went in.
+      await new Promise((r) => setTimeout(r, STREAM_SETTLE_MS));
+    }
+    return { ...s.stream.take(), at: s.k / fs, from: s.from };
+  },
+
   async runRecordsSpan({ nodeId, t0, t1 }) {
     const r = await this.engine.runRecordsSpan(nodeId, t0, t1);
     return r || null;
   },
 
   async readAudio({ nodeId, t0, count }) {
+    if (this.engine.prepare) {
+      const n = this.engine.node(nodeId);
+      const fs = n ? n.out.sampleRate : 0;
+      if (fs) await this.engine.prepare(nodeId, t0 + count / fs, count / fs);
+    }
     return await this.engine.readAudio(nodeId, t0, count);
   },
 };

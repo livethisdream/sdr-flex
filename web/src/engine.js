@@ -9,7 +9,7 @@ import * as dsp from './dsp.js';
 import * as scene from './scene.js';
 import * as plugins from './plugins.js';
 import { plan as identifyPlan, MIN_DECODE_CHARS, textLength, say } from './identify.js';
-import { Graph, inputsOf } from './graph.js';
+import { Graph, inputsOf, LIVE_LAG_S } from './graph.js';
 import { alignment } from './delay.js';
 import * as frames from './frames.js';
 import * as spreading from './codes.js';
@@ -156,8 +156,11 @@ export const OPS = {
   'core.ssb': {
     name: 'SSB demod', group: 'Demodulate', rank: 22, in: 'iq', out: 'real',
   },
+  // The CW recipe (ADR-0043): recipes/cw.grc, a GNU Radio hier block that the GNU Radio engine
+  // runs as it is, folded into this one node with its parameters as the node's. The JS here is
+  // the same filter and mixers, for the in-tab engine and as the fallback (web/test/grcw.test.mjs).
   'core.cw': {
-    name: 'CW demod', group: 'Demodulate', rank: 23, in: 'iq', out: 'real',
+    name: 'CW (Morse)', group: 'Demodulate', rank: 23, in: 'iq', out: 'real',
   },
   // The one operation that takes a real stream and returns a real stream, and the only
   // one that returns two channels (ADR-0037). It is grouped with the demodulators
@@ -443,7 +446,7 @@ const DETECTORS = {
     },
   },
   'core.cw': {
-    label: 'CW demod',
+    label: 'CW (Morse)',
     derive(iq, count, fs) {
       const off = dsp.estimateCarrierOffset(iq, count, fs);
       return {
@@ -456,11 +459,14 @@ const DETECTORS = {
         // where you want to hear it. A preference, not a measurement, so it starts
         // manual — marking it auto would claim evidence that does not exist.
         pitchHz: param(700, 'manual'),
+        // How much of the channel reaches the speaker, around the pitch. A receiver's CW filter.
+        filterHz: param(String(dsp.CW_FILTER_HZ), 'manual'),
         gain: param(4, 'manual'),
       };
     },
     detect(iq, count, fs, params, startIndex = 0) {
-      const a = dsp.cwBeat(iq, count, fs, params.offsetHz.value, params.pitchHz.value, startIndex);
+      const a = dsp.cwDemod(iq, count, fs, params.offsetHz.value, params.pitchHz.value,
+                            dsp.cwTapsOf(params, fs), startIndex);
       const g = params.gain.value || 1;
       for (let i = 0; i < count; i++) a[i] *= g;
       return a;
@@ -679,7 +685,7 @@ export class MockEngine extends Graph {
     // thing still in the buffer". The playhead starts at the live edge; scrubbing back
     // into what the ring already holds is then a deliberate move rather than the
     // state you happen to land in.
-    this.t = radio.durationS;
+    this.t = Math.max(0, radio.durationS - LIVE_LAG_S);
     return root;
   }
 
@@ -1544,7 +1550,10 @@ export class MockEngine extends Graph {
       };
       node.label = 'Gain';
     } else if (op === 'core.real') {
-      node.params = {};
+      // Which half, as GNU Radio has complex_to_real and complex_to_imag. The imaginary part
+      // is not exotic: a coherent demodulation by a reference 90° away lands there, and the
+      // broadcast standard's stereo subcarrier, divided by the squared pilot, is exactly that.
+      node.params = { part: param('real', 'manual') };
       node.out = { kind: 'real', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'To real';
     } else if (op === 'core.symbols') {
@@ -2315,7 +2324,10 @@ export class MockEngine extends Graph {
     const p = this.node(node.parent);
     const fs = node.out.sampleRate;
     if (node.op === 'core.math') return this._readMerged(node, tEnd, count).data;
-    if (node.op === 'core.real') return dsp.realPart(this._readIQ(p, tEnd, count), count);
+    if (node.op === 'core.real') {
+      const iq = this._readIQ(p, tEnd, count);
+      return node.params.part && node.params.part.value === 'imag' ? dsp.imagPart(iq, count) : dsp.realPart(iq, count);
+    }
     if (node.op === 'core.gain') return scaled(this._detect(p, tEnd, count), node.params.gainDb.value);
     if (node.op === 'core.symbols') return this._readSymbols(node, tEnd, count);
     if (node.op === 'core.stereo') {
@@ -2327,6 +2339,13 @@ export class MockEngine extends Graph {
     }
     if (p.out.kind === 'real') {
       return realOp(node.op, this._detectMono(p, tEnd, count), count, fs, node.params).data;
+    }
+    if (node.op === 'core.cw') {
+      // Its filter's history, read too, so the first outputs are made of samples rather
+      // than zeros, and a block agrees with its neighbors wherever it is cut.
+      const taps = dsp.cwTapsOf(node.params, fs), h = taps ? taps.length - 1 : 0;
+      const iq = this._readIQ(p, tEnd, count + h);
+      return demodulate(node.op, iq, count + h, fs, node.params, Math.floor(tEnd * fs) - count - h).data.subarray(h);
     }
     const iq = this._readIQ(p, tEnd, count);
     return demodulate(node.op, iq, count, fs, node.params, Math.floor(tEnd * fs) - count).data;

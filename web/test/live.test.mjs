@@ -3,6 +3,7 @@
 // expires. Uses the synthetic driver, so it needs no hardware and no network.
 
 import test from 'node:test';
+import { LIVE_LAG_S } from '../src/graph.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -79,7 +80,14 @@ test('a radio opens as a source and starts recording', async (t) => {
 
   await settle(e, e.root.id, { bins: 512, window: 'Hann' });
   await pump(e, e.root.id, 600);
-  const f = await settle(e, e.root.id, { bins: 512, window: 'Hann' });
+  // The running app's clock rides LIVE_LAG_S behind the newest sample (graph.js `tick`); this
+  // test lets time pass without ticking, so it puts the playhead where the clock would.
+  e.t = Math.max(0, e.span()[1] - LIVE_LAG_S);
+  // And asks again there, for the same view: the frame cached for these settings is the one
+  // from t = 0, before anything had been recorded.
+  const view = { bins: 512, window: 'Hann' };
+  for (const until = Date.now() + 300; Date.now() < until;) { e.frame(e.root.id, view); await wait(16); }
+  const f = await settle(e, e.root.id, view);
   assert.equal(f.kind, 'spectrum');
   assert.equal(f.data.length, 512);
   assert.ok(Math.max(...f.data) > -60, 'and there is signal in it, not silence');

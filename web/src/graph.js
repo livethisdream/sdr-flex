@@ -35,6 +35,9 @@ export function inputsOf(n) {
   return n.parent ? [n.parent] : [];
 }
 
+// How far behind the newest sample of a radio the playhead rides (see `tick`).
+export const LIVE_LAG_S = 0.3;
+
 export class Graph {
   constructor() {
     this.nodes = new Map();
@@ -334,7 +337,10 @@ export class Graph {
       // the user scrubs back, which is the whole point of recording it.
       if (this.isLive()) {
         const [first, last] = this.span();
-        if (this.t > last) this.t = last;
+        // A little behind the newest sample, not on it: what is drawn at the playhead is then
+        // always whole blocks already on disk, which an engine can compute once and keep, and
+        // which scrubbing back reads identically. The badge calls under 0.35 s "live".
+        if (this.t > last - LIVE_LAG_S) this.t = Math.max(first, last - LIVE_LAG_S);
         // and it cannot sit on a moment that has been overwritten
         if (this.t < first) this.t = first;
       } else if (this.t >= d) {

@@ -870,7 +870,10 @@ export const RDS_GROUP_S = 104 / RDS_BPS;
  *
  * The encoding, and the one relationship that matters: the pilot is a tone at 19 kHz and
  * the L-R subcarrier is at **exactly twice its phase**, not merely at twice its
- * frequency. `theta` is where t = 0 falls and a receiver never learns it, so it is a
+ * frequency. And in the phase the standard fixes (ITU-R BS.450): the subcarrier crosses
+ * zero rising with every zero crossing of the pilot, which is sin(θ) and sin(2θ). This
+ * generator used cosines for both, 90° off, and the decoder it tested was written to match
+ * — so both passed, and a real station decoded as left = right. `theta` is where t = 0 falls and a receiver never learns it, so it is a
  * parameter here on purpose — a decoder that only works at theta = 0 has locked onto an
  * accident of how the test was written.
  *
@@ -903,15 +906,17 @@ export function fmStereoMpx({ rate = 160_000, seconds = 0.4, theta = 0.7,
     if (lift) { const a = lift(L, pl, dt), b = lift(R, pr, dt); pl = L; pr = R; L = a; R = b; }
     const phase = w * t + theta;
     x[i] = audio * ((L + R) / 2)
-         + audio * ((L - R) / 2) * Math.cos(2 * phase)      // twice the pilot's phase
-         + pilot * Math.cos(phase)
+         + audio * ((L - R) / 2) * Math.sin(2 * phase)      // twice the pilot's phase
+         + pilot * Math.sin(phase)
          + (rand() - 0.5) * noise;
     if (differential) {
       const k = Math.floor(t * RDS_BPS);
       if (k < differential.length) {
         const first = differential[k] ? 1 : -1;
         const d = t * RDS_BPS - k < 0.5 ? first : -first;
-        // 57 kHz is the pilot tripled, for the same reason 38 kHz is it doubled.
+        // 57 kHz is the pilot tripled, for the same reason 38 kHz is it doubled; the RDS
+        // standard allows it in phase or in quadrature with that harmonic, and this is the
+        // quadrature one.
         x[i] += rds * d * Math.cos(3 * phase);
       }
     }

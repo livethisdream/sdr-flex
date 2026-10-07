@@ -23,7 +23,7 @@
 // tailnet that is a millisecond. It is the correct behavior for a remote engine and
 // the reason the frame rate holds when the link gets worse.
 
-import { Graph } from './graph.js';
+import { Graph, LIVE_LAG_S } from './graph.js';
 import { encode, decode } from './proto.js';
 import * as plugins from './plugins.js';
 // The one piece of the mock engine a remote node still needs locally: a plugin node
@@ -47,8 +47,10 @@ export class RemoteEngine extends Graph {
     this._live = new Map();        // key → the most recent frame for it
     this._inflight = new Set();    // keys with a request outstanding
     this._pre = new Map();         // key|time → frame, from prefetch
+    this._rows = new Set();        // key|time with a request outstanding
+    this._gen = 0;                 // bumped when the graph changes; older answers are dropped
+    this._prefill = 0;             // which prefill is the newest, for the server to drop older ones
     this._queue = [];              // frame requests waiting for the next flush
-    this._flushing = false;
     this._batching = false;
     this._onStatus = () => {};
   }
@@ -175,7 +177,8 @@ export class RemoteEngine extends Graph {
     this._forget();
     const r = await this.call('openRadio', { kind, tuning });
     this.ended = false;
-    this.t = this.capture ? this.capture.durationS : 0;
+    // A little behind the newest sample, as `tick` keeps it (LIVE_LAG_S).
+    this.t = this.capture ? Math.max(0, this.capture.durationS - LIVE_LAG_S) : 0;
     return r;
   }
 
@@ -388,6 +391,11 @@ export class RemoteEngine extends Graph {
     return await this.call('runRecordsSpan', { nodeId, t0, t1 });
   }
 
+  /** A decoder fed continuously up to `t` on the server; null if it is not one that can be. */
+  async decodeTo(nodeId, t) {
+    return await this.call('decodeTo', { nodeId, t });
+  }
+
   /** The decoder runs here; only its input crosses the wire, and that is kilobytes. */
   async runPlugin(nodeId) {
     const n = this.node(nodeId);
@@ -424,9 +432,12 @@ export class RemoteEngine extends Graph {
 
     const key = frameKey(nodeId, opts);
     if (opts.at != null) {
-      const hit = this._pre.get(`${key}@${opts.at.toFixed(6)}`);
+      const row = `${key}@${opts.at.toFixed(6)}`;
+      const hit = this._pre.get(row);
       if (hit) return hit;
-      this._want(nodeId, opts, opts.at, key);
+      // Asked for every paint until it lands, and asking again each time is how a slow server
+      // got the same row dozens of times over.
+      if (!this._rows.has(row)) { this._rows.add(row); this._want(nodeId, opts, opts.at, key); }
       return { kind: 'pending' };
     }
     if (!this._inflight.has(key)) this._want(nodeId, opts, this.effectiveTime(nodeId), key);
@@ -443,14 +454,21 @@ export class RemoteEngine extends Graph {
   prefetch(nodeId, opts, times) {
     const key = frameKey(nodeId, opts);
     const want = times.filter((t) => !this._pre.has(`${key}@${t.toFixed(6)}`));
+    // A new prefill for the same view makes any older one moot — a retune restarts the
+    // waterfall — so it carries a number and the server stops computing the older ones.
+    const prefill = ++this._prefill, gen = this._gen;
     for (let i = 0; i < want.length; i += PREFETCH_BATCH) {
       const batch = want.slice(i, i + PREFETCH_BATCH);
-      this.call('frames', { reqs: batch.map((at) => ({ nodeId, opts: { ...opts, at } })) })
+      for (const at of batch) this._rows.add(`${key}@${at.toFixed(6)}`);
+      this.call('frames', { reqs: batch.map((at) => ({ nodeId, opts: { ...opts, at } })), prefill, prefillKey: key })
         .then((r) => {
+          if (gen !== this._gen) return;
+          // A stopped prefill answers only the rows it got to.
           r.frames.forEach((f, k) => this._pre.set(`${key}@${batch[k].toFixed(6)}`, f));
           this._trim();
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => { if (gen === this._gen) for (const at of batch) this._rows.delete(`${key}@${at.toFixed(6)}`); });
     }
   }
 
@@ -474,22 +492,38 @@ export class RemoteEngine extends Graph {
   }
 
   _flush() {
-    if (this._flushing || !this._queue.length || !this.ready) return;
+    if (!this._queue.length || !this.ready) return;
     const batch = this._queue;
     this._queue = [];
-    this._flushing = true;
-    this.call('frames', { reqs: batch.map((b) => ({ nodeId: b.nodeId, opts: b.opts })) })
+    // Each live view on its own call, and the rest together. One batch for everything meant a
+    // quick spectrum waited for the slowest view in it: after a retune, the stereo scope's
+    // second of fresh history held the tuner's spectrum back by most of a second. A view
+    // still has one request in flight at a time (`_inflight`), so this does not flood.
+    const groups = batch.filter((b) => b.live).map((b) => [b]);
+    const rows = batch.filter((b) => !b.live);
+    if (rows.length) groups.push(rows);
+    for (const group of groups) this._send(group);
+  }
+
+  _send(group) {
+    // `live` says this is what a view is showing now, not a row being filled in behind it,
+    // which the server cannot tell from the request: every request carries its moment.
+    const gen = this._gen;
+    this.call('frames', { reqs: group.map((b) => ({ nodeId: b.nodeId, opts: b.opts, live: b.live })) })
       .then((r) => {
+        if (gen !== this._gen) return;
         r.frames.forEach((f, i) => {
-          const b = batch[i];
+          const b = group[i];
           if (b.live) this._live.set(b.key, f);
           else this._pre.set(`${b.key}@${b.opts.at.toFixed(6)}`, f);
           this._inflight.delete(b.key);
         });
         this._trim();
       })
-      .catch(() => { for (const b of batch) this._inflight.delete(b.key); })
-      .finally(() => { this._flushing = false; if (this._queue.length) this._flush(); });
+      .catch(() => { if (gen === this._gen) for (const b of group) this._inflight.delete(b.key); })
+      .finally(() => {
+        if (gen === this._gen) for (const b of group) if (!b.live) this._rows.delete(`${b.key}@${b.opts.at.toFixed(6)}`);
+      });
   }
 
   _trim() {
@@ -504,7 +538,9 @@ export class RemoteEngine extends Graph {
     this._live.clear();
     this._pre.clear();
     this._inflight.clear();
+    this._rows.clear();
     this._queue.length = 0;
+    this._gen++;
   }
 }
 

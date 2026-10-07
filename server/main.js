@@ -24,6 +24,7 @@ import * as adapters from './adapters.js';
 import { version, versionLine } from './version.js';
 import { AdapterDir } from './adapterdir.js';
 import { SessionStore, MAX_BYTES } from './sessions.js';
+import { sceneRecording } from './gr/scene.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -235,6 +236,9 @@ export function createServer({ webDir, captureDir, quiet, ringDir, pluginDir,
   const plugins = dir && fs.existsSync(dir) ? new PluginDir(dir) : null;
 
   const sessions = sessionDir ? new SessionStore(sessionDir) : null;
+  // Started now rather than when the first visitor arrives, who would otherwise get the slow
+  // JS scene for the quarter minute it takes.
+  if (process.env.SDRFLEX_ENGINE === 'gnuradio') sceneRecording(ringDir || CONFIG.ringDir, { log });
 
   const server = http.createServer((req, res) => serveStatic(req, res, webDir, sessions));
   // A malformed request or a client that hangs up mid-header is not news, and is

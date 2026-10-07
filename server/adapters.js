@@ -40,6 +40,9 @@ const ANSI = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g');
  */
 export const ADAPTERS = {
   'ext.rtl433': {
+    // Reads its input as it comes and prints a JSON line per packet, so it can be fed as the
+    // capture plays (web/test/decodestream.test.mjs holds it to the answers it gives as a job).
+    stream: true,
     name: 'rtl_433', group: 'Decode', in: 'iq', out: 'events',
     command: 'rtl_433',
     blurb: '250+ ISM device protocols',
@@ -151,6 +154,13 @@ export const ADAPTERS = {
     // nothing; Identify meanwhile ran the sweep list, so the same decoder answered
     // differently depending on who added it. Behind a CW demod there is only one thing
     // it could be reading; anywhere else it starts where Identify would.
+    // It decodes as it reads and prints as it decodes, so it can be fed continuously: a Morse
+    // character or a page is never cut in two by where a block happened to end.
+    stream: true,
+    // MORSE_CW prints one line for as long as there is Morse, so a stream breaks it at a space
+    // into records. Only a decoder that says so: a long JSON line full of spaces from anything
+    // else is one record that has not finished arriving, and cutting it in two loses it.
+    endlessLines: true,
     startWith: (parentOp) => (parentOp === 'core.cw'
       ? { modes: 'MORSE_CW' }
       : ADAPTERS['ext.multimon'].sweep()),
@@ -199,6 +209,8 @@ export const ADAPTERS = {
   },
 
   'ext.dump1090': {
+    // The same: a line per message as it reads, fed as the capture plays.
+    stream: true,
     name: 'dump1090', group: 'Decode', in: 'iq', out: 'events',
     // Three distributions ship this program under three names and none of them is
     // `dump1090`: Debian has dump1090-mutability, FlightAware has dump1090-fa. The
@@ -229,6 +241,8 @@ export const ADAPTERS = {
   },
 
   'ext.direwolf': {
+    // The same: a packet's lines as it reads, fed as the capture plays.
+    stream: true,
     name: 'direwolf', group: 'Decode', in: 'real', out: 'events',
     command: 'direwolf',
     blurb: 'APRS / AX.25 packet radio',
@@ -785,6 +799,8 @@ export const ADAPTERS = {
     title: ['text'],
   },
   'ext.redsea': {
+    // Not streamed: its parser joins groups across the whole output (a name is not believed
+    // until its segments have been seen twice), which line-at-a-time reading would undo.
     name: 'redsea', group: 'Decode', in: 'real', out: 'events',
     command: ['redsea'],
     blurb: 'RDS — station name, radiotext, program type',
@@ -1125,6 +1141,8 @@ export function list() {
         (pm) => (typeof pm.values === 'function' ? { ...pm, values: pm.values() } : pm)),
       sweep: (typeof a.sweep === 'function' ? a.sweep() : a.sweep) || null,
       wants: wants(a, defaults(a)),
+      // Whether it can be fed as the capture plays, one process for the whole run.
+      ...(a.stream ? { stream: true } : {}),
       // The narrowest stream this decoder could possibly read, when it has an opinion.
       ...(a.minRate ? { minRate: a.minRate } : {}),
       // And the stages that have to sit between a demodulated stream and it, for the one
@@ -1169,6 +1187,67 @@ export const FORMATS = ['cu8', 'cs8', 'cs16', 'cf32', 'f32', 's16'];
 const AUDIO_LEVEL = 0.5;
 const AUDIO_QUIET = 0.25;
 
+/**
+ * The gain that brings audio to a working level for a decoder that asks (`wants.level`), or 1.
+ * Measured on the 99.9th percentile rather than the peak, so one spike does not set the level
+ * of the rest.
+ */
+export function levelGain(data, kind, want) {
+  if (kind !== 'real' || !want.level || !data.length) return 1;
+  const step = Math.max(1, Math.floor(data.length / 20_000));
+  const mags = [];
+  for (let i = 0; i < data.length; i += step) mags.push(Math.abs(data[i]));
+  mags.sort((a, b) => a - b);
+  const ref = mags[Math.min(mags.length - 1, Math.floor(mags.length * 0.999))];
+  // Only when it is out of range: too quiet to clear a decoder's fixed thresholds, or
+  // clipping. Audio already at a working level is left exactly as it was, because the
+  // decoders that were passing on it were passing on those exact samples.
+  return ref > 1e-9 && (ref < AUDIO_QUIET || ref > 1) ? AUDIO_LEVEL / ref : 1;
+}
+
+const FEED = path.join(path.dirname(fileURLToPath(import.meta.url)), 'gr', 'feed.py');
+const PYTHON = process.env.SDRFLEX_GR_PYTHON || 'python3';
+
+/** The GNU Radio flowgraph between SDR Flex and a decoder (server/gr/feed.py). */
+function spawnFeed(kind, fromRate, want, gain, { wav = false } = {}) {
+  const spec = { kind, from: fromRate, to: want.rate, format: want.format, gain, wav };
+  return spawn(PYTHON, [FEED, JSON.stringify(spec)], { stdio: ['pipe', 'ignore', 'pipe', 'pipe'] });
+}
+
+/**
+ * A span in the decoder's rate and format, converted by GNU Radio: the polyphase resampler,
+ * the level, the format. What `run` hands a decoder.
+ */
+export function feed(data, kind, fromRate, want) {
+  const note = [];
+  const g = levelGain(data, kind, want);
+  if (Math.abs(fromRate - want.rate) / want.rate > 0.001) {
+    note.push(`resampled ${(fromRate / 1e3).toFixed(1)} → ${(want.rate / 1e3).toFixed(1)} kS/s by GNU Radio`);
+  }
+  if (g !== 1) note.push(`levelled ×${g < 10 ? g.toFixed(2) : g.toFixed(0)}`);
+  note.push(`${want.format} at ${(want.rate / 1e3).toFixed(1)} kS/s`);
+  return new Promise((resolve, reject) => {
+    const p = spawnFeed(kind, fromRate, want, g);
+    const parts = [];
+    let err = '';
+    p.stdio[3].on('data', (b) => parts.push(b));
+    p.stderr.on('data', (b) => { err += b; });
+    p.on('error', (e) => reject(new Error(`GNU Radio could not convert for the decoder: ${e.message}`)));
+    p.on('close', (code) => {
+      if (code) { reject(new Error(`GNU Radio could not convert for the decoder: ${firstLine(err) || `exit ${code}`}`)); return; }
+      let bytes = Buffer.concat(parts);
+      // A whole span is in hand, so the header can carry its real length (see `convert`).
+      if (want.container === 'wav') {
+        bytes = Buffer.concat([wavHeader(bytes.length, want.rate, want.format), bytes]);
+        note.push('in a WAV wrapper');
+      }
+      resolve({ bytes, note: note.join(', ') });
+    });
+    p.stdin.on('error', () => {});
+    p.stdin.end(Buffer.from(data.buffer, data.byteOffset, data.byteLength));
+  });
+}
+
 export function convert(data, kind, fromRate, want) {
   const note = [];
   let out = data;
@@ -1195,24 +1274,12 @@ export function convert(data, kind, fromRate, want) {
   // samples at a sensible level decode cleanly. SSB came out the other way, clipped.
   // The speaker has its own gain; a decoder needed one too. Measured on the 99.9th
   // percentile rather than the peak, so one spike does not set the level of the rest.
-  if (kind === 'real' && want.level && out.length) {
-    const step = Math.max(1, Math.floor(out.length / 20_000));
-    const mags = [];
-    for (let i = 0; i < out.length; i += step) mags.push(Math.abs(out[i]));
-    mags.sort((a, b) => a - b);
-    const ref = mags[Math.min(mags.length - 1, Math.floor(mags.length * 0.999))];
-    // Only when it is out of range: too quiet to clear a decoder's fixed thresholds, or
-    // clipping. Audio already at a working level is left exactly as it was, because the
-    // decoders that were passing on it were passing on those exact samples.
-    if (ref > 1e-9 && (ref < AUDIO_QUIET || ref > 1)) {
-      const g = AUDIO_LEVEL / ref;
-      {
-        const y = new Float32Array(out.length);
-        for (let i = 0; i < out.length; i++) y[i] = out[i] * g;
-        out = y;
-        note.push(`levelled ×${g < 10 ? g.toFixed(2) : g.toFixed(0)}`);
-      }
-    }
+  const g = levelGain(out, kind, want);
+  if (g !== 1) {
+    const y = new Float32Array(out.length);
+    for (let i = 0; i < out.length; i++) y[i] = out[i] * g;
+    out = y;
+    note.push(`levelled ×${g < 10 ? g.toFixed(2) : g.toFixed(0)}`);
   }
 
   let bytes;
@@ -1373,12 +1440,12 @@ export function run(id, { data, kind, sampleRate, centerHz, params = {}, timeout
   }
 
   const need = wants(a, params);
-  let input;
-  try {
-    input = convert(data, kind, sampleRate, need);
-  } catch (e) {
-    return Promise.resolve({ records: [], error: e.message });
-  }
+  return feed(data, kind, sampleRate, need).then(
+    (input) => runOn(a, id, command, input, need, { centerHz, params, timeoutMs }),
+    (e) => ({ records: [], error: e.message }));
+}
+
+function runOn(a, id, command, input, need, { centerHz, params, timeoutMs }) {
 
   // Some of these are configured by file rather than by flag — direwolf will not start
   // without one on a machine with no sound card, which is every machine this runs on.
@@ -1522,4 +1589,158 @@ function complaint(stderr) {
   const lines = String(stderr).split('\n').map((x) => x.replace(/\x1b\[[0-9;]*m/g, '').trim())
     .filter((x) => x && !CHATTER.some((re) => re.test(x)));
   return lines.length ? lines[lines.length - 1] : undefined;
+}
+
+/**
+ * A decoder fed as the capture plays: one GNU Radio feed (server/gr/feed.py) piped straight
+ * into one decoder process, for as long as the playback runs.
+ *
+ * `run` is a job: a span goes in, stdin closes, records come back. Fed block by block as a
+ * capture played, that cut whatever straddled the end of a block — a Morse character, a
+ * page — and the decoder started each block cold. A stream has no blocks: the samples a
+ * decoder sees are one run from where playback started, and the resampler's state carries
+ * across every feed. Records are read as the program prints them and stamped with the moment
+ * of the capture that had just been fed.
+ *
+ * The level, for a decoder that wants one, is measured on the first feed and then held: a gain
+ * that moved with every feed would be an AGC, which is a decision about the signal and not
+ * this one's to make.
+ */
+// How long an unfinished line may get before a stream breaks it into a record, for a decoder
+// whose lines never end (`endlessLines`).
+const SOFT_LINE = 60;
+// How many lines that made no record a stream holds back for the record they may belong to.
+const HELD_LINES = 4;
+
+export class DecoderStream {
+  constructor(id, { kind, sampleRate, centerHz, params = {} }) {
+    this.id = id;
+    this.a = spec(id);
+    this.kind = kind;
+    this.sampleRate = sampleRate;
+    this.centerHz = centerHz;
+    this.params = params;
+    this.fedT = 0;
+    this.pending = [];
+    this.partial = '';
+    this.error = null;
+    this.out = '';
+    this.err = '';
+    this.closed = false;
+  }
+
+  _start(first) {
+    const a = this.a, command = resolve(this.id);
+    if (!a || !command) throw new Error(`${a ? commandNames(a) : this.id} is not installed on this machine`);
+    const need = wants(a, this.params);
+    this.note = `${a.module || command} · fed continuously, ${need.format} at ${(need.rate / 1e3).toFixed(1)} kS/s by GNU Radio`;
+    // A WAV reader is given the streaming header, the one with no length: there is no end yet.
+    this.feed = spawnFeed(this.kind, this.sampleRate, need, levelGain(first, this.kind, need),
+                          { wav: need.container === 'wav' });
+    if (a.files) {
+      this.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdrflex-'));
+      for (const file of a.files({ rate: need.rate, centerHz: this.centerHz, params: this.params })) {
+        fs.writeFileSync(path.join(this.dir, file.name), file.text);
+      }
+    }
+    const args = [
+      ...(a.flowgraphPath ? [a.flowgraphPath] : a.flowgraph ? [path.join(FLOWGRAPHS, a.flowgraph)] : []),
+      ...a.args({ rate: need.rate, centerHz: this.centerHz, params: this.params, dir: this.dir }),
+    ];
+    // Line-buffered where the C library allows it: a program writing into a pipe holds its
+    // output in a 4 kB buffer, and a Morse decode would arrive a screenful at a time.
+    const line = spawnSync('sh', ['-c', 'command -v stdbuf'], { encoding: 'utf8' }).stdout.trim();
+    this.proc = line
+      ? spawn(line, ['-oL', '-eL', command, ...args], { stdio: [this.feed.stdio[3], 'pipe', 'pipe'] })
+      : spawn(command, args, { stdio: [this.feed.stdio[3], 'pipe', 'pipe'] });
+    // The decoder has its own copy of the pipe; this one would only compete with it for reads.
+    this.feed.stdio[3].destroy();
+    const onRecords = () => this._read();
+    this.proc.stdout.on('data', (b) => { if (a.recordsOn !== 'stderr') { this.out += b; onRecords(); } });
+    this.proc.stderr.on('data', (b) => {
+      this.err += b;
+      if (a.recordsOn === 'stderr') onRecords();
+      else if (this.err.length > 8192) this.err = this.err.slice(-4096);   // kept for complaints only
+    });
+    this.proc.on('error', (e) => { this.error = e.message; });
+    this.proc.on('close', () => { this.closed = true; });
+    this.feed.stderr.on('data', (b) => { if (/Error|Traceback/.test(String(b))) this.error = `GNU Radio feed: ${firstLine(String(b))}`; });
+    this.feed.stdin.on('error', () => {});
+  }
+
+  /**
+   * Records the program has finished printing, and the line it is still printing.
+   *
+   * What has been read is dropped from the buffer, so a decoder running for an hour keeps
+   * nothing but its unfinished line. A line that never finishes — MORSE_CW prints one for as
+   * long as there is Morse (`endlessLines`) — is broken at a space once it is long enough, so it
+   * arrives a phrase at a time, each stamped with when it was heard, instead of growing for ever.
+   */
+  _read() {
+    const onErr = this.a.recordsOn === 'stderr';
+    let text = onErr ? this.err : this.out;
+    const meta = { params: this.params };
+    const add = (chunk) => {
+      for (const r of readRecords(this.a, chunk, '', meta).records) this.pending.push({ ...r, at: this.fedT });
+    };
+    const cut = text.lastIndexOf('\n') + 1;
+    if (cut) {
+      // Lines at the end that make no record of their own are held back, because they may be
+      // the first half of one: direwolf prints the audio level on the line before the packet it
+      // belongs to, and multimon an AX.25 header on the line before its payload. Parsed alone,
+      // the packet arrives without them.
+      const lines = text.slice(0, cut).split('\n').slice(0, -1);
+      const count = (ls) => readRecords(this.a, ls.length ? `${ls.join('\n')}\n` : '', '', meta).records.length;
+      const all = count(lines);
+      let keep = lines.length;
+      while (keep > 0 && lines.length - keep < HELD_LINES && count(lines.slice(0, keep - 1)) === all) keep--;
+      add(keep ? `${lines.slice(0, keep).join('\n')}\n` : '');
+      text = lines.slice(keep).map((l) => `${l}\n`).join('') + text.slice(cut);
+    }
+    const u = text.lastIndexOf('\n') + 1;
+    if (this.a.endlessLines && text.length - u > SOFT_LINE) {
+      const sp = text.lastIndexOf(' ');
+      if (sp > u) { add(`${text.slice(u, sp)}\n`); text = text.slice(0, u) + text.slice(sp + 1); }
+    }
+    if (onErr) this.err = text; else this.out = text;
+    // The line still arriving, without any held-back lines in front of it.
+    const unfinished = text.slice(text.lastIndexOf('\n') + 1);
+    this.partial = unfinished.trim() ? (readRecords(this.a, `${unfinished}\n`, '', meta).records[0] || {}).text || '' : '';
+  }
+
+  /** Feed samples that end at `tEnd` seconds into the capture. Resolves once they are taken. */
+  write(data, tEnd) {
+    if (!this.proc) this._start(data);
+    this.fedT = tEnd;
+    if (this.closed) return Promise.resolve();
+    const ok = this.feed.stdin.write(Buffer.from(data.buffer, data.byteOffset, data.byteLength));
+    return ok ? Promise.resolve() : new Promise((r) => this.feed.stdin.once('drain', r));
+  }
+
+  /**
+   * No more samples: the decoder reads to the end, prints what it was holding, and exits. A
+   * decoder that works through its input a buffer at a time keeps the last part of one until
+   * then, so this is how a stream that is finishing — the end of a capture — says everything.
+   */
+  end() {
+    if (!this.proc || this.closed) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.proc.once('close', () => { this._read(); resolve(); });
+      this.feed.stdin.end();
+    });
+  }
+
+  /** What is new since the last call. */
+  take() {
+    const records = this.pending;
+    this.pending = [];
+    return { records, partial: this.partial, error: this.error || undefined, note: this.note };
+  }
+
+  close() {
+    if (this.feed) { try { this.feed.kill('SIGKILL'); } catch { /* gone */ } }
+    if (this.proc) { try { this.proc.kill('SIGKILL'); } catch { /* gone */ } }
+    if (this.dir) { try { fs.rmSync(this.dir, { recursive: true, force: true }); } catch { /* temp */ } }
+    this.closed = true;
+  }
 }

@@ -1338,6 +1338,7 @@ class App {
           symbolUs: { label: 'symbol', unit: 'µs', fmt: (v) => String(Math.round(v)), step: 0.7, min: 20, integer: true, type: 'num' },
           deviationHz: { label: 'deviation', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 12, min: 100, integer: true, type: 'num' },
           sideband: { label: 'sideband', unit: '', type: 'enum', values: ['usb', 'lsb'], fmt: String },
+          part: { label: 'part', unit: '', type: 'enum', values: ['real', 'imag'], fmt: String },
           // `auto` reads the pilot every time it decodes; the other two overrule it.
           decode: { label: 'decode', unit: '', type: 'enum', values: ['auto', 'stereo', 'mono'], fmt: String },
           // Which node the other input comes from. The only control in the tool that
@@ -1360,6 +1361,10 @@ class App {
                           fmt: (v) => (Number(v) > 0 ? String(v) : 'off') },
           bfoHz: { label: 'bfo', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 1.5, min: -3000, max: 3000, integer: true, type: 'num' },
           offsetHz: { label: 'offset', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2.5, integer: true, type: 'num' },
+          // A list rather than a slider: these are the widths a CW receiver offers, and 0 is
+          // the unfiltered beat, which is what this node was before it had a filter.
+          filterHz: { label: 'filter', unit: 'Hz', type: 'enum', values: ['250', '500', '1000', '2400', '0'],
+                      fmt: (v) => (Number(v) > 0 ? String(v) : 'off') },
           pitchHz: { label: 'pitch', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2, min: 200, max: 2000, integer: true, type: 'num' },
           volume: { label: 'volume', unit: '', fmt: (v) => (v * 100).toFixed(0) + '%', step: 0.004, min: 0, max: 1, type: 'num' },
           squelch: { label: 'squelch', unit: '', fmt: (v) => (v > 0 ? v.toFixed(3) : 'off'), step: 0.0004, min: 0, max: 0.4, type: 'num' },
@@ -2742,6 +2747,8 @@ class App {
     const n = this.node();
     if (!n || n.out.kind !== 'events' || !n.adapter) return;
     if (this._streamBusy) return;
+    const info = (this.engine.adapters || []).find((a) => a.id === n.adapter);
+    if (info && info.stream && this.engine.decodeTo) return this.streamDecode(n);
     // A whole-capture run already answered this, and its answer covers every block.
     // Appending to it would double what it found; replacing it would throw away more
     // than this can put back. Opening the pane while paused runs the capture; opening
@@ -2800,6 +2807,43 @@ class App {
   }
 
   /**
+   * Decoding as it plays, for a decoder that can be fed continuously.
+   *
+   * There are no blocks: the server keeps one decoder running and feeds it up to the playhead
+   * (`decodeTo`), so nothing is cut where a block used to end. Each answer is what it said since
+   * the last one, and the line it is partway through. A run that starts over — a seek, a change
+   * upstream — says where from, and what an earlier run said from there on is dropped, since it
+   * is about to be said again.
+   */
+  async streamDecode(n) {
+    if (n._records && !n._records.streamed) return;
+    const now = this.engine.effectiveTime(n.id);
+    this._streamBusy = true;
+    let out = null;
+    try {
+      out = await this.engine.decodeTo(n.id, now);
+    } catch (err) {
+      this.notify(`decoding failed: ${err.message}`, 6000);
+    } finally {
+      this._streamBusy = false;
+    }
+    const live = this.engine.node(n.id);
+    if (!live || !out) return;
+    const acc = live._records && live._records.streamed
+      ? live._records : { records: [], note: '', streamed: true, continuous: true };
+    if (acc.from !== out.from) {
+      acc.records = acc.records.filter((r) => r.at < out.from);
+      acc.from = out.from;
+    }
+    acc.records = acc.records.concat(out.records || []);
+    acc.partial = out.partial || '';
+    acc.error = out.error;
+    acc.note = `as it plays, continuously · ${out.note} · decoded to ${out.at.toFixed(1)} s`;
+    live._records = acc;
+    if (this.current === live.id && this.view() === 'Events') this.renderEvents();
+  }
+
+  /**
    * The Events pane.
    *
    * It leads with the count, and that is not decoration. A decoder can return many
@@ -2844,6 +2888,9 @@ class App {
       this.renderStrip();
     }
     const r = n._records || { records: [] };
+    // The line a streamed decoder is still printing is a record too — for Morse it is the only
+    // one for a while — so it is counted, and said to be unfinished.
+    const total = r.records.length + (r.partial ? 1 : 0);
     const rows = r.records.map((rec, i) => {
       // `at` is the block a streamed record came out of, and it is a fact about the
       // capture rather than a field the decoder returned — so it is drawn as the
@@ -2851,20 +2898,22 @@ class App {
       const extra = Object.entries(rec).filter(([k]) => k !== 'text' && k !== 'at')
         .map(([k, v]) => `<span class="evk">${k}</span> ${v}`).join(' ');
       const when = rec.at != null
-        ? `<span class="evat" title="the ${STREAM_BLOCK_S} s block it came from">${
-            rec.at.toFixed(0)}s</span>` : '';
+        ? `<span class="evat" title="${r.continuous ? 'when it was heard' : `the ${STREAM_BLOCK_S} s block it came from`}">${
+            rec.at.toFixed(r.continuous ? 1 : 0)}s</span>` : '';
       return `<li><i>${i + 1}</i>${when}<span class="evt">${(rec.text ?? JSON.stringify(rec))
         .replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span>${extra}</li>`;
     }).join('');
     el.innerHTML = `
       <div class="evwrap">
         <div class="evhead">
-          <b>${r.records.length} record${r.records.length === 1 ? '' : 's'}</b>
+          <b>${total} record${total === 1 ? '' : 's'}${r.partial ? ', the last still arriving' : ''}</b>
           <span>${r.note || n.label}${r.ms != null ? ` · ${r.ms.toFixed(0)} ms` : ''}</span>
           <button class="exgo" id="evrun">Run again</button>
         </div>
         ${r.error ? `<div class="everr">${r.error}</div>` : ''}
-        ${r.records.length ? `<ol class="evlist">${rows}</ol>`
+        ${r.records.length || r.partial ? `<ol class="evlist">${rows}${r.partial
+            ? `<li class="evpartial" title="still arriving"><i>…</i><span class="evt">${r.partial
+              .replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span></li>` : ''}</ol>`
           : streaming || (this.engine.playing && n.adapter)
             ? '<div class="empty">listening — records appear as the playhead crosses them</div>'
             : this.renderNoDecode(r, n)}

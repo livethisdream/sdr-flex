@@ -43,6 +43,12 @@ ring recording. Static ES modules, no build step, no dependencies on either side
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
 
+**GNU Radio is the engine (ADR-0044), opt-in with `SDRFLEX_ENGINE=gnuradio`.** The tuner,
+FM, stereo and the CW recipe (`recipes/cw.grc`, ADR-0043) run in GNU Radio workers; the
+synthetic scene is recorded once so GNU Radio reads it like a capture; every decoder's input is
+resampled and converted by a GNU Radio flowgraph (`server/gr/feed.py`). Progress, measurements
+and what is left: `project/gnuradio-migration.md`. Unset, the JS engine runs as before.
+
 Working end to end:
 
 - Spectrum and waterfall with a resizable split; selection-driven flowgraph
@@ -1057,6 +1063,12 @@ it" shape is what nearly hid the real bug.
 
 ## Decoding as it plays, as built
 
+**Superseded for the decoders that stream (2026-10-07, ADR-0013).** multimon-ng, rtl_433,
+dump1090 and direwolf are no longer fed five-second blocks while playing: the session keeps one
+process per decoder node and feeds it up to the playhead (`decodeTo`), because a block boundary
+cut a Morse character every fifth second and the signal-ID flag never read cleanly. What follows
+still describes the decoders that stay jobs (redsea, whisper, HD Radio, M17, minimodem, LoRa).
+
 A decoder used to answer once, for the whole capture, when it finished. On a 90 s file
 that is a long wait for a packet that happened at eleven seconds. Now, while the Events
 pane is open and the clock is running, each five-second block of capture is decoded as
@@ -1579,6 +1591,9 @@ filling are tested through the engine and the planner rather than by clicking.
   repo. Not yet decided whether to scrub them.
 - **The `view` group label** on the parameter bar may want a more generic name, since
   its contents change with context.
+- **Where a decoder's records are shown (asked 2026-10-07, not yet answered).** Can a person
+  choose between a decoder's records as a third pane beside spectrum and time, and the Events
+  tab of its own it has now?
 
 ## The chrome is too tall, and it is parked (measured, not built)
 

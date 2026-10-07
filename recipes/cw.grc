@@ -1,0 +1,218 @@
+options:
+  parameters:
+    author: SDR Flex
+    category: '[SDR Flex]'
+    description: 'CW (Morse): the carrier moved to zero, a low-pass of half the CW filter''s
+      width, the carrier moved up to the pitch, the real part. A receiver''s CW filter and
+      beat oscillator, as one hier block. start_index is the capture sample the first input
+      is; history is how many inputs come before the first whole output.'
+    generate_options: hb
+    hier_block_src_path: '.:'
+    id: sdrflex_cw
+    output_language: python
+    title: CW (Morse)
+  states:
+    coordinate: [8, 8]
+    rotation: 0
+    state: enabled
+
+blocks:
+- name: samp_rate
+  id: parameter
+  parameters:
+    hide: none
+    label: Sample rate
+    short_id: ''
+    type: eng_float
+    value: '25000'
+  states:
+    coordinate: [200, 8]
+    rotation: 0
+    state: enabled
+- name: offset
+  id: parameter
+  parameters:
+    hide: none
+    label: Carrier offset (Hz)
+    short_id: ''
+    type: eng_float
+    value: '0'
+  states:
+    coordinate: [328, 8]
+    rotation: 0
+    state: enabled
+- name: pitch
+  id: parameter
+  parameters:
+    hide: none
+    label: Pitch (Hz)
+    short_id: ''
+    type: eng_float
+    value: '700'
+  states:
+    coordinate: [480, 8]
+    rotation: 0
+    state: enabled
+- name: width
+  id: parameter
+  parameters:
+    hide: none
+    label: Filter width (Hz, 0 for none)
+    short_id: ''
+    type: eng_float
+    value: '500'
+  states:
+    coordinate: [608, 8]
+    rotation: 0
+    state: enabled
+- name: gain
+  id: parameter
+  parameters:
+    hide: none
+    label: Gain
+    short_id: ''
+    type: eng_float
+    value: '4'
+  states:
+    coordinate: [760, 8]
+    rotation: 0
+    state: enabled
+- name: start_index
+  id: parameter
+  parameters:
+    hide: part
+    label: Start index
+    short_id: ''
+    type: intx
+    value: '0'
+  states:
+    coordinate: [888, 8]
+    rotation: 0
+    state: enabled
+- name: imports
+  id: import
+  parameters:
+    imports: import cmath, math
+  states:
+    coordinate: [8, 120]
+    rotation: 0
+    state: enabled
+- name: taps
+  id: variable
+  parameters:
+    value: '[1.0] if width <= 0 or width >= samp_rate / 2 else firdes.low_pass(1.0, samp_rate,
+      width / 2, width / 2, window.WIN_HANN)'
+  states:
+    coordinate: [200, 120]
+    rotation: 0
+    state: enabled
+- name: history
+  id: variable
+  parameters:
+    value: len(taps) - 1
+  states:
+    coordinate: [480, 120]
+    rotation: 0
+    state: enabled
+- name: turn
+  id: variable
+  parameters:
+    value: cmath.exp(2j * math.pi * math.fmod((pitch - offset) * start_index, samp_rate)
+      / samp_rate)
+  states:
+    coordinate: [608, 120]
+    rotation: 0
+    state: enabled
+- name: pad_source_0
+  id: pad_source
+  parameters:
+    label: in
+    num_streams: '1'
+    optional: 'False'
+    type: complex
+    vlen: '1'
+  states:
+    coordinate: [8, 232]
+    rotation: 0
+    state: enabled
+- name: blocks_multiply_const_vxx_0
+  id: blocks_multiply_const_vxx
+  parameters:
+    const: turn
+    type: complex
+    vlen: '1'
+  states:
+    coordinate: [136, 232]
+    rotation: 0
+    state: enabled
+- name: blocks_rotator_cc_0
+  id: blocks_rotator_cc
+  parameters:
+    phase_inc: -2 * math.pi * offset / samp_rate
+    tag_inc_update: 'False'
+  states:
+    coordinate: [304, 232]
+    rotation: 0
+    state: enabled
+- name: fir_filter_xxx_0
+  id: fir_filter_xxx
+  parameters:
+    decim: '1'
+    samp_delay: '0'
+    taps: taps
+    type: ccf
+  states:
+    coordinate: [480, 232]
+    rotation: 0
+    state: enabled
+- name: blocks_rotator_cc_1
+  id: blocks_rotator_cc
+  parameters:
+    phase_inc: 2 * math.pi * pitch / samp_rate
+    tag_inc_update: 'False'
+  states:
+    coordinate: [640, 232]
+    rotation: 0
+    state: enabled
+- name: blocks_complex_to_real_0
+  id: blocks_complex_to_real
+  parameters:
+    vlen: '1'
+  states:
+    coordinate: [808, 232]
+    rotation: 0
+    state: enabled
+- name: blocks_multiply_const_vxx_1
+  id: blocks_multiply_const_vxx
+  parameters:
+    const: gain
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [960, 232]
+    rotation: 0
+    state: enabled
+- name: pad_sink_0
+  id: pad_sink
+  parameters:
+    label: out
+    num_streams: '1'
+    optional: 'False'
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [1120, 232]
+    rotation: 0
+    state: enabled
+
+connections:
+- [pad_source_0, '0', blocks_multiply_const_vxx_0, '0']
+- [blocks_multiply_const_vxx_0, '0', blocks_rotator_cc_0, '0']
+- [blocks_rotator_cc_0, '0', fir_filter_xxx_0, '0']
+- [fir_filter_xxx_0, '0', blocks_rotator_cc_1, '0']
+- [blocks_rotator_cc_1, '0', blocks_complex_to_real_0, '0']
+- [blocks_complex_to_real_0, '0', blocks_multiply_const_vxx_1, '0']
+- [blocks_multiply_const_vxx_1, '0', pad_sink_0, '0']
+
+metadata:
+  file_format: 1
