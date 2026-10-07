@@ -2,6 +2,7 @@
 // contextual menu on drag-release, cell strip. The engine behind it is the mock
 // (ADR-0021) — the client cannot tell, which is the point.
 
+import { dragBand } from './band.js';
 import { MockEngine, OPS, LATENCY, demodsFor, cleanName } from './engine.js';
 import { RemoteEngine } from './remote.js';
 import { Waterfall } from './waterfall.js';
@@ -86,6 +87,9 @@ const atPointer = (x, y) => ({
 const attr = (x) => String(x ?? '').replace(/[<>&"']/g, (c) =>
   ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtHz = (hz) => (hz / 1e6).toFixed(4);
+/** The frequencies a node's spectrum covers, as a cell's limits. */
+const bandOf = (p) => (p && p.out && p.out.kind === 'iq'
+  ? { min: p.out.centerHz - p.out.sampleRate / 2, max: p.out.centerHz + p.out.sampleRate / 2 } : {});
 const fmtRate = (r) => (r >= 1e6 ? (r / 1e6).toFixed(3) + ' MS/s' : (r / 1e3).toFixed(1) + ' kS/s');
 
 // The spectrum trace is redrawn every animation frame, but it does not need a
@@ -1033,6 +1037,9 @@ class App {
    * the breadcrumb — and it answers "what did that box I drew become?".
    */
   renderMarkers() {
+    // A band being dragged is the one place its own position is current; redrawing it from the
+    // graph mid-gesture would snap it back and drop the pointer.
+    if (this._bandDrag) return;
     const n = this.node();
     const { lo, hi } = this.viewHz();
     const span = hi - lo;
@@ -1043,13 +1050,14 @@ class App {
       const left = ((k.params.centerHz.value - w / 2 - lo) / span) * 100;
       const width = (w / span) * 100;
       if (left > 100 || left + width < 0) return '';
-      return `<button class="marker" data-id="${k.id}" style="left:${left}%;width:${width}%"
-                title="${this.tag(k)}"><span>${k.letter}</span></button>`;
+      // Too narrow for two straddling handles and a middle: the handles go outside it.
+      const narrow = (width / 100) * host.clientWidth < 44;
+      return `<button class="marker${narrow ? ' narrow' : ''}" data-id="${k.id}" style="left:${left}%;width:${width}%"
+                title="${this.tag(k)} · drag to move, drag an edge to resize, tap to open">` +
+             '<i class="mh" data-edge="l"></i><i class="mh" data-edge="r"></i>' +
+             `<span>${k.letter}</span></button>`;
     }).join('');
-    for (const m of host.querySelectorAll('.marker')) {
-      m.addEventListener('pointerdown', (e) => e.stopPropagation());
-      m.addEventListener('click', (e) => { e.stopPropagation(); this.goChannel(m.dataset.id); });
-    }
+    for (const m of host.querySelectorAll('.marker')) this.wireBand(m);
     for (const c of host.querySelectorAll('.cue')) this.wireCue(c);
   }
 
@@ -1084,6 +1092,86 @@ class App {
   }
 
   /** Dragging a cue line sets its parameter, by hand, to the frequency under it. */
+  /**
+   * A channel's band on its parent's spectrum is the channel's own control: drag the middle to
+   * retune it, an edge to change its width, tap it to open it.
+   *
+   * Both are hot parameters (ADR-0010), so the drag is live (law 5): the band follows the
+   * finger, and the tuner follows the band, one change in flight at a time with the latest
+   * winning, so a slow link drops intermediate positions rather than queueing them. The width
+   * stops at the tuner's output rate, because the decimation was chosen when it was made and a
+   * band wider than its rate would fold the edges back into the middle; the band stays inside
+   * the parent's. A move under a few pixels is a tap.
+   */
+  wireBand(el) {
+    const stage = $('#stage');
+    el.addEventListener('click', (e) => e.stopPropagation());
+    el.addEventListener('pointerdown', (e) => {
+      e.stopPropagation(); e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch { /* not an active pointer */ }
+      const k = this.engine.node(el.dataset.id), n = this.node();
+      if (!k) return;
+      const edge = e.target.dataset && e.target.dataset.edge || 'move';
+      const r = stage.getBoundingClientRect();
+      const { lo, hi } = this.viewHz();
+      const span = hi - lo, x0 = e.clientX;
+      const c0 = k.params.centerHz.value, w0 = k.params.widthHz.value;
+      const bandLo = n.out.centerHz - n.out.sampleRate / 2, bandHi = n.out.centerHz + n.out.sampleRate / 2;
+      const minW = 1000, maxW = Math.max(minW, k.out.sampleRate);
+      let moved = false, c = c0, w = w0;
+      const send = this.coalesce(k.id);
+      this._bandDrag = k.id;
+      el.classList.add('dragging');
+      const move = (ev) => {
+        if (!moved && Math.abs(ev.clientX - x0) < 6) return;
+        moved = true;
+        const d = ((ev.clientX - x0) / r.width) * span;
+        ({ c, w } = dragBand({ edge, c0, w0, d, lo: bandLo, hi: bandHi, minW, maxW }));
+        el.style.left = `${((c - w / 2 - lo) / span) * 100}%`;
+        el.style.width = `${(w / span) * 100}%`;
+        const label = el.querySelector('span');
+        if (label) label.textContent = edge === 'move' ? `${k.letter} ${fmtHz(c)}` : `${k.letter} ${(w / 1e3).toFixed(1)} kHz`;
+        if (edge === 'move') send({ centerHz: c }); else send({ centerHz: c, widthHz: w });
+      };
+      const up = async () => {
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', up);
+        el.removeEventListener('pointercancel', up);
+        el.classList.remove('dragging');
+        if (!moved) { this._bandDrag = null; this.goChannel(k.id); return; }
+        this.metrics.interaction();
+        await send.idle();
+        this._bandDrag = null;
+        this._tsCache = null;
+        this.refresh();
+      };
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+    });
+  }
+
+  /**
+   * Parameter changes to one node from a gesture: one in flight, and the newest replaces any
+   * still waiting. `idle()` resolves once the last of them has landed.
+   */
+  coalesce(nodeId) {
+    let waiting = null, busy = null;
+    const pump = async () => {
+      while (waiting) {
+        const vals = waiting;
+        waiting = null;
+        for (const [key, v] of Object.entries(vals)) {
+          try { await this.engine.setParam(nodeId, key, v, 'manual'); } catch { /* the next one may land */ }
+        }
+      }
+      busy = null;
+    };
+    const send = (vals) => { waiting = { ...(waiting || {}), ...vals }; if (!busy) busy = pump(); };
+    send.idle = () => busy || Promise.resolve();
+    return send;
+  }
+
   wireCue(el) {
     const stage = $('#stage');
     el.addEventListener('pointerdown', (e) => {
@@ -1278,7 +1366,7 @@ class App {
       nodeCells.push(
         live
           ? { key: 'centerHz', label: 'center', unit: 'MHz', type: 'num', value: n.out.centerHz,
-              fmt: fmtHz, step: 2000, min: 0 }
+              fmt: fmtHz, step: 2000, min: 0, scale: 1e6 }
           : { key: 'centerHz', label: 'center', unit: 'MHz', type: 'ro', value: n.out.centerHz, fmt: fmtHz },
         { key: 'sampleRate', label: 'rate', unit: 'kS/s', type: 'ro', value: n.out.sampleRate,
           fmt: (v) => (v / 1e3).toFixed(0) });
@@ -1325,8 +1413,13 @@ class App {
       for (const [key, pr] of Object.entries(n.params)) {
         if (live && (key === 't0' || key === 't1' || key === 'rate')) continue;
         const meta = {
-          centerHz: { label: 'center', unit: 'MHz', fmt: fmtHz, step: 200, type: 'num' },
-          widthHz: { label: 'width', unit: 'kHz', fmt: (v) => (v / 1e3).toFixed(1), step: 200, min: 1000, type: 'num' },
+          // Typed in the units they are shown in (`scale`), and kept where they mean something:
+          // the center inside the band it was cut from, the width under the tuner's own rate,
+          // which was fixed when it was made (a wider band would fold back into itself).
+          centerHz: { label: 'center', unit: 'MHz', fmt: fmtHz, step: 200, type: 'num', scale: 1e6,
+                      ...bandOf(this.engine.node(n.parent)) },
+          widthHz: { label: 'width', unit: 'kHz', fmt: (v) => (v / 1e3).toFixed(1), step: 200, min: 1000,
+                     max: n.out.sampleRate, type: 'num', scale: 1e3 },
           decim: { label: 'decim', unit: '', fmt: (v) => String(v), step: 0.08, min: 1, max: 64, integer: true, type: 'num' },
           taps: { label: 'taps', unit: '', fmt: (v) => String(v), step: 0.4, min: 9, max: 255, integer: true, type: 'num' },
           timeMode: { label: 'window', unit: '', type: 'enum', values: ['live', 'pinned'], fmt: String },

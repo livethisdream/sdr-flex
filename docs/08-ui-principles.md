@@ -398,7 +398,7 @@ things with four lifetimes, and one test assigns every one of them
 
 | Home | What lives there |
 |---|---|
-| **On the object** | dB range (`⟲ auto` by default; drag the color bar to pin it), **zoom and pan** (wheel, pinch, `+`/`-`/`0`), selection bounds, playhead. No chrome at all — the control belongs where its effect is. |
+| **On the object** | dB range (`⟲ auto` by default; drag the color bar to pin it), **zoom and pan** (wheel, pinch, `+`/`-`/`0`), selection bounds, playhead, **a channel's band** on its parent's spectrum (drag the middle to retune, an edge to resize, tap to open; both are hot, so the drag is live). No chrome at all — the control belongs where its effect is. |
 | **The strip** | Node parameters, then the *active view's*, as two labeled groups of cells. Device gain and PPM are node parameters of the source. A `⌄` expands the strip into a temporary panel when a node has many. |
 | **A view tab** | Flow, Plugins, Annotations, Project. Full canvas, zero chrome, reached like any other view. |
 | **A preferences overlay** | Theme, keybindings, plugin paths, disk budget, audio device. A modal is honest here — law 2 governs the analysis loop, and configuring the tool means deliberately stepping out of it. |

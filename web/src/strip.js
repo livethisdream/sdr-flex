@@ -288,7 +288,13 @@ export class Strip {
           <input type="range" min="${lo}" max="${hi}" step="${spec.integer ? 1 : (hi - lo) / 400}" value="${spec.value}">
           <button class="nudge" data-d="1">+</button>
         </div>
-        <div class="popval">${spec.fmt ? spec.fmt(spec.value) : spec.value}${spec.unit ? ' ' + spec.unit : ''}</div>`;
+        ${spec.scale
+          // A frequency is something you often know exactly, and a slider cannot land on
+          // 433.920 MHz. So a cell that says what its unit is worth takes a typed value too,
+          // in that unit; the phone brings up its number pad for it.
+          ? `<div class="popval"><input class="popin" type="text" inputmode="decimal" spellcheck="false"
+                 autocomplete="off" value="${typedValue(spec)}"><span>${spec.unit}</span></div>`
+          : `<div class="popval">${spec.fmt ? spec.fmt(spec.value) : spec.value}${spec.unit ? ' ' + spec.unit : ''}</div>`}`;
     }
 
     this.pop.innerHTML =
@@ -299,6 +305,8 @@ export class Strip {
     const commit = (v) => {
       this.onScrub && this.onScrub(gk, key, v);
       const s = this._find(gk, key) || spec;
+      const typed = this.pop.querySelector('.popin');
+      if (typed) { if (document.activeElement !== typed) typed.value = typedValue({ ...s, value: v }); return; }
       const out = this.pop.querySelector('.popval');
       if (out) out.textContent = (s.fmt ? s.fmt(v) : v) + (s.unit ? ' ' + s.unit : '');
     };
@@ -342,6 +350,23 @@ export class Strip {
       setTimeout(() => { text.focus(); text.select(); }, 0);
     }
     const range = this.pop.querySelector('input[type=range]');
+    const typed = this.pop.querySelector('.popin');
+    if (typed) {
+      // Committed when the person says they are done, Enter or tapping away, not per key:
+      // "4", "43", "433" on the way to 433.92 MHz would retune three times to nonsense.
+      const done = () => {
+        let v = parseFloat(typed.value.replace(',', '.')) * spec.scale;
+        if (!Number.isFinite(v)) { typed.value = typedValue(this._find(gk, key) || spec); return; }
+        if (spec.min != null) v = Math.max(spec.min, v);
+        if (spec.max != null) v = Math.min(spec.max, v);
+        if (spec.integer) v = Math.round(v);
+        commit(v);
+        typed.value = typedValue({ ...spec, value: v });
+        if (range) range.value = v;
+      };
+      typed.addEventListener('change', done);
+      typed.addEventListener('keydown', (e) => { if (e.key === 'Enter') { typed.blur(); } });
+    }
     if (range) {
       range.addEventListener('input', () => {
         let v = parseFloat(range.value);
@@ -405,3 +430,9 @@ function foldsWhole(cells) {
   return cells.every((c) => c.type === 'ro' || c.type === 'action'
                          || (c.type === 'text' && c.commit === 'enter'));
 }
+
+/** A number cell's value in the unit it is shown in, for typing over: 433.92, not 433.9200. */
+function typedValue(spec) {
+  return String(+(spec.value / spec.scale).toFixed(6));
+}
+
