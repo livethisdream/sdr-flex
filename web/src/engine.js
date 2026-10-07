@@ -386,7 +386,8 @@ export function realOp(op, x, count, fs, params = null) {
     // `auto` re-measures the pilot on the samples in hand; `stereo` and `mono` are the
     // two ways to overrule that, and both are a decision a person made.
     const want = !params || params.decode.value === 'auto' ? 'auto' : params.decode.value === 'stereo';
-    const r = dsp.stereoDecode(x, count, fs, { deemphasisUs: tau, stereo: want,
+    const phase = params && params.subcarrierDeg ? Number(params.subcarrierDeg.value) : 0;
+    const r = dsp.stereoDecode(x, count, fs, { deemphasisUs: tau, stereo: want, phase,
                                               decimate: dsp.stereoDecimation(fs) });
     return { data: r.data, count: r.count, sampleRate: r.sampleRate, label: 'Stereo decode' };
   }
@@ -1030,6 +1031,16 @@ export class MockEngine extends Graph {
    * it is the difference between a value with evidence behind it and a value derived from
    * the silence before the recording started.
    */
+  /** `_peekWindow` without its cap, for an estimate that needs more than a display's worth. */
+  _peekWindowLong(fs, now, seconds) {
+    const d = this.duration();
+    const have = isFinite(d) ? Math.floor(d * fs) : Infinity;
+    const count = Math.max(256, Math.min(Math.floor(fs * seconds), have));
+    const earliest = count / fs;
+    const at = isFinite(d) ? Math.min(d, Math.max(now, earliest)) : Math.max(now, earliest);
+    return { count, at };
+  }
+
   _peekWindow(fs, now, seconds = 0.25) {
     const d = this.duration();
     const have = isFinite(d) ? Math.floor(d * fs) : Infinity;
@@ -1627,6 +1638,11 @@ export class MockEngine extends Graph {
       const fs = p.out.sampleRate;
       const { count, at } = this._peekWindow(fs, now);
       const pilot = dsp.estimatePilot(this._detectMono(p, at, count), count, fs);
+      // Over a second rather than the quarter the pilot needs: a pilot is always there, and
+      // the difference signal is only there when the two channels differ, which a quarter of
+      // a second of a pause in the program does not show.
+      const long = this._peekWindowLong(fs, now, 1);
+      const sub = dsp.estimateSubcarrierPhase(this._detectMono(p, long.at, long.count), long.count, fs);
       node.params = {
         // The derived value is the answer to "is this in stereo", and the pilot is the
         // evidence for it (ADR-0017). Overriding it to `stereo` is for a pilot too weak
@@ -1643,12 +1659,29 @@ export class MockEngine extends Graph {
         // came from, so marking it auto would claim evidence that does not exist. The
         // same honesty redsea's `region` knob applies to the same ambiguity.
         deemphasisUs: param(75, 'manual'),
+        // Where the transmitter put the L-R subcarrier, against the standard. A station that
+        // follows it is 0 and this never comes up; one that does not decodes as two copies of
+        // the sum unless the decoder turns to meet it. Which of ±90 is a guess (see
+        // `estimateSubcarrierPhase`), and the evidence says so.
+        subcarrierDeg: param(String(sub.value), 'auto', {
+          from: !pilot.confident || !sub.present
+            ? 'no difference signal to measure it on — the standard is assumed'
+            : sub.value
+              ? `L-R ${sub.ratioDb.toFixed(0)} dB stronger 90° from where the standard puts it: ` +
+                'the transmitter is off the standard; left and right may be the wrong way round'
+              : sub.ratioDb < -3
+                ? `L-R ${(-sub.ratioDb).toFixed(0)} dB stronger where the standard puts it`
+                : 'L-R about as strong in both places here — too little to tell, so the standard is assumed',
+          confident: sub.confident,
+        }),
       };
       node.out = { kind: 'real', sampleRate: fs / dsp.stereoDecimation(fs), centerHz: p.out.centerHz, channels: 2 };
       node.label = 'Stereo decode';
     } else if (op === 'core.audio') {
       node.params = {
         volume: param(0.5),
+        // How a pair reaches the ears; only offered when there is a pair.
+        mix: param('stereo', 'manual'),
         // off by default: a squelch that arrives closed looks exactly like a
         // broken decoder, and the difference takes a while to work out
         squelch: param(0),
@@ -2525,8 +2558,14 @@ export class MockEngine extends Graph {
     const ch = node.out.channels || 1;
     if (ch === 1 || !which || which === 'sum') return this._detectMono(node, tEnd, count);
     const data = this._detect(node, tEnd, count);
-    const c = Math.min(which === 'right' ? 1 : 0, ch - 1);
     const out = new Float32Array(count);
+    // The difference is what the sum leaves out: on FM stereo, L-R, the signal the
+    // subcarrier carries, with the program common to both channels cancelled.
+    if (which === 'difference' && ch === 2) {
+      for (let i = 0; i < count; i++) out[i] = (data[i * 2] - data[i * 2 + 1]) / 2;
+      return out;
+    }
+    const c = Math.min(which === 'right' ? 1 : 0, ch - 1);
     for (let i = 0; i < count; i++) out[i] = data[i * ch + c];
     return out;
   }

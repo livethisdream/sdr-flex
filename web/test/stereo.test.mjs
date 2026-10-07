@@ -297,3 +297,14 @@ test('a stereo node on a broadcast channel reads out at the audio rate, contiguo
     }
   }
 });
+
+test('the difference view is L-R, what the sum leaves out', async () => {
+  const { MockEngine } = await import('../src/engine.js');
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  const node = { out: { channels: 2 } };
+  const pairs = Float32Array.from([0.5, 0.1, -0.2, 0.4, 0.3, 0.3]);
+  e._detect = () => pairs;
+  assert.deepEqual(Array.from(e._detectChannel(node, 1, 3, 'difference')).map((v) => +v.toFixed(6)), [0.2, -0.3, 0]);
+  assert.deepEqual(Array.from(e._detectChannel(node, 1, 3, 'right')).map((v) => +v.toFixed(6)), [0.1, 0.4, 0.3]);
+});

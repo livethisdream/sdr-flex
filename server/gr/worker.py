@@ -39,6 +39,9 @@ from gnuradio import analog, blocks, fft, filter as grfilter, gr
 from gnuradio.filter import firdes
 
 DATA_FD = int(os.environ.get('SDRFLEX_GR_DATA_FD', '3'))
+# Which way round the real part of the squared pilot reference is, against dsp.js's `phase`;
+# held to it by web/test/grstereo.test.mjs.
+PHASE_SIGN = -1
 COMPLEX = gr.sizeof_gr_complex
 
 # GNU Radio's C++ prints to fd 1 on its own (the first flowgraph announces its buffer
@@ -265,7 +268,14 @@ def op_stereo(req):
         pilot_bpf = grfilter.fir_filter_fcc(1, pilot)
         pll = analog.pll_refout_cc(0.001, 2 * math.pi * 19200 / fs, 2 * math.pi * 18800 / fs)
         square = blocks.multiply_cc(1)
-        imag = blocks.complex_to_imag(1)
+        # The squared reference is the subcarrier the standard expects in its imaginary part,
+        # and the one 90° from it in its real part, for a transmitter off the standard.
+        phase = int(req.get('phase', 0))
+        if phase:
+            imag = blocks.complex_to_real(1)
+            carrier = firdes.band_pass(2.0 * (1 if phase > 0 else -1) * PHASE_SIGN, fs, 37600, 38400, 400, win, 6.76)
+        else:
+            imag = blocks.complex_to_imag(1)
         carrier_bpf = grfilter.fft_filter_fff(1, carrier, 1)
         delayed = blocks.delay(gr.sizeof_float, samp_delay)
         mix = blocks.multiply_ff(1)
