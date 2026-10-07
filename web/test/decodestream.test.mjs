@@ -191,3 +191,22 @@ for (const d of STREAMED) {
   });
 }
 
+
+test('a line that belongs to the next one waits for it, however the output is split', () => {
+  // direwolf prints a packet's audio level on the line before it; read in two pieces, the level
+  // used to be parsed alone and lost.
+  const s = new DecoderStream('ext.direwolf', { kind: 'real', sampleRate: 48_000 });
+  s.out = 'N0CALL audio level = 99(50/48)\n';
+  s._read();
+  assert.deepEqual(s.take().records, [], 'nothing yet: it is half a record');
+  s.out += '[0.3] N0CALL>APRS:sdrflex split\n';
+  s._read();
+  assert.deepEqual(s.take().records.map(({ at, ...r }) => r), [{ text: 'N0CALL>APRS:sdrflex split', level: 99 }]);
+  // And Morse, whose line never ends, is broken at a space without eating what came before it.
+  const m = new DecoderStream('ext.multimon', { kind: 'real', sampleRate: 22_050, params: { modes: 'MORSE_CW' } });
+  m.out = `${'CQ '.repeat(30)}DE`;
+  m._read();
+  const got = m.take();
+  assert.equal(got.records.length, 1);
+  assert.equal(words(`${got.records[0].text} ${got.partial}`), words(`${'CQ '.repeat(30)}DE`));
+});

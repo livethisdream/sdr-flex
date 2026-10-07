@@ -1609,6 +1609,8 @@ function complaint(stderr) {
 // How long an unfinished line may get before a stream breaks it into a record, for a decoder
 // whose lines never end (`endlessLines`).
 const SOFT_LINE = 60;
+// How many lines that made no record a stream holds back for the record they may belong to.
+const HELD_LINES = 4;
 
 export class DecoderStream {
   constructor(id, { kind, sampleRate, centerHz, params = {} }) {
@@ -1682,13 +1684,28 @@ export class DecoderStream {
       for (const r of readRecords(this.a, chunk, '', meta).records) this.pending.push({ ...r, at: this.fedT });
     };
     const cut = text.lastIndexOf('\n') + 1;
-    if (cut) { add(text.slice(0, cut)); text = text.slice(cut); }
-    if (this.a.endlessLines && text.length > SOFT_LINE) {
+    if (cut) {
+      // Lines at the end that make no record of their own are held back, because they may be
+      // the first half of one: direwolf prints the audio level on the line before the packet it
+      // belongs to, and multimon an AX.25 header on the line before its payload. Parsed alone,
+      // the packet arrives without them.
+      const lines = text.slice(0, cut).split('\n').slice(0, -1);
+      const count = (ls) => readRecords(this.a, ls.length ? `${ls.join('\n')}\n` : '', '', meta).records.length;
+      const all = count(lines);
+      let keep = lines.length;
+      while (keep > 0 && lines.length - keep < HELD_LINES && count(lines.slice(0, keep - 1)) === all) keep--;
+      add(keep ? `${lines.slice(0, keep).join('\n')}\n` : '');
+      text = lines.slice(keep).map((l) => `${l}\n`).join('') + text.slice(cut);
+    }
+    const u = text.lastIndexOf('\n') + 1;
+    if (this.a.endlessLines && text.length - u > SOFT_LINE) {
       const sp = text.lastIndexOf(' ');
-      if (sp > 0) { add(`${text.slice(0, sp)}\n`); text = text.slice(sp + 1); }
+      if (sp > u) { add(`${text.slice(u, sp)}\n`); text = text.slice(0, u) + text.slice(sp + 1); }
     }
     if (onErr) this.err = text; else this.out = text;
-    this.partial = text.trim() ? (readRecords(this.a, `${text}\n`, '', meta).records[0] || {}).text || '' : '';
+    // The line still arriving, without any held-back lines in front of it.
+    const unfinished = text.slice(text.lastIndexOf('\n') + 1);
+    this.partial = unfinished.trim() ? (readRecords(this.a, `${unfinished}\n`, '', meta).records[0] || {}).text || '' : '';
   }
 
   /** Feed samples that end at `tEnd` seconds into the capture. Resolves once they are taken. */
