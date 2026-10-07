@@ -540,6 +540,65 @@ export function cwBeat(iq, count, sampleRate, offsetHz, pitchHz, startIndex = 0)
   return out;
 }
 
+/**
+ * The CW filter: a low-pass of half the width, applied with the carrier at zero, which is a
+ * band-pass of the full width once the carrier is moved up to the pitch. Null for no filter.
+ *
+ * Without it every hertz of the channel reaches the speaker and the decoder along with the
+ * beat: from a 20 kHz box, which is what a finger draws on a 500 kHz spectrum, the keying is
+ * under ten times its own bandwidth of noise and MORSE_CW decodes nothing. A receiver's CW
+ * filter is 250 to 500 Hz for that reason. The transition is half the width, so the filter is
+ * as short as that allows: about 13 ms at 20 kS/s.
+ */
+export function cwTaps(fs, widthHz) {
+  if (!(widthHz > 0) || widthHz >= fs / 2) return null;
+  const n = Math.ceil((3.3 * fs) / (widthHz / 2)) | 1;
+  return lowPassTaps(n, widthHz / 2, fs);
+}
+
+/** A CW demod's filter taps. A node saved before it had a filter gets the default one. */
+export const CW_FILTER_HZ = 500;
+export function cwTapsOf(params, fs) {
+  return cwTaps(fs, params && params.filterHz ? Number(params.filterHz.value) : CW_FILTER_HZ);
+}
+
+/** The phase of a mixer at `hz` after `index` samples, kept in range without losing precision. */
+function mixerPhase(hz, index, fs) {
+  return (2 * Math.PI * ((hz * index) % fs)) / fs;
+}
+
+/**
+ * CW through its filter: the carrier moved to zero, filtered by `taps` (`cwTaps`), and moved up
+ * to the pitch. Output i is made from inputs i - taps + 1 .. i, so it is (taps - 1) / 2 samples
+ * late, and the first taps - 1 outputs see zeros before the window: a caller that wants them
+ * exact passes that much more history and drops them. Both mixers are referenced to the
+ * capture's sample index, so a block computed anywhere joins its neighbors. GNU Radio computes
+ * the same thing (server/gr/worker.py, `cw_chain`).
+ */
+export function cwDemod(iq, count, sampleRate, offsetHz, pitchHz, taps, startIndex = 0) {
+  if (!taps) return cwBeat(iq, count, sampleRate, offsetHz, pitchHz, startIndex);
+  const n = taps.length;
+  const zr = new Float32Array(count), zi = new Float32Array(count);
+  let a = -mixerPhase(offsetHz, startIndex, sampleRate);
+  const da = (-2 * Math.PI * offsetHz) / sampleRate;
+  for (let i = 0; i < count; i++) {
+    const c = Math.cos(a + da * i), s = Math.sin(a + da * i);
+    const re = iq[i * 2], im = iq[i * 2 + 1];
+    zr[i] = re * c - im * s;
+    zi[i] = re * s + im * c;
+  }
+  const out = new Float32Array(count);
+  const b = mixerPhase(pitchHz, startIndex, sampleRate), db = (2 * Math.PI * pitchHz) / sampleRate;
+  for (let i = 0; i < count; i++) {
+    let wr = 0, wi = 0;
+    const lo = Math.max(0, i - n + 1);
+    for (let k = lo; k <= i; k++) { const h = taps[i - k]; wr += h * zr[k]; wi += h * zi[k]; }
+    const c = Math.cos(b + db * i), s = Math.sin(b + db * i);
+    out[i] = wr * c - wi * s;
+  }
+  return out;
+}
+
 // ── Estimators for the detectors ───────────────────────────────────────────
 
 /**

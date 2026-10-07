@@ -92,6 +92,7 @@ export class GrEngine extends MockEngine {
   _grKind(node) {
     if (this._grTuner(node)) return 'tuner';
     if (node && node.op === 'core.fm_discriminator' && this._grTuner(this.node(node.parent))) return 'fm';
+    if (node && node.op === 'core.cw' && this._grTuner(this.node(node.parent))) return 'cw';
     if (node && node.op === 'core.stereo' && this._grKind(this.node(node.parent)) === 'fm') return 'stereo';
     return null;
   }
@@ -104,6 +105,16 @@ export class GrEngine extends MockEngine {
       // The JS discriminator's scale: full deviation is full scale (DETECTORS, engine.js).
       const scale = (node.params.gain.value || 1) / Math.max(1, node.params.deviationHz.value);
       return { ...t, op: 'fm', complex: false, scale, sig: `${t.sig}|fm|${scale}` };
+    }
+    if (kind === 'cw') {
+      const t = this._tunerSpec(this.node(node.parent));
+      const fs = this.node(node.parent).out.sampleRate, p = node.params;
+      // No filter is a filter of one tap, so GNU Radio runs one chain either way.
+      const cw = dsp.cwTapsOf(p, fs) || new Float32Array([1]);
+      const extra = { cw_offset: p.offsetHz.value, pitch: p.pitchHz.value, gain: p.gain.value || 1,
+                      cw_taps: Array.from(cw) };
+      return { ...t, ...extra, op: 'cw', complex: false,
+               sig: `${t.sig}|cw|${extra.cw_offset}|${extra.pitch}|${extra.gain}|${cw.length}|${p.filterHz ? p.filterHz.value : ''}` };
     }
     if (kind === 'stereo') {
       const p = this.node(node.parent);
@@ -177,7 +188,7 @@ export class GrEngine extends MockEngine {
       op: spec.op, path: this._store().path, format: this._store().format, rate: spec.fsIn,
       ring: this._store().ring,
       k0: j * B, count: B, taps: Array.from(spec.taps), decim: spec.decim, offset: spec.offset,
-      ...Object.fromEntries(['scale', 'audio_decim', 'mode', 'deemph_us', 'runin_s']
+      ...Object.fromEntries(['scale', 'audio_decim', 'mode', 'deemph_us', 'runin_s', 'cw_offset', 'pitch', 'gain', 'cw_taps']
         .filter((k) => spec[k] != null).map((k) => [k, spec[k]])),
     }, priority, key).then(({ bytes }) => {
       blocks.set(j, new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)));
@@ -350,7 +361,7 @@ export class GrEngine extends MockEngine {
 
   _detectRaw(node, tEnd, count) {
     const kind = this._grKind(node);
-    if (kind === 'fm' || kind === 'stereo') {
+    if (kind === 'fm' || kind === 'stereo' || kind === 'cw') {
       const out = this._fromBlocks(node, tEnd, count, kind === 'stereo' ? 2 : 1);
       if (out) return out;
     }

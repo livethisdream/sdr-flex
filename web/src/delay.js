@@ -19,6 +19,8 @@
 // way down: a stored field goes stale the moment a tap count changes, and `setParam`
 // already propagates one level deep. Walking costs a few map lookups and cannot be wrong.
 
+import * as dsp from './dsp.js';
+
 /**
  * What one node adds, in samples **at its own output rate**. `null` means unknown, which
  * is a real answer and not a failure — ADR-0007 anticipated blocks whose time mapping is
@@ -68,9 +70,11 @@ export function ownDelaySamples(node, parentOut) {
     case 'core.ssb':
       return (65 - 1) / 2;
 
-    // A pointwise mix with a rotating phasor.
-    case 'core.cw':
-      return 0;
+    // Two pointwise mixes either side of its filter, which is causal: half of it late.
+    case 'core.cw': {
+      const taps = dsp.cwTapsOf(node.params, parentOut.sampleRate);
+      return taps ? (taps.length - 1) / 2 : 0;
+    }
 
     // Every filter in it is centred, on purpose — two of its signals get multiplied
     // together and half a filter of skew between them is a phase error (ADR-0037).

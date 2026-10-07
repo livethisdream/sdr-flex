@@ -162,6 +162,7 @@ test('the fractional part survives, because it is most of the error at 38 kHz', 
   const t = await tuner(e, { taps: 129, decim: 3 });
   const fm = await e.addNode({ parent: t.id, op: 'core.fm_discriminator', at: 0.1 });
   const cw = await e.addNode({ parent: t.id, op: 'core.cw', at: 0.1 });
+  e.node(cw.id).params.filterHz.value = '0';   // the bare beat, a pointwise mix
   const a = alignment(e.node(fm.id), e.node(cw.id), (id) => e.node(id));
   assert.ok(Math.abs(a.shiftSamples - 0.5) < 1e-9, `${a.shiftSamples}`);
 

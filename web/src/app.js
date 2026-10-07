@@ -1361,6 +1361,10 @@ class App {
                           fmt: (v) => (Number(v) > 0 ? String(v) : 'off') },
           bfoHz: { label: 'bfo', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 1.5, min: -3000, max: 3000, integer: true, type: 'num' },
           offsetHz: { label: 'offset', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2.5, integer: true, type: 'num' },
+          // A list rather than a slider: these are the widths a CW receiver offers, and 0 is
+          // the unfiltered beat, which is what this node was before it had a filter.
+          filterHz: { label: 'filter', unit: 'Hz', type: 'enum', values: ['250', '500', '1000', '2400', '0'],
+                      fmt: (v) => (Number(v) > 0 ? String(v) : 'off') },
           pitchHz: { label: 'pitch', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2, min: 200, max: 2000, integer: true, type: 'num' },
           volume: { label: 'volume', unit: '', fmt: (v) => (v * 100).toFixed(0) + '%', step: 0.004, min: 0, max: 1, type: 'num' },
           squelch: { label: 'squelch', unit: '', fmt: (v) => (v > 0 ? v.toFixed(3) : 'off'), step: 0.0004, min: 0, max: 0.4, type: 'num' },

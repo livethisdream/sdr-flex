@@ -17,6 +17,8 @@ Requests:
   {"op": "stereo", ...the FM demod's fields, "audio_decim", "mode", "deemph_us", "runin_s"}
       -> {"ok", "bytes"}, then 2*count float32: stereo frames k0 .. k0+count-1, L and R
          interleaved, at the FM rate / audio_decim
+  {"op": "cw", ...the tuner's fields, "cw_offset", "pitch", "cw_taps", "gain"}
+      -> {"ok", "bytes"}, then `count` float32: the JS CW demod's outputs k0 .. k0+count-1
   {"op": "fm", ...the tuner's fields, "scale"}
       -> {"ok", "bytes"}, then `count` float32: the JS FM demod's outputs k0 .. k0+count-1,
          in hertz times `scale` (gain / deviation)
@@ -286,7 +288,46 @@ def op_stereo(req):
     finish(tb, drop, gr.sizeof_float, 2 * count)
 
 
-OPS = {'ping': op_ping, 'tone': op_tone, 'tuner': op_tuner, 'fm': op_fm, 'stereo': op_stereo}
+def mixer(hz, index, fs):
+    """A mixer at `hz` whose phase is referenced to the capture's sample index, as dsp.js's are:
+    rotator_cc starts at zero on the first sample it sees, which is sample `index`, so a
+    constant turn makes up the difference."""
+    turn = blocks.multiply_const_cc(cmath.exp(1j * 2 * math.pi * math.fmod(hz * index, fs) / fs))
+    return [blocks.rotator_cc(2 * math.pi * hz / fs), turn]
+
+
+def cw_chain(tb, req, k0, count):
+    """Blocks producing the JS CW demod's outputs k0 .. k0+count-1; returns the last block.
+
+    The carrier moved to zero, a low-pass of half the CW filter's width, the carrier moved up to
+    the pitch, the real part: a band-pass around the pitch, which is what a receiver's CW filter
+    is. The filter is causal, as `cwDemod` in dsp.js is, so output k is made from tuner outputs
+    k - taps + 1 .. k: the tuner is read from that much earlier and the outputs made partly of
+    the filter's zero history are dropped. Both mixers are referenced to the tuner's sample
+    index, so blocks join without a click.
+    """
+    fs = float(req['rate']) / int(req['decim'])
+    taps = [float(t) for t in req['cw_taps']]
+    h = len(taps) - 1
+    tuned = tuner_chain(tb, req, k0 - h, count + h)
+    down = mixer(-float(req['cw_offset']), k0 - h, fs)
+    fir = grfilter.fir_filter_ccf(1, taps)
+    drop = blocks.skiphead(COMPLEX, h)
+    up = mixer(float(req['pitch']), k0, fs)
+    real = blocks.complex_to_real(1)
+    gain = blocks.multiply_const_ff(float(req.get('gain', 1)))
+    tb.connect(tuned, *down, fir, drop, *up, real, gain)
+    return gain
+
+
+def op_cw(req):
+    tb = gr.top_block()
+    count = int(req['count'])
+    finish(tb, cw_chain(tb, req, int(req['k0']), count), gr.sizeof_float, count)
+
+
+OPS = {'ping': op_ping, 'tone': op_tone, 'tuner': op_tuner, 'fm': op_fm, 'stereo': op_stereo,
+       'cw': op_cw}
 
 
 def main():

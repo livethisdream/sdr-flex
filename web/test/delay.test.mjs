@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import { MockEngine } from '../src/engine.js';
 import { Capture } from '../src/capture.js';
 import { ownDelaySamples, delayOf, alignment } from '../src/delay.js';
+import * as dsp from '../src/dsp.js';
 
 const FS = 480_000, CENTER = 100_000_000, SECONDS = 0.4, PULSE_AT = 0.2;
 
@@ -129,17 +130,30 @@ test('two channels off one source are late by different amounts', async () => {
 
 // ── the detectors ───────────────────────────────────────────────────────────
 
+test('the CW filter is half its length late, because it is symmetric', async () => {
+  // A pulse through a 500 Hz band-pass rings for as long as the filter, so where it lands is
+  // not a measurement worth the name. Symmetric taps are the proof instead: a linear-phase
+  // filter of n taps delays everything by exactly (n - 1) / 2.
+  const e = await opened(15_000);
+  const t = await tuner(e);
+  const d = e.node((await e.addNode({ parent: t.id, op: 'core.cw', at: 0.1 })).id);
+  const taps = dsp.cwTapsOf(d.params, t.out.sampleRate);
+  for (let i = 0; i < taps.length; i++) assert.equal(taps[i], taps[taps.length - 1 - i]);
+  assert.equal(ownDelaySamples(d, t.out), (taps.length - 1) / 2);
+});
+
 test('each detector adds what it claims to add, and no more', async () => {
   const want = {
     'core.am_envelope': 'a magnitude is pointwise; its smoother undoes its own delay',
     'core.fm_discriminator': 'the phase between two samples belongs between them',
     'core.ssb': 'the Hilbert transformer is 65 taps and the I path waits for it',
-    'core.cw': 'a pointwise mix',
+    'core.cw': 'with its filter off, a pointwise mix',
   };
   for (const op of Object.keys(want)) {
     const e = await opened(15_000);
     const t = await tuner(e);
     const d = await e.addNode({ parent: t.id, op, at: 0.1 });
+    if (op === 'core.cw') e.node(d.id).params.filterHz.value = '0';
     const own = measured(e, e.node(d.id)) - measured(e, t);
     const said = ownDelaySamples(e.node(d.id), t.out) / d.out.sampleRate;
     assert.ok(Math.abs(own - said) < 1.2 / d.out.sampleRate,
@@ -213,6 +227,7 @@ test('the shift is fractional, because rounding it away is the bug', async () =>
   const t = await tuner(e, { width: 200_000 });
   const fm = await e.addNode({ parent: t.id, op: 'core.fm_discriminator', at: 0.1 });
   const cw = await e.addNode({ parent: t.id, op: 'core.cw', at: 0.1 });
+  e.node(cw.id).params.filterHz.value = '0';   // the bare beat, a pointwise mix
   const a = alignment(e.node(fm.id), e.node(cw.id), (id) => e.node(id));
   assert.ok(a.ok, a.why);
   // Compared with a tolerance rather than exactly: the shift is a difference of two
