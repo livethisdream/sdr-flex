@@ -2888,6 +2888,9 @@ class App {
       this.renderStrip();
     }
     const r = n._records || { records: [] };
+    // The line a streamed decoder is still printing is a record too — for Morse it is the only
+    // one for a while — so it is counted, and said to be unfinished.
+    const total = r.records.length + (r.partial ? 1 : 0);
     const rows = r.records.map((rec, i) => {
       // `at` is the block a streamed record came out of, and it is a fact about the
       // capture rather than a field the decoder returned — so it is drawn as the
@@ -2903,7 +2906,7 @@ class App {
     el.innerHTML = `
       <div class="evwrap">
         <div class="evhead">
-          <b>${r.records.length} record${r.records.length === 1 ? '' : 's'}</b>
+          <b>${total} record${total === 1 ? '' : 's'}${r.partial ? ', the last still arriving' : ''}</b>
           <span>${r.note || n.label}${r.ms != null ? ` · ${r.ms.toFixed(0)} ms` : ''}</span>
           <button class="exgo" id="evrun">Run again</button>
         </div>
