@@ -26,13 +26,14 @@ const skip = !hasGr && 'GNU Radio is not installed';
 const FS = 500_000, CENTER = 100_000_000, SECONDS = 2, L_HZ = 400, R_HZ = 3_000;
 
 /** A standard stereo broadcast at the capture's center: sin pilot, sin(2θ) subcarrier. */
-function stationFile() {
+function stationFile(subcarrierDeg = 0) {
   const n = FS * SECONDS, buf = Buffer.alloc(n * 8);
   let ph = 0;
   for (let i = 0; i < n; i++) {
     const t = i / FS, L = Math.sin(2 * Math.PI * L_HZ * t), R = Math.sin(2 * Math.PI * R_HZ * t);
     const th = 2 * Math.PI * 19_000 * t + 0.7;
-    const mpx = 0.45 * (L + R) / 2 + 0.09 * Math.sin(th) + 0.45 * (L - R) / 2 * Math.sin(2 * th);
+    const mpx = 0.45 * (L + R) / 2 + 0.09 * Math.sin(th) +
+                0.45 * (L - R) / 2 * Math.sin(2 * th + (subcarrierDeg * Math.PI) / 180);
     ph += (2 * Math.PI * 75_000 * mpx) / FS;
     buf.writeFloatLE(0.5 * Math.cos(ph), i * 8);
     buf.writeFloatLE(0.5 * Math.sin(ph), i * 8 + 4);
@@ -42,8 +43,8 @@ function stationFile() {
   return file;
 }
 
-async function chains(t) {
-  const file = stationFile();
+async function chains(t, subcarrierDeg = 0) {
+  const file = stationFile(subcarrierDeg);
   const open = () => new FileCapture({ path: file, format: 'cf32', sampleRate: FS, centerHz: CENTER, label: 'station' });
   const w = new GrWorker();
   t.after(() => { w.stop(); fs.rmSync(path.dirname(file), { recursive: true, force: true }); });
@@ -128,3 +129,35 @@ test('reads that meet end to end are one read', { skip }, async (t) => {
   assert.deepEqual(Array.from(first), Array.from(whole.subarray(0, n * 2)));
   assert.deepEqual(Array.from(second), Array.from(whole.subarray(n * 2)));
 });
+
+// ── a transmitter off the standard ──────────────────────────────────────────
+//
+// One that writes cosines for both pilot and subcarrier puts L-R 90° from where a standard
+// decoder looks, and both channels come out as the sum (the signal-ID capture does this).
+// The node measures it and turns to meet it; set by hand to the transmitter's own offset, the
+// left is the left.
+
+for (const sub of [-90, 90]) {
+  test(`a transmitter ${sub}° off the standard is found, and comes apart in both engines`, { skip }, async (t) => {
+    const { gr, js } = await chains(t, sub);
+    assert.equal(js.st.params.subcarrierDeg.value, '-90', 'off the standard, and the evidence says so');
+    assert.equal(js.st.params.subcarrierDeg.mode, 'auto');
+    assert.match(js.st.params.subcarrierDeg.auto.from, /off the standard/);
+    for (const c of [gr, js]) await c.e.setParam(c.st.id, 'subcarrierDeg', String(sub), 'manual');
+    const fs = gr.st.out.sampleRate, count = Math.round(fs * 0.5), at = 1.4;
+    await gr.e.prepare(gr.st.id, at, count / fs);
+    const before = gr.e.grStats.misses;
+    const g = gr.e._detect(gr.st, at, count), j = js.e._detect(js.st, at, count);
+    assert.equal(gr.e.grStats.misses, before, 'read from GNU Radio blocks');
+    t.diagnostic(`separation: GNU Radio ${separation(g, fs).toFixed(1)} dB, JS ${separation(j, fs).toFixed(1)} dB`);
+    assert.ok(separation(g, fs) > 40, `GNU Radio: ${separation(g, fs)} dB`);
+    assert.ok(separation(j, fs) > 40, `JS: ${separation(j, fs)} dB`);
+  });
+}
+
+test('a standard station is left on the standard', { skip }, async (t) => {
+  const { js } = await chains(t);
+  assert.equal(js.st.params.subcarrierDeg.value, '0');
+  assert.match(js.st.params.subcarrierDeg.auto.from, /where the standard puts it/);
+});
+

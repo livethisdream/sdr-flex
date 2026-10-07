@@ -1450,6 +1450,8 @@ class App {
                     step: 0.25, min: -60, max: 80 },
           // Not derived, because nothing in the signal says which continent it came from:
           // 75 µs in the Americas, 50 µs most other places (ADR-0037).
+          subcarrierDeg: { label: 'subcarrier', unit: '', type: 'enum', values: ['0', '-90', '90'],
+                           fmt: (v) => (Number(v) === 0 ? 'standard' : `${Number(v) > 0 ? '+' : '−'}90°`) },
           deemphasisUs: { label: 'de-emphasis', unit: 'µs', type: 'enum', values: ['75', '50', '0'],
                           fmt: (v) => (Number(v) > 0 ? String(v) : 'off') },
           bfoHz: { label: 'bfo', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 1.5, min: -3000, max: 3000, integer: true, type: 'num' },

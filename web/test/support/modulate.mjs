@@ -885,7 +885,7 @@ export function fmStereoMpx({ rate = 160_000, seconds = 0.4, theta = 0.7,
                               left = (t) => Math.sin(2 * Math.PI * 400 * t),
                               right = (t) => Math.sin(2 * Math.PI * 3000 * t),
                               pilot = 0.10, audio = 0.45, preemphasisUs = 0,
-                              rdsBits = null, rds = 0.05,
+                              rdsBits = null, rds = 0.05, subcarrierDeg = 0,
                               seed = 0x3e11, noise = 0.002 } = {}) {
   const n = Math.round(rate * seconds);
   const x = new Float32Array(n);
@@ -906,7 +906,9 @@ export function fmStereoMpx({ rate = 160_000, seconds = 0.4, theta = 0.7,
     if (lift) { const a = lift(L, pl, dt), b = lift(R, pr, dt); pl = L; pr = R; L = a; R = b; }
     const phase = w * t + theta;
     x[i] = audio * ((L + R) / 2)
-         + audio * ((L - R) / 2) * Math.sin(2 * phase)      // twice the pilot's phase
+         // Twice the pilot's phase, as ITU-R BS.450 has it. `subcarrierDeg` turns it, for a
+         // transmitter that does not: one that writes cosines for both is -90.
+         + audio * ((L - R) / 2) * Math.sin(2 * phase + (subcarrierDeg * Math.PI) / 180)
          + pilot * Math.sin(phase)
          + (rand() - 0.5) * noise;
     if (differential) {

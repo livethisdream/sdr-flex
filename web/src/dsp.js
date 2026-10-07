@@ -755,7 +755,11 @@ export function deemphasis(x, fs, tauS, out) {
  * away, so its amplitude rides on the pilot's, and on a weak signal the recovered L-R
  * fades with it while L+R does not. The channels then wander toward mono.
  */
-export function stereoDecode(x, count, fs, { deemphasisUs = 75, stereo = 'auto',
+// How much more of the difference has to be in the 90° quadrature than in the standard's
+// before a station is decoded as off the standard.
+const SUBCARRIER_OFF_DB = 3;
+
+export function stereoDecode(x, count, fs, { deemphasisUs = 75, stereo = 'auto', phase = 0,
                                             taps = STEREO_TAPS, decimate = 1 } = {}) {
   const n = Math.min(count, x.length);
   const d = Math.max(1, Math.floor(decimate));
@@ -787,31 +791,17 @@ export function stereoDecode(x, count, fs, { deemphasisUs = 75, stereo = 'auto',
     }
   }
   const span = x.subarray(0, n);
-  const bp = bandPassTaps(taps, PILOT_HZ, 1600, fs);
-  const p = fir(span, bp.i), q = fir(span, bp.q);
-
-  // The reference is the one the broadcast standard fixes (ITU-R BS.450): the subcarrier is
-  // sin(2θ) for a pilot sin(θ). The analytic pilot here has phase ψ = θ - π/2, so that is
-  // -sin(2ψ). This decoder used cos(2ψ), 90° off; its test modulator made the same mistake,
-  // so it passed, and gave left = right on a real station.
-  const mixI = new Float32Array(n), mixQ = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const m2 = p[i] * p[i] + q[i] * q[i] || 1e-20;
-    const ref = -(2 * p[i] * q[i]) / m2;                // -sin 2ψ = sin 2θ
-    const quad = (p[i] * p[i] - q[i] * q[i]) / m2;      // cos 2ψ, which should be empty
-    mixI[i] = span[i] * 2 * ref;
-    mixQ[i] = span[i] * 2 * quad;
-  }
-
-  // Everything from here on is under 15 kHz, so it is computed at the output rate.
-  const lp = lowPassTaps(taps, STEREO_AUDIO_HZ, fs);
-  const sum = firEvery(span, lp, d);
-  const diff = firEvery(mixI, lp, d);
+  const { sum, inPhase, quadrature: offPhase } = stereoMix(span, n, fs, taps, d);
+  // `phase` is where the transmitter put the subcarrier, against the standard's: 0 for any
+  // station following it, ±90 for one that does not (`estimateSubcarrierPhase`). The
+  // difference is read from that quadrature and the evidence of lock from the other one.
+  const s = phase === 90 ? 1 : phase === -90 ? -1 : 0;
+  const diff = s ? offPhase.map((v) => -s * v) : inPhase;
   // Not used to decode anything — it is the evidence that the reference is locked.
   // A demodulator at the right phase puts everything in one quadrature and nothing in
   // the other, so how much less is in the other one is a measurement of the lock
   // (ADR-0017), and it is the number that goes bad first when a pilot is weak.
-  const quadrature = firEvery(mixQ, lp, d);
+  const quadrature = s ? inPhase : offPhase;
   let ps = 0, pq = 0;
   const edge = Math.min(Math.ceil((taps * 2) / d), m >> 2);
   for (let i = edge; i < m - edge; i++) { ps += diff[i] * diff[i]; pq += quadrature[i] * quadrature[i]; }
@@ -826,6 +816,62 @@ export function stereoDecode(x, count, fs, { deemphasisUs = 75, stereo = 'auto',
   const dl = deemphasis(left, fs / d, tau), dr = deemphasis(right, fs / d, tau);
   for (let i = 0; i < m; i++) { out[i * 2] = dl[i]; out[i * 2 + 1] = dr[i]; }
   return { data: out, quadRejectionDb, ...rate };
+}
+
+/**
+ * The composite's sum and its difference, demodulated against the pilot in both quadratures:
+ * `inPhase` where ITU-R BS.450 puts the subcarrier, `quadrature` 90° from it. Low-passed and
+ * decimated by `d`, so all three are at the decoder's output rate.
+ */
+function stereoMix(span, n, fs, taps, d) {
+  const bp = bandPassTaps(taps, PILOT_HZ, 1600, fs);
+  const p = fir(span, bp.i), q = fir(span, bp.q);
+  // The reference is the one the broadcast standard fixes (ITU-R BS.450): the subcarrier is
+  // sin(2θ) for a pilot sin(θ). The analytic pilot here has phase ψ = θ - π/2, so that is
+  // -sin(2ψ). This decoder used cos(2ψ), 90° off; its test modulator made the same mistake,
+  // so it passed, and gave left = right on a real station.
+  const mixI = new Float32Array(n), mixQ = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const m2 = p[i] * p[i] + q[i] * q[i] || 1e-20;
+    const ref = -(2 * p[i] * q[i]) / m2;                // -sin 2ψ = sin 2θ
+    const quad = (p[i] * p[i] - q[i] * q[i]) / m2;      // cos 2ψ, which should be empty
+    mixI[i] = span[i] * 2 * ref;
+    mixQ[i] = span[i] * 2 * quad;
+  }
+  // Everything from here on is under 15 kHz, so it is computed at the output rate.
+  const lp = lowPassTaps(taps, STEREO_AUDIO_HZ, fs);
+  return { sum: firEvery(span, lp, d), inPhase: firEvery(mixI, lp, d), quadrature: firEvery(mixQ, lp, d) };
+}
+
+/**
+ * Where a station put its stereo subcarrier, against where the standard says it goes.
+ *
+ * A transmitter following ITU-R BS.450 puts L-R at sin(2θ) for a pilot sin(θ), and a decoder
+ * locked to the pilot finds it all in one quadrature. One that writes cosines for both — the
+ * signal-ID capture does — puts it 90° away, where a standard decoder finds nothing, and left
+ * and right both come out as the sum. So the difference's energy in the two quadratures is
+ * the evidence: well above in the 90° one means the transmitter is off the standard.
+ *
+ * Which way round is a guess the signal cannot settle. ±90° separate equally well and differ
+ * only in which channel is called left; −90 is the cosine-for-both transmitter, the common
+ * mistake, and the answer says the order is unconfirmed.
+ */
+export function estimateSubcarrierPhase(x, count, fs, { taps = STEREO_TAPS } = {}) {
+  const n = Math.min(count, x.length);
+  if (fs / 2 <= STEREO_SUBCARRIER_HZ + 1000) return { value: 0, ratioDb: 0, confident: false };
+  const d = stereoDecimation(fs);
+  const { sum, inPhase, quadrature } = stereoMix(x.subarray(0, n), n, fs, taps, d);
+  const edge = Math.min(Math.ceil((taps * 2) / d), sum.length >> 2);
+  let ii = 0, qq = 0, ss = 0;
+  for (let i = edge; i < sum.length - edge; i++) {
+    ii += inPhase[i] * inPhase[i]; qq += quadrature[i] * quadrature[i]; ss += sum[i] * sum[i];
+  }
+  const ratioDb = 10 * Math.log10((qq + 1e-20) / (ii + 1e-20));
+  // A difference that is barely there says nothing either way: a station playing mono
+  // content in stereo has noise in both quadratures and should be left on the standard.
+  const present = 10 * Math.log10((ii + qq + 1e-20) / (ss + 1e-20)) > -30;
+  const off = present && ratioDb > SUBCARRIER_OFF_DB;
+  return { value: off ? -90 : 0, ratioDb, present, confident: present && Math.abs(ratioDb) > 2 * SUBCARRIER_OFF_DB };
 }
 
 /**

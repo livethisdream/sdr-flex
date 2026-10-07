@@ -125,10 +125,11 @@ export class GrEngine extends MockEngine {
         // quiet decode.
         mode: node.params.decode.value === 'mono' ? 'mono' : 'stereo',
         deemph_us: Number(node.params.deemphasisUs.value) || 0,
+        phase: node.params.subcarrierDeg ? Number(node.params.subcarrierDeg.value) : 0,
         runin_s: 0.02,
       };
       return { ...f, ...extra, op: 'stereo', width: 2,
-               sig: `${f.sig}|stereo|${extra.audio_decim}|${extra.mode}|${extra.deemph_us}` };
+               sig: `${f.sig}|stereo|${extra.audio_decim}|${extra.mode}|${extra.deemph_us}|${extra.phase}` };
     }
     return null;
   }
@@ -187,7 +188,7 @@ export class GrEngine extends MockEngine {
       op: spec.op, path: this._store().path, format: this._store().format, rate: spec.fsIn,
       ring: this._store().ring,
       k0: j * B, count: B, taps: Array.from(spec.taps), decim: spec.decim, offset: spec.offset,
-      ...Object.fromEntries(['scale', 'audio_decim', 'mode', 'deemph_us', 'runin_s', 'recipe', 'args']
+      ...Object.fromEntries(['scale', 'audio_decim', 'mode', 'deemph_us', 'runin_s', 'phase', 'recipe', 'args']
         .filter((k) => spec[k] != null).map((k) => [k, spec[k]])),
     }, priority, key).then(({ bytes }) => {
       blocks.set(j, new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)));
