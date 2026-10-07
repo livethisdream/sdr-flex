@@ -110,9 +110,12 @@ character, and the flag never read cleanly. A run starts two seconds before the 
 starts again after a seek, a jump it cannot feed, or a change to the decoder or anything above
 it. Records are stamped with the moment of the capture that had just been fed; a line the
 program is still printing is shown as it arrives, and one that never ends (MORSE_CW prints one
-for as long as there is Morse) is broken at a space into records. multimon-ng streams; the
-others stay jobs until each is checked, and whisper and HD Radio stay jobs for good, because
-they need the whole recording before they answer.
+for as long as there is Morse) is broken at a space into records. multimon-ng, rtl_433,
+dump1090 and direwolf stream, each held by a test to the records it gives as a job. redsea stays
+a job, because its parser joins groups across the whole output; whisper and HD Radio stay jobs
+for good, because they need the whole recording before they answer. Breaking an unfinished line
+is only for a decoder that declares `endlessLines` (MORSE_CW): rtl_433's JSON lines are long and
+full of spaces, and breaking one lost the packet.
 
 **The input is made by GNU Radio either way** (ADR-0044): `server/gr/feed.py` resamples
 (rational where the ratio allows it, polyphase otherwise), levels and converts to the format

@@ -40,6 +40,9 @@ const ANSI = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g');
  */
 export const ADAPTERS = {
   'ext.rtl433': {
+    // Reads its input as it comes and prints a JSON line per packet, so it can be fed as the
+    // capture plays (web/test/decodestream.test.mjs holds it to the answers it gives as a job).
+    stream: true,
     name: 'rtl_433', group: 'Decode', in: 'iq', out: 'events',
     command: 'rtl_433',
     blurb: '250+ ISM device protocols',
@@ -154,6 +157,10 @@ export const ADAPTERS = {
     // It decodes as it reads and prints as it decodes, so it can be fed continuously: a Morse
     // character or a page is never cut in two by where a block happened to end.
     stream: true,
+    // MORSE_CW prints one line for as long as there is Morse, so a stream breaks it at a space
+    // into records. Only a decoder that says so: a long JSON line full of spaces from anything
+    // else is one record that has not finished arriving, and cutting it in two loses it.
+    endlessLines: true,
     startWith: (parentOp) => (parentOp === 'core.cw'
       ? { modes: 'MORSE_CW' }
       : ADAPTERS['ext.multimon'].sweep()),
@@ -202,6 +209,8 @@ export const ADAPTERS = {
   },
 
   'ext.dump1090': {
+    // The same: a line per message as it reads, fed as the capture plays.
+    stream: true,
     name: 'dump1090', group: 'Decode', in: 'iq', out: 'events',
     // Three distributions ship this program under three names and none of them is
     // `dump1090`: Debian has dump1090-mutability, FlightAware has dump1090-fa. The
@@ -232,6 +241,8 @@ export const ADAPTERS = {
   },
 
   'ext.direwolf': {
+    // The same: a packet's lines as it reads, fed as the capture plays.
+    stream: true,
     name: 'direwolf', group: 'Decode', in: 'real', out: 'events',
     command: 'direwolf',
     blurb: 'APRS / AX.25 packet radio',
@@ -788,6 +799,8 @@ export const ADAPTERS = {
     title: ['text'],
   },
   'ext.redsea': {
+    // Not streamed: its parser joins groups across the whole output (a name is not believed
+    // until its segments have been seen twice), which line-at-a-time reading would undo.
     name: 'redsea', group: 'Decode', in: 'real', out: 'events',
     command: ['redsea'],
     blurb: 'RDS — station name, radiotext, program type',
@@ -1593,7 +1606,8 @@ function complaint(stderr) {
  * that moved with every feed would be an AGC, which is a decision about the signal and not
  * this one's to make.
  */
-// How long an unfinished line may get before a stream breaks it into a record.
+// How long an unfinished line may get before a stream breaks it into a record, for a decoder
+// whose lines never end (`endlessLines`).
 const SOFT_LINE = 60;
 
 export class DecoderStream {
@@ -1657,7 +1671,7 @@ export class DecoderStream {
    *
    * What has been read is dropped from the buffer, so a decoder running for an hour keeps
    * nothing but its unfinished line. A line that never finishes — MORSE_CW prints one for as
-   * long as there is Morse — is broken at a space once it is long enough to be a record, so it
+   * long as there is Morse (`endlessLines`) — is broken at a space once it is long enough, so it
    * arrives a phrase at a time, each stamped with when it was heard, instead of growing for ever.
    */
   _read() {
@@ -1669,7 +1683,7 @@ export class DecoderStream {
     };
     const cut = text.lastIndexOf('\n') + 1;
     if (cut) { add(text.slice(0, cut)); text = text.slice(cut); }
-    if (text.length > SOFT_LINE) {
+    if (this.a.endlessLines && text.length > SOFT_LINE) {
       const sp = text.lastIndexOf(' ');
       if (sp > 0) { add(`${text.slice(0, sp)}\n`); text = text.slice(sp + 1); }
     }
@@ -1684,6 +1698,19 @@ export class DecoderStream {
     if (this.closed) return Promise.resolve();
     const ok = this.feed.stdin.write(Buffer.from(data.buffer, data.byteOffset, data.byteLength));
     return ok ? Promise.resolve() : new Promise((r) => this.feed.stdin.once('drain', r));
+  }
+
+  /**
+   * No more samples: the decoder reads to the end, prints what it was holding, and exits. A
+   * decoder that works through its input a buffer at a time keeps the last part of one until
+   * then, so this is how a stream that is finishing — the end of a capture — says everything.
+   */
+  end() {
+    if (!this.proc || this.closed) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.proc.once('close', () => { this._read(); resolve(); });
+      this.feed.stdin.end();
+    });
   }
 
   /** What is new since the last call. */

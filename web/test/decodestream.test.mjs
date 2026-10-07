@@ -14,7 +14,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as mod from './support/modulate.mjs';
-import { available, run, DecoderStream } from '../../server/adapters.js';
+import { ADAPTERS, available, run, DecoderStream } from '../../server/adapters.js';
 import { Session, METHODS } from '../../server/session.js';
 import { FileCapture } from '../../server/filecapture.js';
 
@@ -27,15 +27,19 @@ const TEXT = 'CQ CQ DE SDRFLEX TEST 73 THE QUICK BROWN FOX 1234';
 const words = (s) => s.replace(/\s+/g, ' ').trim();
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Feed `data` to a stream in pieces of `piece` samples, then let it finish printing. */
-async function fedInPieces(stream, data, rate, piece) {
-  for (let k = 0; k < data.length; k += piece) {
-    const part = data.subarray(k, Math.min(data.length, k + piece));
-    await stream.write(part, (k + part.length) / rate);
+/** Feed `data` to a stream in pieces of `piece` samples (pairs, for IQ), then end it. */
+async function fedInPieces(stream, data, rate, piece, { iq = false } = {}) {
+  const w = iq ? 2 : 1;
+  for (let k = 0; k < data.length; k += piece * w) {
+    const part = data.subarray(k, Math.min(data.length, k + piece * w));
+    await stream.write(part, (k + part.length) / w / rate);
   }
-  await wait(800);
+  await stream.end();
   return stream.take();
 }
+
+/** Records as a decoder reported them, without when the stream heard them. */
+const plain = (records) => records.map(({ at, ...r }) => r);
 
 test('Morse fed in pieces reads the same as Morse read whole', { skip }, async (t) => {
   // At 25 kS/s, so the feed resamples to multimon's 22 050 the way a channel's rate would.
@@ -130,3 +134,60 @@ test('a session streams a CW channel, starts again on a seek, and stops with the
   await wait(200);
   assert.ok(proc.exitCode !== null || proc.signalCode !== null, 'and its process has gone');
 });
+
+// ── the other decoders that stream ──────────────────────────────────────────
+//
+// The same question for each: fed in pieces much shorter than one of its packets, does it
+// report exactly what it reports given the whole span? The inputs are the ones
+// adapters.test.mjs decodes, so a decoder that streams is held to the answers it gives as a job.
+
+const STREAMED = [
+  {
+    id: 'ext.rtl433', kind: 'iq', rate: 250_000, piece: 0.004, centerHz: 433_920_000,
+    params: { flex: 'n=test,m=OOK_PWM,s=250,l=500,g=750,r=6000' },
+    input() {
+      const rate = 250_000, us = (x) => Math.round(x * 1e-6 * rate), rand = mod.rng(0x5eed1), out = [];
+      const push = (n, amp) => { for (let i = 0; i < n; i++) out.push(amp + (rand() - 0.5) * 0.008, (rand() - 0.5) * 0.008); };
+      push(us(10_000), 0);
+      for (let rep = 0; rep < 4; rep++) {
+        for (const w of [0b101100110011010101100110, 0b110010101010011001011001]) {
+          for (let k = 23; k >= 0; k--) { push((w >> k) & 1 ? us(500) : us(250), 0.45); push(us(250), 0); }
+          push(us(6000), 0);
+        }
+      }
+      return Float32Array.from(out);
+    },
+  },
+  {
+    id: 'ext.dump1090', kind: 'iq', rate: 2_400_000, piece: 0.00005,
+    input: () => mod.modeS([mod.adsbIdent(0x4840d6, 'SDRFLEX'), mod.adsbIdent(0xabcdef, 'SDRFLX2')]),
+  },
+  {
+    id: 'ext.direwolf', kind: 'real', rate: 48_000, piece: 0.05,
+    input: () => mod.afsk1200([
+      mod.ax25('N0CALL', 'APRS', '=4903.50N/07201.75W-sdrflex adapter check'),
+      mod.ax25('KC1ABC', 'APRS', 'sdrflex-ax25-round-trip'),
+    ], { rate: 48_000 }),
+  },
+];
+
+test('the decoders that stream say so, and redsea does not', () => {
+  for (const d of [...STREAMED, { id: 'ext.multimon' }]) assert.equal(ADAPTERS[d.id].stream, true, d.id);
+  // Its parser joins RDS groups across the whole output, which line-at-a-time reading undoes.
+  assert.ok(!ADAPTERS['ext.redsea'].stream);
+});
+
+for (const d of STREAMED) {
+  test(`${d.id} fed in pieces reports what it reports given the whole span`, { skip: !hasGr ? 'GNU Radio is not installed' : !available(d.id) && `${d.id} is not installed` }, async (t) => {
+    const data = d.input(), params = d.params || {};
+    const whole = await run(d.id, { data, kind: d.kind, sampleRate: d.rate, centerHz: d.centerHz, params });
+    assert.equal(whole.error, undefined, whole.error);
+    assert.ok(whole.records.length > 0, 'the whole-span decode finds something to compare against');
+    const s = new DecoderStream(d.id, { kind: d.kind, sampleRate: d.rate, centerHz: d.centerHz, params });
+    t.after(() => s.close());
+    const got = await fedInPieces(s, data, d.rate, Math.max(1, Math.round(d.piece * d.rate)), { iq: d.kind === 'iq' });
+    t.diagnostic(`${whole.records.length} records whole, ${got.records.length} streamed${got.error ? `; ${got.error}` : ''}`);
+    assert.deepEqual(plain(got.records), plain(whole.records));
+  });
+}
+
