@@ -42,9 +42,11 @@ const captureId = (c) => {
 };
 
 export class GrEngine extends MockEngine {
-  constructor(opts, worker) {
+  constructor(opts, worker, { scene = null } = {}) {
     super(opts);
     this.gr = worker;
+    // With nothing open, the synthetic scene, once server/gr/scene.js has recorded it.
+    this.scene = scene;
     this.grStats = { blocks: 0, ms: 0, misses: 0, hits: 0, waits: 0, outside: 0 };
     this._watched = new Set();
     this._pumping = false;
@@ -69,7 +71,7 @@ export class GrEngine extends MockEngine {
    */
   _store() {
     const c = this.capture;
-    if (!c) return null;
+    if (!c) return this.scene && this.scene.ready ? { path: this.scene.path, format: 'cf32', ring: 0, id: this.scene } : null;
     if (c.ring) return { path: c.ring.path, format: c.ring.format, ring: c.ring.samples, id: c.ring };
     if (c.live) return c.path ? { path: c.path, format: c.format, ring: c.samples, id: c } : null;
     return c.path ? { path: c.path, format: c.format, ring: 0, id: c } : null;
@@ -203,7 +205,10 @@ export class GrEngine extends MockEngine {
   }
 
   /** Where the signal ends now: a file's length, or a radio's newest sample. */
-  _end() { return this.capture && this.capture.live ? this.span()[1] : this.duration(); }
+  _end() {
+    if (!this.capture) return this.scene ? this.scene.durationS : 0;
+    return this.capture.live ? this.span()[1] : this.duration();
+  }
 
   /** The moments a block may come from: the file, or what of a radio's ring is on disk. */
   _onDisk() {
@@ -213,7 +218,7 @@ export class GrEngine extends MockEngine {
       // before (the stereo PLL's run-in), so it stays clear of both edges of the ring.
       return [first + 0.1, last - 0.02];
     }
-    return [0, this.duration()];
+    return [0, this._end()];
   }
 
   _range(node, t0, t1) {

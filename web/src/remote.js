@@ -47,6 +47,9 @@ export class RemoteEngine extends Graph {
     this._live = new Map();        // key → the most recent frame for it
     this._inflight = new Set();    // keys with a request outstanding
     this._pre = new Map();         // key|time → frame, from prefetch
+    this._rows = new Set();        // key|time with a request outstanding
+    this._gen = 0;                 // bumped when the graph changes; older answers are dropped
+    this._prefill = 0;             // which prefill is the newest, for the server to drop older ones
     this._queue = [];              // frame requests waiting for the next flush
     this._batching = false;
     this._onStatus = () => {};
@@ -424,9 +427,12 @@ export class RemoteEngine extends Graph {
 
     const key = frameKey(nodeId, opts);
     if (opts.at != null) {
-      const hit = this._pre.get(`${key}@${opts.at.toFixed(6)}`);
+      const row = `${key}@${opts.at.toFixed(6)}`;
+      const hit = this._pre.get(row);
       if (hit) return hit;
-      this._want(nodeId, opts, opts.at, key);
+      // Asked for every paint until it lands, and asking again each time is how a slow server
+      // got the same row dozens of times over.
+      if (!this._rows.has(row)) { this._rows.add(row); this._want(nodeId, opts, opts.at, key); }
       return { kind: 'pending' };
     }
     if (!this._inflight.has(key)) this._want(nodeId, opts, this.effectiveTime(nodeId), key);
@@ -443,14 +449,21 @@ export class RemoteEngine extends Graph {
   prefetch(nodeId, opts, times) {
     const key = frameKey(nodeId, opts);
     const want = times.filter((t) => !this._pre.has(`${key}@${t.toFixed(6)}`));
+    // A new prefill for the same view makes any older one moot — a retune restarts the
+    // waterfall — so it carries a number and the server stops computing the older ones.
+    const prefill = ++this._prefill, gen = this._gen;
     for (let i = 0; i < want.length; i += PREFETCH_BATCH) {
       const batch = want.slice(i, i + PREFETCH_BATCH);
-      this.call('frames', { reqs: batch.map((at) => ({ nodeId, opts: { ...opts, at } })) })
+      for (const at of batch) this._rows.add(`${key}@${at.toFixed(6)}`);
+      this.call('frames', { reqs: batch.map((at) => ({ nodeId, opts: { ...opts, at } })), prefill, prefillKey: key })
         .then((r) => {
+          if (gen !== this._gen) return;
+          // A stopped prefill answers only the rows it got to.
           r.frames.forEach((f, k) => this._pre.set(`${key}@${batch[k].toFixed(6)}`, f));
           this._trim();
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => { if (gen === this._gen) for (const at of batch) this._rows.delete(`${key}@${at.toFixed(6)}`); });
     }
   }
 
@@ -490,8 +503,10 @@ export class RemoteEngine extends Graph {
   _send(group) {
     // `live` says this is what a view is showing now, not a row being filled in behind it,
     // which the server cannot tell from the request: every request carries its moment.
+    const gen = this._gen;
     this.call('frames', { reqs: group.map((b) => ({ nodeId: b.nodeId, opts: b.opts, live: b.live })) })
       .then((r) => {
+        if (gen !== this._gen) return;
         r.frames.forEach((f, i) => {
           const b = group[i];
           if (b.live) this._live.set(b.key, f);
@@ -500,7 +515,10 @@ export class RemoteEngine extends Graph {
         });
         this._trim();
       })
-      .catch(() => { for (const b of group) this._inflight.delete(b.key); });
+      .catch(() => { if (gen === this._gen) for (const b of group) this._inflight.delete(b.key); })
+      .finally(() => {
+        if (gen === this._gen) for (const b of group) if (!b.live) this._rows.delete(`${b.key}@${b.opts.at.toFixed(6)}`);
+      });
   }
 
   _trim() {
@@ -515,7 +533,9 @@ export class RemoteEngine extends Graph {
     this._live.clear();
     this._pre.clear();
     this._inflight.clear();
+    this._rows.clear();
     this._queue.length = 0;
+    this._gen++;
   }
 }
 

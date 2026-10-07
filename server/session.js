@@ -23,6 +23,8 @@ import { StreamOut } from './streamout.js';
 import { GrPool, PRIORITY } from './gr/pool.js';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { GrEngine } from './gr/engine.js';
+import { sceneRecording } from './gr/scene.js';
+import os from 'node:os';
 
 export const PROTOCOL = 1;
 
@@ -43,7 +45,9 @@ export class Session {
     // GNU Radio as the engine (ADR-0044), one worker per session (ADR-0003). Opt-in while
     // the migration is under way; unset, nothing about the session changes.
     this.gr = process.env.SDRFLEX_ENGINE === 'gnuradio' ? new GrPool({ log }) : null;
-    this.engine = this.gr ? new GrEngine({ latency: false }, this.gr) : new Engine({ latency: false });
+    this.engine = this.gr
+      ? new GrEngine({ latency: false }, this.gr, { scene: sceneRecording(ringDir || os.tmpdir(), { log }) })
+      : new Engine({ latency: false });
     // Somebody else's decoders, offered to the graph. Only the server can know which of
     // them are installed, and only the server can run one (ADR-0013).
     this.engine.adapters = adapters.list();
@@ -270,12 +274,22 @@ const METHODS = {
    * arbitrary moments, and asking for those one at a time over a network is two
    * hundred and sixty round trips for what the engine computes in a few milliseconds.
    */
-  async frames({ reqs }) {
+  async frames({ reqs, prefill = null, prefillKey = null }) {
+    // A waterfall prefill is several batches sent at once, and a retune starts a new one. The
+    // newest is the one anyone will see: an older one stops where it is and answers the rows it
+    // got to, rather than holding the server for seconds computing rows for a picture that is
+    // already gone. Batches that run side by side otherwise pile up until none finishes.
+    if (prefill != null) {
+      if (!this._prefills) this._prefills = new Map();
+      if (prefill > (this._prefills.get(prefillKey) || 0)) this._prefills.set(prefillKey, prefill);
+    }
+    const stale = () => prefill != null && this._prefills.get(prefillKey) !== prefill;
     // The GNU Radio engine fetches the blocks these reads will touch first; the reads
     // themselves are synchronous.
     const t0 = performance.now();
     if (this.engine.prepare) {
       for (const { nodeId, opts, live } of reqs) {
+        if (stale()) return { frames: [] };
         const at = opts && opts.at != null ? opts.at : this.engine.effectiveTime(nodeId);
         await this.engine.prepare(nodeId, at, this.engine.frameSpan(nodeId, opts || {}),
                                   live ? PRIORITY.frame : PRIORITY.read);
@@ -293,6 +307,7 @@ const METHODS = {
       if (reqs.length > 1 && performance.now() - since > YIELD_MS) {
         await new Promise((r) => setImmediate(r));
         since = performance.now();
+        if (stale()) break;
       }
     }
     if (process.env.SDRFLEX_GR_DEBUG && performance.now() - t1 > 30) {
