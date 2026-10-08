@@ -18,6 +18,9 @@ export const STEPS = {
   analog_wfm_rcv: ['core.fm_discriminator'],
   analog_quadrature_demod_cf: ['core.fm_discriminator'],
   analog_am_demod_cf: ['core.am_envelope'],
+  blocks_complex_to_mag: ['core.am_envelope'],
+  // A recipe that folds into one node is a block in another recipe, as itself.
+  sdrflex_cw: ['core.cw'],
 };
 
 /**
@@ -40,11 +43,15 @@ export function chainOf(recipe) {
   return ops;
 }
 
-/** The recipe's settings that belong to this node: those it has a setting of the same name for. */
+/**
+ * The recipe's settings that belong to this node: those it has a setting of the same name for.
+ * A derived one is left to the node, which measures it where the recipe is used rather than
+ * taking the value it happened to have where the recipe was saved.
+ */
 export function settingsFor(recipe, node) {
   const out = {};
   for (const [name, p] of Object.entries(recipe.params)) {
-    if (p.fromStream || !node.params || !node.params[name]) continue;
+    if (p.fromStream || (recipe.derived && recipe.derived[name]) || !node.params || !node.params[name]) continue;
     const v = Number(p.value);
     out[name] = typeof node.params[name].value === 'string' ? String(p.value) : (Number.isFinite(v) ? v : p.value);
   }

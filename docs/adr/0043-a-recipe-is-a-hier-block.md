@@ -123,6 +123,26 @@ stereo decode given those settings, and Listen; every node carries the recipe, a
 fold into one, "WBFM broadcast · 3 steps", which opens into the steps when tapped again. It is
 ranked just after `Tune here` in the menu, ahead of any one demodulator.
 
+## Saving and exporting, as built (2026-10-08)
+
+A node's settings offer **save as recipe** and **export as a GRC program**. Both write the chain
+from the node's channel down to it, on the server (`server/grc.js`), from the graph the server
+holds: the page sends a node id and a name and nothing else, because a `.grc` can carry Python
+and the page has no authentication.
+
+- **A recipe** is a hier block whose input is the channel, with the recipe block filled in. The
+  settings the chain reads become its parameters by name; one SDR Flex derived is marked so and
+  derived again where the recipe is used, except the channel's width, which is the recipe's
+  choice. It is downloaded, and, on a box that keeps sessions, kept in `<sessions>/recipes`,
+  where it joins the menu at once. A name already taken is refused, never overwritten.
+- **A program** is a flowgraph GRC runs on a desktop: the capture by file name, the channel, the
+  chain, and a sound card at 48 kHz.
+- A step with no GNU Radio block (a slicer, an external decoder) ends the chain there, with a
+  Note on the canvas saying so. A CW step is the CW recipe's own hier block, which GRC on a
+  desktop knows once `recipes/cw.grc` has been generated there.
+
+Every file written in the tests is compiled by `grcc` (`web/test/grcexport.test.mjs`).
+
 ## Consequences
 
 - **The block ecosystem and GRC are both on-ramps,** in both directions.

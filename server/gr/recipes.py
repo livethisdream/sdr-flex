@@ -83,17 +83,25 @@ def describe(path):
     return out
 
 
-def all_recipes(directory=RECIPES):
+def all_recipes(directory=RECIPES, mine=False):
     found, errors = [], []
-    for f in sorted(os.listdir(directory)):
+    for f in sorted(os.listdir(directory)) if os.path.isdir(directory) else []:
         if f.endswith('.grc'):
             try:
-                found.append(describe(os.path.join(directory, f)))
+                r = describe(os.path.join(directory, f))
+                r['mine'] = mine
+                found.append(r)
             except Exception as e:  # a broken recipe is reported, and the rest still load
                 errors.append(f'{type(e).__name__}: {e}')
     return found, errors
 
 
 if __name__ == '__main__':
+    # The shipped recipes, then any saved on this box, which may not shadow a shipped one.
     found, errors = all_recipes(sys.argv[1] if len(sys.argv) > 1 else RECIPES)
+    for d in sys.argv[2:]:
+        more, errs = all_recipes(d, mine=True)
+        taken = {r['name'] for r in found}
+        found += [r for r in more if r['name'] not in taken]
+        errors += errs
     print(json.dumps({'recipes': found, 'errors': errors}))

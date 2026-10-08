@@ -1577,6 +1577,18 @@ class App {
       nodeCells.push({ key: 'out', label: n.out.kind === 'audio' ? 'in' : 'out', unit: 'kS/s',
                        type: 'ro', value: n.out.sampleRate, fmt: (v) => (v / 1e3).toFixed(1) });
       // What the node menu used to hold, now that its right-click opens this instead.
+      // The chain from its channel down to here, as GNU Radio Companion (ADR-0043): a recipe
+      // that comes back into the menu, or a program a desktop can run. Only where there is a
+      // chain to save — a step after a channel — and an engine that can write one.
+      if (this.engine.exportGrc && !this.isChannel(n)) {
+        nodeCells.push({
+          key: 'saverecipe', label: 'save as recipe', unit: '', type: 'text', commit: 'enter', value: '',
+          placeholder: 'a name for it', fmt: () => '…',
+          hint: 'the chain from its channel to here, as a GNU Radio Companion hier block — ' +
+                (this.engine.server && this.engine.server.sessions ? 'kept on this box, in the menu, and downloaded' : 'downloaded'),
+        });
+        nodeCells.push({ key: 'exportgrc', label: 'export as a GRC program', type: 'action', value: '' });
+      }
       // One gesture on a node, one place for everything about it.
       nodeCells.push({ key: 'rename', label: n.name ? 'rename…' : 'give it a name…', type: 'action', value: '' });
       if (n.name) nodeCells.push({ key: 'unname', label: `call it “${n.label}” again`, type: 'action', value: '' });
@@ -1661,6 +1673,7 @@ class App {
       if (k === 'rename') this.beginRename(this.current);
       if (k === 'unname') this.commitRename(this.current, '');
       if (k === 'remove') this.removeNode(this.current);
+      if (k === 'exportgrc') this.exportGrc('program');
     };
   }
 
@@ -1702,6 +1715,7 @@ class App {
     // window rather than of a node. It sits on the source because that is where "which
     // capture is this" already lives.
     if (key === 'session') { await this.saveSession(value); return; }
+    if (key === 'saverecipe') { if (String(value).trim()) await this.exportGrc('recipe', value); return; }
     const n = this.node();
     if (!n.params[key]) return;
     if (n.out.kind === 'audio' && key === 'volume') this.mixer.setVolume(n.id, value);
@@ -1862,6 +1876,33 @@ class App {
       this.notify(`could not build ${r.title}: ${err.message}`, 8000);
       this.refresh();
     }
+  }
+
+  /**
+   * The chain down to the node on screen, as a .grc: a recipe (kept on the box where it keeps
+   * things, so it is in the menu at once) or a program. Downloaded either way, so it can be
+   * opened in GRC on a desktop.
+   */
+  async exportGrc(as, title) {
+    const n = this.node();
+    const name = String(title || this.tag(n) || 'flow').trim();
+    const keep = as === 'recipe' && !!(this.engine.server && this.engine.server.sessions);
+    let res;
+    try {
+      res = await this.engine.exportGrc(n.id, name, as, keep);
+    } catch (err) {
+      this.notify(err.message, 8000);
+      return;
+    }
+    out.save(new Blob([res.text], { type: 'text/yaml' }), `${res.name}.grc`);
+    const extra = [
+      ...res.notes,
+      ...(res.needs.length ? [`GRC on a desktop needs ${res.needs.join(', ')} first: open recipes/cw.grc there and generate it once`] : []),
+      ...(as === 'program' ? ['put the capture beside it'] : []),
+    ];
+    this.notify(`${as === 'recipe' ? `saved “${res.title}” as a recipe` : `exported “${res.title}” as a GRC program`}` +
+                `${res.kept ? ' — it is in the menu now' : ''}${extra.length ? ` · ${extra.join(' · ')}` : ''}`, 9000);
+    this.renderStrip();
   }
 
   async applyOp(opId, selection) {

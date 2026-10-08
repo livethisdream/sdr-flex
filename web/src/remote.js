@@ -395,6 +395,14 @@ export class RemoteEngine extends Graph {
     return await this.call('runRecordsSpan', { nodeId, t0, t1 });
   }
 
+  /** The chain down to a node as GNU Radio Companion, written by the server (server/grc.js). */
+  async exportGrc(nodeId, title, as = 'recipe', keep = false) {
+    const out = await this.call('exportGrc', { nodeId, title, as, keep });
+    // A recipe kept on the box is in the menu from now on.
+    if (out && out.recipes) this.recipes = out.recipes;
+    return out;
+  }
+
   /** A decoder fed continuously up to `t` on the server; null if it is not one that can be. */
   async decodeTo(nodeId, t) {
     return await this.call('decodeTo', { nodeId, t });
