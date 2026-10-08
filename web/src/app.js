@@ -840,16 +840,27 @@ class App {
         const show = [...f.nodes].reverse().find((n) => n.out.kind !== 'audio') || f.nodes[f.nodes.length - 1];
         const here = f.nodes.some((n) => n.id === key);
         return { k: here ? key : show.id, label: f.title, kind: show.out.kind, del: f.nodes[0].id, node: show,
-                 recipe: f.group, steps: f.nodes.length,
+                 recipe: f.group, steps: f.nodes.length, rcp: true,
                  live: f.nodes.some((n) => n.out.kind === 'audio' && this.mixer.has(n.id)) };
       }))
       .concat([{ k: 'flow', label: 'Flow' }]);
     this._renderTabItems(items);
   }
 
+  /**
+   * The recipe a node is, or is part of (ADR-0043), or null: a step a chain recipe built, or a
+   * node whose operation is itself a recipe folded into one node (CW).
+   */
+  recipeOf(n) {
+    if (!n) return null;
+    if (n.recipe) return { title: n.recipe.title, name: n.recipe.name, group: n.recipe.group };
+    const r = (this.engine.recipes || []).find((x) => x.kind === 'node' && x.node === n.op);
+    return r ? { title: r.title, name: r.name, group: null } : null;
+  }
+
   /** One block's tab. */
   tabItem(b) {
-    return { k: b.id, label: this.tag(b), kind: b.out.kind, del: b.id, node: b,
+    return { k: b.id, label: this.tag(b), kind: b.out.kind, del: b.id, node: b, rcp: !!this.recipeOf(b),
                                    live: b.out.kind === 'audio' && this.mixer.has(b.id),
                                    // ADR-0013 requires a node you cannot see inside to
                                    // look different from one you can. `opaque` is set
@@ -864,9 +875,9 @@ class App {
       if (it.node && this.renaming && this.renaming.id === it.node.id) {
         return this.renameField(it.node, 'tab on naming');
       }
-      return `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}${it.live ? ' live' : ''}${it.recipe ? ' recipe' : ''}" data-k="${it.k}"` +
+      return `<button class="tab${it.k === this.tabKey() ? ' on' : ''}${it.ext ? ' ext' : ''}${it.live ? ' live' : ''}${it.recipe ? ' recipe' : ''}${it.rcp ? ' rcp' : ''}" data-k="${it.k}"` +
       (it.recipe ? ` data-recipe="${it.recipe}"` : '') +
-      (it.node ? ` data-menu="${it.node.id}" title="${attr(this.titleOf(it.node))}"` : '') + '>' +
+      (it.node ? ` data-menu="${it.node.id}" title="${attr(this.titleOf(it.node))}${it.rcp ? ` · part of the recipe ${attr((this.recipeOf(it.node) || {}).title || '')}` : ''}"` : '') + '>' +
       `${it.live ? '<span class="spk">\u{1F508}</span>' : ''}` +
       `${it.label}${it.steps ? `<span class="tk">${it.steps} steps</span>` : it.kind ? `<span class="tk">${it.kind}</span>` : ''}` +
       `${it.live ? '<i class="alvl"></i>' : ''}` +
@@ -1358,15 +1369,21 @@ class App {
       const why = d.known
         ? `these samples are ${(d.seconds * 1e6).toFixed(1)} µs older than the moment they are asked for`
         : `${d.op} restitches time, so nothing downstream can say when its samples are from`;
-      return `<div class="fnode${id === this.current ? ' cur' : ''}${spec && spec.external ? ' ext' : ''}" style="margin-left:${depth * 22}px" data-id="${id}">
-          <span class="fn">${this.tag(n)}</span>
+      // A recipe is drawn as one: its steps carry a rule down their left edge, and the first
+      // of them says which recipe they are (ADR-0043).
+      const rc = this.recipeOf(n);
+      const p = n.parent != null ? this.engine.node(n.parent) : null;
+      const first = rc && rc.group && !(p && p.recipe && p.recipe.group === rc.group);
+      const head = first ? `<div class="fgroup" style="margin-left:${depth * 22}px">${attr(rc.title)} <i>recipe</i></div>` : '';
+      return head + `<div class="fnode${id === this.current ? ' cur' : ''}${spec && spec.external ? ' ext' : ''}${rc ? ' rcp' : ''}" style="margin-left:${depth * 22}px" data-id="${id}">
+          <span class="fn">${this.tag(n)}${rc && !rc.group ? ' <i class="frec">recipe</i>' : ''}</span>
           <span class="fk">${n.out.kind}</span>
           <span class="fr">${fmtRate(n.out.sampleRate)}</span>
           <span class="fd${d.known ? '' : ' unk'}" title="${attr(why)}">${late}</span>
         </div>` + second + kids.map((k) => walk(k.id, depth + 1)).join('');
     };
     $('#pane-flow').innerHTML =
-      `<div class="flowwrap"><div class="flowhead">Compiled graph — read-only. Export to <code>.grc</code> arrives with the real engine at M1.</div>${walk(this.engine.root.id, 0)}</div>`;
+      `<div class="flowwrap"><div class="flowhead">Compiled graph — read-only.</div>${walk(this.engine.root.id, 0)}</div>`;
     for (const el of $('#pane-flow').querySelectorAll('.fnode')) {
       el.addEventListener('click', () => {
         const n = this.engine.node(el.dataset.id);
@@ -1773,7 +1790,10 @@ class App {
         .filter((r) => r.kind === 'chain' && r.input === here.out.kind)
         .map((r) => ({ id: `__recipe:${r.name}`, name: r.title, group: 'Recipes', rank: RECIPE_RANK,
                        hint: r.description.split(':')[0] || r.title }));
-      this.menu.open(x, y, rows.concat(recipes), (opId) => {
+      // A node that is itself a recipe (CW) says so in the list, as the chain recipes do.
+      const marked = rows.map((o) => ((this.engine.recipes || []).some((r) => r.kind === 'node' && r.node === o.id)
+        ? { ...o, recipe: true } : o));
+      this.menu.open(x, y, marked.concat(recipes.map((r) => ({ ...r, recipe: true }))), (opId) => {
         if (opId === '__identify') { this.openIdentify(x, y); return; }
         if (opId.startsWith('__recipe:')) { this.applyRecipe(opId.slice(9), selection); return; }
         this.applyOp(opId, selection);

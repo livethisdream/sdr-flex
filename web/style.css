@@ -876,6 +876,15 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
    has. It shows on the current tab as it did before — at rest the `ext` mark on the kind
    badge is what carries it. */
 .tab.ext { border-style:dashed; }
+/* A recipe (ADR-0043): one thing made of several steps, marked with an accent rule under it
+   rather than a different border, since it is not opaque — it can be opened. */
+.tab.rcp { box-shadow:inset 0 -2px 0 var(--accent-mid); }
+.ctx .ext.rcp { color:var(--accent); border-color:var(--accent-mid); }
+.fgroup { font-size:.66rem; color:var(--accent); padding:.4rem 0 .1rem .5rem;
+          border-left:2px solid var(--accent-mid); }
+.fgroup i, .frec { font-style:normal; font-size:.58rem; letter-spacing:.06em; text-transform:uppercase;
+                   color:var(--dim); }
+.fnode.rcp { border-left:2px solid var(--accent-mid); }
 .tab.ext .tk { color:var(--warn); }
 
 /* siblings stay on screen at the current level, grouped so they read as a set */
