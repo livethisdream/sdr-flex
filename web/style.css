@@ -1124,3 +1124,12 @@ input.rn::placeholder { color:var(--dim); font-weight:400; }
   #topbar.open .sibs { display:flex; flex-direction:column; align-items:stretch; background:none; padding:0; }
   #topbar.open > *, #topbar.open .sibs > *, #tabs.open > * { text-align:left; justify-content:flex-start; }
 }
+
+/* The connection readout (showDiag): the demo server's, or `?diag`. Small and out of the way,
+   red when the socket is not open or the view's frame is going stale. */
+.diag {
+  position:fixed; left:4px; bottom:4px; z-index:50; pointer-events:none;
+  font-family:var(--mono); font-size:.6rem; padding:.1rem .3rem; border-radius:2px;
+  background:color-mix(in srgb, var(--panel) 85%, transparent); color:var(--body);
+}
+.diag.bad { color:#fff; background:#b3261e; }

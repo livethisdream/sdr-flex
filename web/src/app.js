@@ -152,6 +152,10 @@ function fmtSet(v) {
 
 // The frequency cues a demod draws on a spectrum (cueMarks): what each is called, and what
 // to drag it onto.
+// Where `recover` leaves the playhead for the page it reloads into, and how long that holds.
+const RECOVER_KEY = 'sdrflex.recover';
+const RECOVER_FRESH_MS = 60_000;
+
 const CUE_LABEL = { offsetHz: 'CW carrier', pitchHz: 'pitch', bfoHz: 'SSB carrier' };
 const CUE_TITLE = { offsetHz: 'drag onto the carrier', pitchHz: 'drag onto the tone',
                     bfoHz: 'drag to the suppressed carrier: the voice goes in the shaded band' };
@@ -237,7 +241,7 @@ class App {
     this._keeper = setInterval(() => this.keep(), KEEP_PERIOD_MS);
     addEventListener('beforeunload', (e) => {
       this.keep();
-      if (this.engine.nodes.size <= 1) return;
+      if (this._recovering || this.engine.nodes.size <= 1) return;
       // The browser shows its own wording, and there is no way to say what is at stake.
       // The point is only the pause: a reload is one key away from a tab close and this
       // tool has no document to have saved.
@@ -293,6 +297,10 @@ class App {
       try { captures = await this.engine.listCaptures(); } catch { captures = []; }
     }
     const can = resume.canReplay(saved, { captures, remote: !!this.remote });
+    // Back from `recover`: restore without asking, since the person never chose to leave.
+    let back = null;
+    try { back = JSON.parse(sessionStorage.getItem(RECOVER_KEY) || 'null'); sessionStorage.removeItem(RECOVER_KEY); } catch { /* no store */ }
+    if (back && Date.now() - back.at > RECOVER_FRESH_MS) back = null;
     const what = `${saved.nodes.length} node${saved.nodes.length === 1 ? '' : 's'} on ` +
                  `${saved.source.label || 'a capture'}`;
     $('#resume-text').textContent = can.ok ? `Last time: ${what}` : `Last time: ${what} — ${can.why}`;
@@ -333,6 +341,13 @@ class App {
       }
       this.metrics.endOp();
     };
+    if (back) {
+      if (!can.ok) { this.notify(`reconnected; the last chain could not come back — ${can.why}`, 12000); return; }
+      await $('#resume-go').onclick();
+      this.engine.t = Math.max(0, back.t || 0);
+      this.notify('reconnected and restored', 6000);
+      return;
+    }
     // It is an offer about the past, and the moment somebody does something it is about
     // the past of a different session.
     addEventListener('pointerdown', function once(e) {
@@ -2529,6 +2544,54 @@ class App {
    * after opening a capture is disagree with the guess.
    */
   /**
+   * The server stopped answering: start again, and put back what was open.
+   *
+   * A server session lives as long as its socket, so a phone that slept or a network that
+   * changed leaves a page whose session is gone; it showed its last frames while the clock ran
+   * on, until somebody reloaded. This is that reload, done for them once the server answers
+   * again and the page is being looked at, with the chain restored as the resume offer would
+   * and the playhead where it was. A radio is not restored (resume.js): its samples are gone.
+   */
+  recover() {
+    if (this._recovering) return;
+    this._recovering = true;
+    this.keep();
+    // Back to where the data stopped, not where the clock got to while nobody noticed.
+    const e = this.engine, quiet = e.playing && e.status ? Math.min(e.status().heardS, 30) * (e.speed || 1) : 0;
+    const t = Math.max(0, e.t - quiet);
+    const say = () => this.notify('lost the server — reconnecting…', 3000);
+    say();
+    const tryNow = async () => {
+      say();
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const r = await fetch('/version', { cache: 'no-store' });
+        if (!r.ok) return;
+      } catch { return; }
+      try { sessionStorage.setItem(RECOVER_KEY, JSON.stringify({ t, at: Date.now() })); } catch { /* no store */ }
+      location.reload();
+    };
+    setInterval(tryNow, 2000);
+    tryNow();
+  }
+
+  /** The connection readout, with `?diag` in the address. */
+  showDiag() {
+    const el = document.createElement('div');
+    el.className = 'diag';
+    document.body.appendChild(el);
+    const age = (s) => (s == null ? '-' : s < 10 ? s.toFixed(1) : s.toFixed(0));
+    setInterval(() => {
+      const st = this.engine.status ? this.engine.status() : null;
+      if (!st) return;
+      el.classList.toggle('bad', st.socket !== 'open' || (st.views > 0 && st.liveS != null && st.liveS > 3));
+      el.textContent = `${st.socket} · heard ${age(st.heardS)} s · frame ${age(st.liveS)} s · ` +
+        `${st.calls} waiting${st.oldest ? ` (${st.oldest.m} ${age(st.oldest.s)} s)` : ''} · ` +
+        `retried ${st.stuck} · pings ${st.pings}${st.dead ? ' · went quiet' : ''}`;
+    }, 500);
+  }
+
+  /**
    * Use the engine on the other end of the socket, if there is one.
    *
    * The same client is served both by a container and by any static host, and which
@@ -2566,9 +2629,8 @@ class App {
                      `${this.build.builtAt ? ` · ${this.build.builtAt}` : ''}` +
                      `\n  the page and the engine are served by the same process, so this is both.`);
       }
-      remote.onStatus(({ connected }) => {
-        if (!connected) this.notify('lost the engine — the page is showing its last frames', 12000);
-      });
+      remote.onStatus(({ connected }) => { if (!connected) this.recover(); });
+      if (new URLSearchParams(location.search).has('diag')) this.showDiag();
     } catch {
       // nothing there: the in-tab engine is a complete tool, not a degraded mode
     }

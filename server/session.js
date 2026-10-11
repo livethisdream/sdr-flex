@@ -218,6 +218,11 @@ export const METHODS = {
              recipes: recipeList(this.log, this.recipeDir) };
   },
 
+  /** The page asking whether the server is there, when it has heard nothing for a while. */
+  async ping() {
+    return {};
+  },
+
   async createSession() {
     const root = await this.engine.createSession();
     return { root: root.id };
@@ -348,6 +353,8 @@ export const METHODS = {
       }
     }
     const t1 = performance.now();
+    // Waiting on GNU Radio this long is a view frozen on the page, so it is logged on every box.
+    if (t1 - t0 > 2000) this.log(`frames waited ${((t1 - t0) / 1000).toFixed(1)} s for GNU Radio (${reqs.length} request${reqs.length === 1 ? '' : 's'})`);
     // A waterfall's prefill asks for 64 rows at once, and computing them in one go held the
     // server's thread for up to 250 ms — after a retune, the retuned spectrum waited behind
     // the waterfall refilling its history. So a batch gives way every few milliseconds, and a
