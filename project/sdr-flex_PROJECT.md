@@ -885,6 +885,14 @@ consecutive parallel runs afterwards: 450 passing in 28–33 s each.
   playhead timer keeps moving. Reloading the page fixes it and restores the session. Not yet
   reproduced; the server logs show no errors around it, which points at the page's view loop
   or its link to the server rather than the GNU Radio worker. Chase it down.
+  **Found, 2026-10-11:** a server session lives as long as its socket, and the page never
+  reconnected: a dropped connection (a phone sleeping, a network change, a server restart)
+  left the page drawing its last frames while the clock ran. A socket can also go quiet
+  without closing, and a live view whose one request never came back stayed frozen. Now the
+  page pings a quiet server, closes a connection that stops answering, re-asks a live frame
+  after 5 s, and on a lost connection reloads itself once the server answers, restoring the
+  chain and the playhead where data stopped. A radio is not restored. The demo server shows a
+  connection readout (`?diag` anywhere). Waiting for a report from use to confirm it was this.
 
 - ~~**Persistent sessions.**~~ Built (ADR-0042). The question it was waiting on —
   recipe written somewhere durable, or a live engine held open — is settled below, and

@@ -32,6 +32,15 @@ import * as plugins from './plugins.js';
 import { cleanName } from './engine.js';
 
 const PREFETCH_BATCH = 64;
+// The connection's health (watch). A live view's frame that has not come back in this long is
+// given up and asked for again: one lost reply otherwise holds that view on its last frame for
+// good, since a view has one request in flight at a time. A server quiet for PING_MS is asked
+// whether it is there; one that says nothing for DEAD_MS is not, whatever the socket says: a
+// phone that slept, or a network that changed under it, leaves a socket that looks open and
+// carries nothing.
+const STUCK_MS = 5000;
+const PING_MS = 4000;
+const DEAD_MS = 10000;
 const PREFETCH_MAX = 2048;     // rows kept from prefill; a waterfall is ~260
 
 export class RemoteEngine extends Graph {
@@ -53,6 +62,9 @@ export class RemoteEngine extends Graph {
     this._queue = [];              // frame requests waiting for the next flush
     this._batching = false;
     this._onStatus = () => {};
+    this._heard = 0;               // when anything last arrived from the server
+    this._liveAt = 0;              // when a live view's frame last arrived
+    this.health = { stuck: 0, pings: 0, dead: false };
   }
 
   onStatus(fn) { this._onStatus = fn; }
@@ -67,6 +79,7 @@ export class RemoteEngine extends Graph {
       s.onmessage = (ev) => this._onMessage(ev.data);
       s.onerror = () => {};
       s.onclose = () => {
+        clearInterval(this._watch);
         // Closing before it ever opened means nothing is listening. Saying so now
         // rather than at the timeout is the difference between a static host loading
         // instantly on the in-tab engine and appearing to hang for eight seconds.
@@ -80,6 +93,8 @@ export class RemoteEngine extends Graph {
       s.onopen = async () => {
         opened = true;
         this.ready = true;
+        this._heard = performance.now();
+        this._watch = setInterval(() => this._check(), 1000);
         this._onStatus({ connected: true });
         try {
           const hello = await this.call('hello');
@@ -103,12 +118,57 @@ export class RemoteEngine extends Graph {
     return new Promise((resolve, reject) => {
       if (!this._sock || this._sock.readyState !== 1) { reject(new Error('not connected')); return; }
       const id = this._next++;
-      this._calls.set(id, { resolve, reject, onProgress, chunks: null });
+      this._calls.set(id, { resolve, reject, onProgress, chunks: null, m, t: performance.now(),
+                            live: m === 'frames' && a && a.reqs && a.reqs.some((r) => r.live) });
       this._sock.send(encode({ id, m, a }));
     });
   }
 
+  /**
+   * Once a second: give up on a live frame that is not coming, ask a quiet server whether it is
+   * there, and close a connection that has stopped answering, so the page knows it has.
+   */
+  _check() {
+    const now = performance.now();
+    for (const [id, c] of this._calls) {
+      if (c.live && now - c.t > STUCK_MS) {
+        this._calls.delete(id);
+        this.health.stuck++;
+        c.reject(new Error('no answer'));   // which takes it off `_inflight`, so it is asked again
+      }
+    }
+    // Dead is a ping with nothing heard since it went, not a long silence: a hidden tab's timers
+    // run once a minute, and a quiet minute there is the browser, not the server.
+    if (this._pingAt && this._heard < this._pingAt && now - this._pingAt > DEAD_MS - PING_MS) {
+      this.health.dead = true;
+      try { this._sock.close(); } catch { /* already going */ }
+      return;
+    }
+    if (now - this._heard > PING_MS && !(this._pingAt && this._heard < this._pingAt)) {
+      this.health.pings++;
+      this._pingAt = now;
+      this.call('ping').catch(() => {});
+    }
+  }
+
+  /** What the diagnostic readout shows: the socket, the calls waiting, and how stale things are. */
+  status() {
+    const now = performance.now();
+    let oldest = null;
+    for (const c of this._calls.values()) if (!oldest || c.t < oldest.t) oldest = c;
+    return {
+      socket: ['connecting', 'open', 'closing', 'closed'][this._sock ? this._sock.readyState : 3],
+      heardS: (now - this._heard) / 1000,
+      liveS: this._liveAt ? (now - this._liveAt) / 1000 : null,
+      calls: this._calls.size,
+      oldest: oldest ? { m: oldest.m, s: (now - oldest.t) / 1000 } : null,
+      views: this._inflight.size,
+      ...this.health,
+    };
+  }
+
   _onMessage(buf) {
+    this._heard = performance.now();
     const msg = decode(buf);
     const c = this._calls.get(msg.id);
     if (!c) return;
@@ -526,7 +586,7 @@ export class RemoteEngine extends Graph {
         if (gen !== this._gen) return;
         r.frames.forEach((f, i) => {
           const b = group[i];
-          if (b.live) this._live.set(b.key, f);
+          if (b.live) { this._live.set(b.key, f); this._liveAt = performance.now(); }
           else this._pre.set(`${b.key}@${b.opts.at.toFixed(6)}`, f);
           this._inflight.delete(b.key);
         });
