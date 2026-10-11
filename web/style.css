@@ -847,6 +847,11 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   content:""; position:absolute; top:0; bottom:0; left:11px; width:2px;
   background:var(--accent);
 }
+/* The audio an SSB demod hears, beside its carrier cue: the side the sideband is on. */
+.cueband {
+  position:absolute; top:0; bottom:0; pointer-events:none;
+  background:color-mix(in srgb, var(--accent) 14%, transparent);
+}
 .cue.auto::before { background:repeating-linear-gradient(var(--accent) 0 6px, transparent 6px 10px); }
 .cue span {
   position:absolute; top:30px; left:15px; white-space:nowrap;
