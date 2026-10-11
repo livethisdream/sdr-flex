@@ -248,3 +248,10 @@ cleanly as it plays, and the synthetic radio decodes live 0.3 s behind its newes
 decoder suite passes through the new feed (M17's voice on its short fixture: 0.52 s, against
 0.56 s through the JS resampler).
 
+**AM and SSB, as recipes (ADR-0043), 2026-10-11.** `recipes/am.grc` and `recipes/ssb.grc`, run
+on the tuner as CW is; FM and stereo were already GNU Radio. Gates: GNU Radio and JS agree to
+2e-3 of peak across block seams for AM, upper sideband with a BFO, and lower sideband; the lower
+sideband rejects an upper-sideband tone by 48 dB; the JS Hilbert taps equal `firdes.hilbert` to
+1e-7; AM and SSB chains export as recipes and programs that `grcc` compiles. Full image 619 pass,
+0 fail. What is left in JS: Gain and To real (one block each), and the slicers and framers,
+which are the next step.

@@ -39,9 +39,15 @@ const EXPORT = {
     blocks: [{ id: 'sdrflex_cw', params: { samp_rate: 'samp_rate', offsetHz: 'offsetHz', pitchHz: 'pitchHz',
                                            filterHz: 'filterHz', gain: 'gain', start_index: '0' } }],
     rate: 'samp_rate', output: 'real', needs: 'sdrflex_cw' }),
+  // The AM and SSB recipes, as the hier blocks they are (recipes/am.grc, recipes/ssb.grc).
   'core.am_envelope': () => ({
-    fuses: 1, params: [], blocks: [{ id: 'blocks_complex_to_mag', params: { vlen: '1' } }],
-    rate: 'samp_rate', output: 'real' }),
+    fuses: 1, params: [], blocks: [{ id: 'sdrflex_am', params: { samp_rate: 'samp_rate' } }],
+    rate: 'samp_rate', output: 'real', needs: 'sdrflex_am' }),
+  'core.ssb': (n) => ({
+    fuses: 1, params: [[n, 'sideband'], [n, 'bfoHz'], [n, 'gain']],
+    blocks: [{ id: 'sdrflex_ssb', params: { samp_rate: 'samp_rate', sideband: 'sideband', bfoHz: 'bfoHz',
+                                            gain: 'gain', start_index: '0' } }],
+    rate: 'samp_rate', output: 'real', needs: 'sdrflex_ssb' }),
 };
 
 /** The nodes from `nodeId` up to the channel it is in, channel first. */

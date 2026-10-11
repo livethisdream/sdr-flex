@@ -1897,7 +1897,7 @@ class App {
     out.save(new Blob([res.text], { type: 'text/yaml' }), `${res.name}.grc`);
     const extra = [
       ...res.notes,
-      ...(res.needs.length ? [`GRC on a desktop needs ${res.needs.join(', ')} first: open recipes/cw.grc there and generate it once`] : []),
+      ...(res.needs.length ? [`GRC on a desktop needs ${res.needs.join(', ')} first: open ${res.needs.map((b) => `recipes/${b.replace(/^sdrflex_/, '')}.grc`).join(', ')} there and generate it once`] : []),
       ...(as === 'program' ? ['put the capture beside it'] : []),
     ];
     this.notify(`${as === 'recipe' ? `saved “${res.title}” as a recipe` : `exported “${res.title}” as a GRC program`}` +

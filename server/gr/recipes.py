@@ -69,6 +69,7 @@ def describe(path):
         'output': m.get('output', 'real'),
         'listen': m.get('listen') == 'yes',
         'history': m.get('history') or None,
+        'lead': m.get('lead') or None,
         'derived': derived,
         'params': params,
         'blocks': [{'id': b['id'], 'name': b['name'], 'params': b.get('parameters') or {}}

@@ -1,0 +1,254 @@
+options:
+  parameters:
+    author: SDR Flex
+    category: '[SDR Flex]'
+    description: 'SSB by the phasing method: the passband moved by the BFO, then I plus or
+      minus the Hilbert transform of Q, plus for lower sideband and minus for upper, with I
+      delayed to line up with the transformer. start_index is the capture sample the first
+      input is; history is how many inputs come before the first whole output.'
+    generate_options: hb
+    hier_block_src_path: '.:'
+    id: sdrflex_ssb
+    output_language: python
+    title: SSB demod
+  states:
+    coordinate: [8, 8]
+    rotation: 0
+    state: enabled
+
+blocks:
+- name: samp_rate
+  id: parameter
+  parameters:
+    hide: none
+    label: Sample rate
+    short_id: ''
+    type: eng_float
+    value: '25000'
+  states:
+    coordinate: [200, 8]
+    rotation: 0
+    state: enabled
+- name: sideband
+  id: parameter
+  parameters:
+    hide: none
+    label: Sideband (usb or lsb)
+    short_id: ''
+    type: str
+    value: usb
+  states:
+    coordinate: [328, 8]
+    rotation: 0
+    state: enabled
+- name: bfoHz
+  id: parameter
+  parameters:
+    hide: none
+    label: BFO (Hz)
+    short_id: ''
+    type: eng_float
+    value: '0'
+  states:
+    coordinate: [488, 8]
+    rotation: 0
+    state: enabled
+- name: gain
+  id: parameter
+  parameters:
+    hide: none
+    label: Gain
+    short_id: ''
+    type: eng_float
+    value: '6'
+  states:
+    coordinate: [616, 8]
+    rotation: 0
+    state: enabled
+- name: start_index
+  id: parameter
+  parameters:
+    hide: part
+    label: Start index
+    short_id: ''
+    type: intx
+    value: '0'
+  states:
+    coordinate: [744, 8]
+    rotation: 0
+    state: enabled
+- name: recipe
+  id: sdrflex_recipe
+  parameters:
+    kind: node
+    node: core.ssb
+    input: iq
+    output: real
+    derived: sideband=stronger-side
+    history: history
+    lead: ''
+    listen: 'no'
+    comment: ''
+  states:
+    coordinate: [8, 400]
+    rotation: 0
+    state: enabled
+- name: imports
+  id: import
+  parameters:
+    imports: import cmath, math
+  states:
+    coordinate: [8, 120]
+    rotation: 0
+    state: enabled
+- name: taps
+  id: variable
+  parameters:
+    value: firdes.hilbert(65, window.WIN_HAMMING)
+  states:
+    coordinate: [200, 120]
+    rotation: 0
+    state: enabled
+- name: history
+  id: variable
+  parameters:
+    value: len(taps) - 1
+  states:
+    coordinate: [416, 120]
+    rotation: 0
+    state: enabled
+- name: sign
+  id: variable
+  parameters:
+    value: 1 if sideband == 'lsb' else -1
+  states:
+    coordinate: [544, 120]
+    rotation: 0
+    state: enabled
+- name: turn
+  id: variable
+  parameters:
+    value: cmath.exp(-2j * math.pi * math.fmod(bfoHz * start_index, samp_rate) / samp_rate)
+  states:
+    coordinate: [704, 120]
+    rotation: 0
+    state: enabled
+- name: pad_source_0
+  id: pad_source
+  parameters:
+    label: in
+    num_streams: '1'
+    optional: 'False'
+    type: complex
+    vlen: '1'
+  states:
+    coordinate: [8, 264]
+    rotation: 0
+    state: enabled
+- name: blocks_multiply_const_vxx_0
+  id: blocks_multiply_const_vxx
+  parameters:
+    const: turn
+    type: complex
+    vlen: '1'
+  states:
+    coordinate: [136, 264]
+    rotation: 0
+    state: enabled
+- name: blocks_rotator_cc_0
+  id: blocks_rotator_cc
+  parameters:
+    phase_inc: -2 * math.pi * bfoHz / samp_rate
+    tag_inc_update: 'False'
+  states:
+    coordinate: [304, 264]
+    rotation: 0
+    state: enabled
+- name: blocks_complex_to_float_0
+  id: blocks_complex_to_float
+  parameters:
+    vlen: '1'
+  states:
+    coordinate: [480, 264]
+    rotation: 0
+    state: enabled
+- name: blocks_delay_0
+  id: blocks_delay
+  parameters:
+    delay: history // 2
+    num_ports: '1'
+    showports: 'False'
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [664, 232]
+    rotation: 0
+    state: enabled
+- name: fir_filter_xxx_0
+  id: fir_filter_xxx
+  parameters:
+    decim: '1'
+    samp_delay: '0'
+    taps: taps
+    type: fff
+  states:
+    coordinate: [664, 312]
+    rotation: 0
+    state: enabled
+- name: blocks_multiply_const_vxx_1
+  id: blocks_multiply_const_vxx
+  parameters:
+    const: sign
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [832, 312]
+    rotation: 0
+    state: enabled
+- name: blocks_add_xx_0
+  id: blocks_add_xx
+  parameters:
+    num_inputs: '2'
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [1000, 264]
+    rotation: 0
+    state: enabled
+- name: blocks_multiply_const_vxx_2
+  id: blocks_multiply_const_vxx
+  parameters:
+    const: gain
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [1120, 264]
+    rotation: 0
+    state: enabled
+- name: pad_sink_0
+  id: pad_sink
+  parameters:
+    label: out
+    num_streams: '1'
+    optional: 'False'
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [1288, 264]
+    rotation: 0
+    state: enabled
+
+connections:
+- [pad_source_0, '0', blocks_multiply_const_vxx_0, '0']
+- [blocks_multiply_const_vxx_0, '0', blocks_rotator_cc_0, '0']
+- [blocks_rotator_cc_0, '0', blocks_complex_to_float_0, '0']
+- [blocks_complex_to_float_0, '0', blocks_delay_0, '0']
+- [blocks_complex_to_float_0, '1', fir_filter_xxx_0, '0']
+- [blocks_delay_0, '0', blocks_add_xx_0, '0']
+- [fir_filter_xxx_0, '0', blocks_multiply_const_vxx_1, '0']
+- [blocks_multiply_const_vxx_1, '0', blocks_add_xx_0, '1']
+- [blocks_add_xx_0, '0', blocks_multiply_const_vxx_2, '0']
+- [blocks_multiply_const_vxx_2, '0', pad_sink_0, '0']
+
+metadata:
+  file_format: 1
