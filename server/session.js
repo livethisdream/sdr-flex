@@ -25,6 +25,11 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { GrEngine } from './gr/engine.js';
 import { sceneRecording } from './gr/scene.js';
 import os from 'node:os';
+import fs from 'node:fs';
+import { recipeGrc, programGrc } from './grc.js';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 export const PROTOCOL = 1;
 
@@ -32,7 +37,9 @@ export const PROTOCOL = 1;
 const CHUNK_FLOATS = 1 << 20;
 
 export class Session {
-  constructor(conn, { library, log = () => {}, ringDir, pluginDir, sessions = false } = {}) {
+  constructor(conn, { library, log = () => {}, ringDir, pluginDir, sessions = false, recipeDir = null } = {}) {
+    // Where recipes saved from the page are kept on this box, when it keeps anything.
+    this.recipeDir = recipeDir;
     this.conn = conn;
     this.library = library;
     // Whether this box keeps saved sessions. Said here and served over HTTP: a session
@@ -172,6 +179,28 @@ const STREAM_CHUNK = 1 << 16;
 const STREAM_IDLE_MS = 60_000;
 const STREAM_SETTLE_MS = 30;
 
+/**
+ * The recipes on this box (ADR-0043), read once from their .grc files by server/gr/recipes.py:
+ * the files are YAML, and GNU Radio's Python reads YAML already. A box without GNU Radio has
+ * none to offer, which the CW node does not need — it is a node of its own either way.
+ */
+let RECIPES = null;
+const RECIPE_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'gr', 'recipes.py');
+const SHIPPED_RECIPES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'recipes');
+function recipeList(log, mineDir) {
+  if (RECIPES) return RECIPES;
+  const r = spawnSync(process.env.SDRFLEX_GR_PYTHON || 'python3',
+                      [RECIPE_SCRIPT, SHIPPED_RECIPES, ...(mineDir ? [mineDir] : [])], { encoding: 'utf8', timeout: 20_000 });
+  try {
+    const got = JSON.parse(r.stdout);
+    for (const e of got.errors) log(`recipe not loaded: ${e}`);
+    RECIPES = got.recipes;
+  } catch {
+    RECIPES = [];
+  }
+  return RECIPES;
+}
+
 export const METHODS = {
   async hello() {
     const table = adapters.list();
@@ -185,7 +214,8 @@ export const METHODS = {
              // sent once, and the client needs it to work out what `Identify` is about
              // to try *before* the first decoder answers — a panel that can only grow
              // as results land reads as "nothing found" for the first second.
-             adapterTable: table };
+             adapterTable: table,
+             recipes: recipeList(this.log, this.recipeDir) };
   },
 
   async createSession() {
@@ -247,8 +277,8 @@ export const METHODS = {
     return { ops: await this.engine.palette(nodeId) };
   },
 
-  async addNode({ parent, op, selection, at, withNode = null }) {
-    const n = await this.engine.addNode({ parent, op, selection, at, withNode });
+  async addNode({ parent, op, selection, at, withNode = null, recipe = null }) {
+    const n = await this.engine.addNode({ parent, op, selection, at, withNode, recipe });
     return { id: n.id };
   },
 
@@ -509,6 +539,30 @@ export const METHODS = {
       await new Promise((r) => setTimeout(r, STREAM_SETTLE_MS));
     }
     return { ...s.stream.take(), at: s.k / fs, from: s.from };
+  },
+
+  /**
+   * A chain as GNU Radio Companion (server/grc.js): `recipe`, a hier block that comes back into
+   * the menu, or `program`, a flowgraph a desktop can run. Written here from the graph, never
+   * from text the page sends. `keep` puts a recipe in this box's recipes, beside the shipped
+   * ones; a name already taken is refused rather than overwritten (ADR-0043: the page adds
+   * recipes and never replaces one).
+   */
+  async exportGrc({ nodeId, title, as = 'recipe', keep = false }) {
+    const name = String(title || '').trim().slice(0, 60);
+    if (!name) throw new Error('a recipe needs a name');
+    const out = as === 'program' ? programGrc(this.engine, nodeId, name) : recipeGrc(this.engine, nodeId, name);
+    if (as === 'recipe' && keep) {
+      if (!this.recipeDir) throw new Error('this box keeps nothing — download the file instead');
+      const taken = new Set(recipeList(this.log, this.recipeDir).map((r) => r.name));
+      if (taken.has(out.name)) throw new Error(`there is already a recipe called ${out.name}; pick another name`);
+      fs.mkdirSync(this.recipeDir, { recursive: true });
+      fs.writeFileSync(path.join(this.recipeDir, `${out.name}.grc`), out.text, { flag: 'wx' });
+      RECIPES = null;
+      out.recipes = recipeList(this.log, this.recipeDir);
+      out.kept = true;
+    }
+    return out;
   },
 
   async runRecordsSpan({ nodeId, t0, t1 }) {

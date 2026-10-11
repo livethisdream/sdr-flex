@@ -88,6 +88,8 @@ export class RemoteEngine extends Graph {
           // server's, so everything that reads `engine.adapters` — the palette merge,
           // the Identify plan — does not have to know which engine it is talking to.
           this.adapters = hello.adapterTable || [];
+          // And the recipes on the box (ADR-0043), for the same menu.
+          this.recipes = hello.recipes || [];
           resolve(hello);
         } catch (e) { reject(e); }
       };
@@ -222,10 +224,12 @@ export class RemoteEngine extends Graph {
     return r.ops.concat(ext.filter((o) => !have.has(o.id)));
   }
 
-  async addNode({ parent, op, selection, at, withNode = null }) {
+  async addNode({ parent, op, selection, at, withNode = null, recipe = null }) {
     const spec = plugins.get(op);
     if (spec) return this._addPluginNode({ parent, op, spec });
     const r = await this.call('addNode', {
+      // Which recipe made it, when one did, so the tabs can fold its steps together.
+      ...(recipe ? { recipe } : {}),
       // `withNode` travels. A Math node made from the menu already carries its second
       // input at creation (ADR-0038) and this call used to drop it, so on a server engine
       // it arrived with one — which reads as the node having forgotten what you told it.
@@ -389,6 +393,14 @@ export class RemoteEngine extends Graph {
     if (!n || !(t1 > t0)) return null;
     if (n.plugin) return this.runPlugin(nodeId);
     return await this.call('runRecordsSpan', { nodeId, t0, t1 });
+  }
+
+  /** The chain down to a node as GNU Radio Companion, written by the server (server/grc.js). */
+  async exportGrc(nodeId, title, as = 'recipe', keep = false) {
+    const out = await this.call('exportGrc', { nodeId, title, as, keep });
+    // A recipe kept on the box is in the menu from now on.
+    if (out && out.recipes) this.recipes = out.recipes;
+    return out;
   }
 
   /** A decoder fed continuously up to `t` on the server; null if it is not one that can be. */

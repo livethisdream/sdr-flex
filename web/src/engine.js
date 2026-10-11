@@ -1427,7 +1427,7 @@ export class MockEngine extends Graph {
    * selection: { f0, f1 } in Hz absolute, and optionally { t0, t1 } in seconds.
    * Everything derivable is derived and marked `auto` (ADR-0017).
    */
-  async addNode({ parent, op, selection, at = null, withNode = null }) {
+  async addNode({ parent, op, selection, at = null, withNode = null, recipe = null }) {
     await this._sleep(LATENCY.structuralMs);
     const p = this.node(parent);
     // Everything below that estimates from the signal estimates at this moment.
@@ -1443,6 +1443,10 @@ export class MockEngine extends Graph {
       // demodulator a name that meant nothing and made A · Tuner › C · AM demod read
       // as two peers. Blocks are known by what they do.
       letter: op === 'core.tuner' ? String.fromCharCode(65 + (this.letters++ % 26)) : null,
+      // The recipe that made it, if one did (ADR-0043): its name and title, and which
+      // application of it this node belongs to, so the steps fold into one tab together.
+      ...(recipe && recipe.group ? { recipe: { name: String(recipe.name), title: String(recipe.title),
+                                                group: String(recipe.group) } } : {}),
     };
 
     if (op === 'core.tuner') {

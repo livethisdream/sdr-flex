@@ -110,10 +110,11 @@ export class GrEngine extends MockEngine {
       // The CW recipe (recipes/cw.grc), whose parameters are this node's. Its filter is the
       // design `dsp.cwTaps` mirrors, which is what keeps the JS demod a faithful fallback.
       const t = this._tunerSpec(this.node(node.parent)), p = node.params;
-      const args = { offset: p.offsetHz.value, pitch: p.pitchHz.value, gain: p.gain.value || 1,
-                     width: p.filterHz ? Number(p.filterHz.value) : dsp.CW_FILTER_HZ };
+      // Its parameters are named as the node's are, so they pass straight through.
+      const args = { offsetHz: p.offsetHz.value, pitchHz: p.pitchHz.value, gain: p.gain.value || 1,
+                     filterHz: p.filterHz ? Number(p.filterHz.value) : dsp.CW_FILTER_HZ };
       return { ...t, op: 'recipe', recipe: 'cw', args, complex: false,
-               sig: `${t.sig}|cw|${args.offset}|${args.pitch}|${args.gain}|${args.width}` };
+               sig: `${t.sig}|cw|${args.offsetHz}|${args.pitchHz}|${args.gain}|${args.filterHz}` };
     }
     if (kind === 'stereo') {
       const p = this.node(node.parent);

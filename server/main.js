@@ -255,7 +255,10 @@ export function createServer({ webDir, captureDir, quiet, ringDir, pluginDir,
     conn.on('error', (e) => log(`socket: ${e.message}`));
     log('client connected');
     const s = new Session(conn, { library, log, pluginDir: plugins, sessions: !!sessions,
-                                  ringDir: ringDir || CONFIG.ringDir });
+                                  ringDir: ringDir || CONFIG.ringDir,
+                                  // Recipes saved from the page live with the sessions, which is
+                                  // this box's one writable place for a person's own work.
+                                  recipeDir: sessionDir ? path.join(sessionDir, 'recipes') : null });
     conn.on('close', () => log('client gone'));
     return s;
   });
