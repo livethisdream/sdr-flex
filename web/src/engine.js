@@ -64,6 +64,9 @@ const GAIN_TARGET = 0.25;
 // a receiver's filter has to be the transmitter's or it is not matched to anything.
 const SYMBOL_SPAN = 8;
 
+// Demods whose output is almost always speech, for ranking the Speech decoder.
+const VOICE_DEMODS = new Set(['core.ssb', 'core.am_envelope']);
+
 // M17's, and the only symbol rate anything here reads. A second one makes this a
 // parameter of the operation rather than a constant.
 const SYMBOL_RATE = 4800;
@@ -1424,8 +1427,12 @@ export class MockEngine extends Graph {
       .map((a) => ({ id: a.id, name: a.name, group: a.group, in: a.in, out: a.out,
                      // A shipped decoder advances the chain, right after the framer. One you
                      // added has no rank: it may be what you want, and is not the default.
-                     ...(a.local ? {} : { rank: 36 }),
+                     // Speech after SSB or AM ranks just after Listen: that audio is voice,
+                     // and behind the slicers it was folded out of sight.
+                     ...(a.local ? {} : { rank: a.voice && VOICE_DEMODS.has(n.op) ? 29 : 36 }),
                      external: true, opaque: true, blurb: a.blurb,
+                     // The program's own name, so searching for it finds it.
+                     command: [].concat(a.command || []).join(' '),
                      // Yours or ours (ADR-0026). A decoder you added misbehaving and one
                      // that shipped misbehaving are different problems, and the menu is
                      // where you find out which this is.

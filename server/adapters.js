@@ -696,6 +696,8 @@ export const ADAPTERS = {
   // it is fluent enough to fool you.
   'ext.whisper': {
     name: 'Speech', group: 'Decode', in: 'real', out: 'events',
+    // Ranked up after a demod whose audio is almost always somebody talking (SSB, AM).
+    voice: true,
     command: ['whisper-cli'],
     // `-of -` opens /dev/stdout by path; see `run`.
     stdoutByPath: true,
@@ -1143,6 +1145,7 @@ export function list() {
       wants: wants(a, defaults(a)),
       // Whether it can be fed as the capture plays, one process for the whole run.
       ...(a.stream ? { stream: true } : {}),
+      ...(a.voice ? { voice: true } : {}),
       // The narrowest stream this decoder could possibly read, when it has an opinion.
       ...(a.minRate ? { minRate: a.minRate } : {}),
       // And the stages that have to sit between a demodulated stream and it, for the one
