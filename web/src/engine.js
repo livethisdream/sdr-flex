@@ -354,6 +354,23 @@ export function demodulate(op, iq, count, fs, params = null, startIndex = 0) {
 }
 
 /**
+ * How many inputs before its first output, and after its last, a demod's filters read:
+ * the CW filter, the SSB Hilbert transformer, and the AM detector's centered smoothing.
+ */
+export function demodMargins(op, params, fs) {
+  if (op === 'core.cw') {
+    const taps = dsp.cwTapsOf(params, fs);
+    return { history: taps ? taps.length - 1 : 0, lead: 0 };
+  }
+  if (op === 'core.ssb') return { history: SSB_TAPS - 1, lead: 0 };
+  if (op === 'core.am_envelope') {
+    const w = dsp.envelopeWindow(fs), shift = (w / 2) | 0;
+    return { history: w - 1 - shift, lead: shift };
+  }
+  return { history: 0, lead: 0 };
+}
+
+/**
  * A real stream in, a real stream out — the same shape as `demodulate`, for the
  * operations whose input has already been demodulated once.
  *
@@ -399,6 +416,9 @@ export function realOp(op, x, count, fs, params = null) {
  * parameters from the signal, and how to turn IQ into a real-valued stream. Adding
  * the fourth one should be a row here and a line in OPS, not an edit in five places.
  */
+// The SSB demod's Hilbert transformer, as recipes/ssb.grc designs it.
+const SSB_TAPS = 65;
+
 const DETECTORS = {
   'core.fm_discriminator': {
     label: 'FM demod',
@@ -440,7 +460,7 @@ const DETECTORS = {
       };
     },
     detect(iq, count, fs, params, startIndex = 0) {
-      const a = dsp.ssbDemod(iq, count, fs, params.sideband.value, params.bfoHz.value, null, startIndex);
+      const a = dsp.ssbDemod(iq, count, fs, params.sideband.value, params.bfoHz.value, dsp.hilbertTaps(SSB_TAPS), startIndex);
       const g = params.gain.value || 1;
       for (let i = 0; i < count; i++) a[i] *= g;
       return a;
@@ -2377,15 +2397,15 @@ export class MockEngine extends Graph {
     if (p.out.kind === 'real') {
       return realOp(node.op, this._detectMono(p, tEnd, count), count, fs, node.params).data;
     }
-    if (node.op === 'core.cw') {
-      // Its filter's history, read too, so the first outputs are made of samples rather
-      // than zeros, and a block agrees with its neighbors wherever it is cut.
-      const taps = dsp.cwTapsOf(node.params, fs), h = taps ? taps.length - 1 : 0;
-      const iq = this._readIQ(p, tEnd, count + h);
-      return demodulate(node.op, iq, count + h, fs, node.params, Math.floor(tEnd * fs) - count - h).data.subarray(h);
-    }
-    const iq = this._readIQ(p, tEnd, count);
-    return demodulate(node.op, iq, count, fs, node.params, Math.floor(tEnd * fs) - count).data;
+    // A demod that filters reads its filter's history too, and one whose filter is centered
+    // reads ahead of it, so every output is made of samples rather than zeros or a clamped
+    // end, and a block agrees with its neighbors wherever it is cut. The GNU Radio recipes
+    // read the same (`history` and `lead` in recipes/*.grc).
+    const { history: h, lead } = demodMargins(node.op, node.params, fs);
+    const n = h + count + lead;
+    const iq = this._readIQ(p, tEnd + lead / fs, n);
+    const out = demodulate(node.op, iq, n, fs, node.params, Math.floor(tEnd * fs) - count - h).data;
+    return h || lead ? out.subarray(h, h + count) : out;
   }
 
   /**

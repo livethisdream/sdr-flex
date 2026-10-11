@@ -143,6 +143,24 @@ and the page has no authentication.
 
 Every file written in the tests is compiled by `grcc` (`web/test/grcexport.test.mjs`).
 
+## AM and SSB, as recipes (2026-10-11)
+
+The other two demods that fold into one node, built the way CW is and kept under their op ids:
+
+- **`recipes/ssb.grc`:** the BFO mixer, then I delayed by half the transformer plus or minus
+  `fir_filter_fff` with `firdes.hilbert(65, WIN_HAMMING)` on Q, then the gain. The sideband is
+  a string parameter (`usb` or `lsb`), derived by the existing estimator.
+- **`recipes/am.grc`:** `complex_to_mag`, then the 40 µs moving average every receiver puts
+  after the detector, centered so edges stay where they were. A centered filter reads ahead of
+  its output, so the recipe block gained a **lead** field beside history, naming the variable
+  that says how far; the worker reads the tuner that much further on.
+
+The JS Hilbert taps are now GNU Radio's design, tap for tap (they differed by 0.1%), and every
+JS demod reads its filter's history and lead as the recipes do, so a block agrees with its
+neighbors wherever it is cut. `web/test/grdemod.test.mjs` holds both engines to the same
+samples. Exported chains use the recipes as blocks, so an AM or SSB step no longer drops its
+smoothing or ends the chain.
+
 ## Consequences
 
 - **The block ecosystem and GRC are both on-ramps,** in both directions.

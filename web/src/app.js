@@ -149,6 +149,19 @@ function fmtSet(v) {
   return on.length === 1 ? shorten(on[0], 16) : `${shorten(on[0], 12)} +${on.length - 1}`;
 }
 
+
+// The frequency cues a demod draws on a spectrum (cueMarks): what each is called, and what
+// to drag it onto.
+const CUE_LABEL = { offsetHz: 'CW carrier', pitchHz: 'pitch', bfoHz: 'SSB carrier' };
+const CUE_TITLE = { offsetHz: 'drag onto the carrier', pitchHz: 'drag onto the tone',
+                    bfoHz: 'drag to the suppressed carrier: the voice goes in the shaded band' };
+// How much of a sideband the shading marks: a voice channel's audio.
+const SSB_VOICE_HZ = 2700;
+function ssbBandStyle(carrierHz, lsb, lo, span) {
+  const w = (SSB_VOICE_HZ / span) * 100, x = ((carrierHz - lo) / span) * 100;
+  return `left:${lsb ? x - w : x}%;width:${w}%`;
+}
+
 class App {
   constructor() {
     this.engine = new MockEngine();
@@ -1079,7 +1092,7 @@ class App {
    * the breadcrumb — and it answers "what did that box I drew become?".
    */
   renderMarkers() {
-    // A band being dragged is the one place its own position is current; redrawing it from the
+    // A band or cue being dragged is the one place its own position is current; redrawing it from the
     // graph mid-gesture would snap it back and drop the pointer.
     if (this._bandDrag) return;
     const n = this.node();
@@ -1104,7 +1117,7 @@ class App {
   }
 
   /**
-   * A CW demod's two frequencies, drawn where they are.
+   * A demod's frequencies, drawn where they are: CW's carrier and pitch, SSB's carrier.
    *
    * `offsetHz` is where the carrier sits in the channel and `pitchHz` is the tone it is
    * mixed down to, and neither meant anything as a number in a list: the carrier is a
@@ -1117,14 +1130,23 @@ class App {
       const x = at(hz);
       if (x < 0 || x > 100) return '';
       return `<div class="cue${auto ? ' auto' : ''}" data-id="${id}" data-key="${key}" style="left:${x}%"` +
-        ` title="drag onto the ${key === 'offsetHz' ? 'carrier' : 'tone'}"><span>${label}</span></div>`;
+        ` title="${CUE_TITLE[key]}"><span>${label}</span></div>`;
     };
     let html = '';
-    // The carrier of every CW demod on this channel, on the channel's own spectrum.
+    // The carrier of every CW and SSB demod on this channel, on the channel's own spectrum. An
+    // SSB demod's BFO is where its suppressed carrier sits, and the band it hears is shaded on
+    // the side its sideband is, so lining the shading up with the voice is the tuning.
     for (const k of this.engine.children(n.id)) {
-      if (k.op !== 'core.cw' || !k.params || !k.params.offsetHz) continue;
-      const o = k.params.offsetHz;
-      html += line(k.id, 'offsetHz', n.out.centerHz + o.value, `CW carrier ${Math.round(o.value)} Hz`, o.mode === 'auto');
+      if (!k.params) continue;
+      if (k.op === 'core.cw' && k.params.offsetHz) {
+        const o = k.params.offsetHz;
+        html += line(k.id, 'offsetHz', n.out.centerHz + o.value, `${CUE_LABEL.offsetHz} ${Math.round(o.value)} Hz`, o.mode === 'auto');
+      } else if (k.op === 'core.ssb' && k.params.bfoHz) {
+        const b = k.params.bfoHz, hz = n.out.centerHz + b.value;
+        const lsb = k.params.sideband && k.params.sideband.value === 'lsb';
+        html += `<div class="cueband" data-band="${k.id}" style="${ssbBandStyle(hz, lsb, lo, span)}"></div>`;
+        html += line(k.id, 'bfoHz', hz, `${CUE_LABEL.bfoHz} ${Math.round(b.value)} Hz`, b.mode === 'auto');
+      }
     }
     // The tone, on the demod's own one-sided spectrum.
     if (n.op === 'core.cw' && n.params && n.params.pitchHz && this.onRealSpectrum()) {
@@ -1223,21 +1245,30 @@ class App {
       const { lo, hi } = this.viewHz();
       const n = this.node();
       const hzAt = (x) => lo + Math.max(0, Math.min(1, (x - r.left) / r.width)) * (hi - lo);
-      const value = (x) => Math.round(el.dataset.key === 'offsetHz' ? hzAt(x) - n.out.centerHz : hzAt(x));
+      const key = el.dataset.key, inChannel = key !== 'pitchHz';
+      const value = (x) => Math.round(inChannel ? hzAt(x) - n.out.centerHz : hzAt(x));
+      // The BFO is tuned by ear, so the sound follows the finger; the others land on release.
+      const live = key === 'bfoHz' ? this.coalesce(el.dataset.id) : null;
+      const k = this.engine.node(el.dataset.id);
+      const band = live && el.parentNode.querySelector(`.cueband[data-band="${el.dataset.id}"]`);
+      if (live) this._bandDrag = el.dataset.id;
       let last = null;
       const move = (ev) => {
         el.style.left = `${((ev.clientX - r.left) / r.width) * 100}%`;
         last = value(ev.clientX);
         const label = el.querySelector('span');
-        if (label) label.textContent = `${el.dataset.key === 'offsetHz' ? 'CW carrier' : 'pitch'} ${last} Hz`;
+        if (label) label.textContent = `${CUE_LABEL[key]} ${last} Hz`;
+        if (band) band.style.cssText = ssbBandStyle(hzAt(ev.clientX), k.params.sideband && k.params.sideband.value === 'lsb', lo, hi - lo);
+        if (live) live({ [key]: last });
       };
       const up = async () => {
         el.removeEventListener('pointermove', move);
         el.removeEventListener('pointerup', up);
         el.removeEventListener('pointercancel', up);
-        if (last == null) return;
+        if (last == null) { this._bandDrag = null; return; }
         this.metrics.interaction();
-        await this.engine.setParam(el.dataset.id, el.dataset.key, last, 'manual');
+        if (live) await live.idle(); else await this.engine.setParam(el.dataset.id, key, last, 'manual');
+        this._bandDrag = null;
         this._tsCache = null;
         this.refresh();
       };
@@ -1897,7 +1928,7 @@ class App {
     out.save(new Blob([res.text], { type: 'text/yaml' }), `${res.name}.grc`);
     const extra = [
       ...res.notes,
-      ...(res.needs.length ? [`GRC on a desktop needs ${res.needs.join(', ')} first: open recipes/cw.grc there and generate it once`] : []),
+      ...(res.needs.length ? [`GRC on a desktop needs ${res.needs.join(', ')} first: open ${res.needs.map((b) => `recipes/${b.replace(/^sdrflex_/, '')}.grc`).join(', ')} there and generate it once`] : []),
       ...(as === 'program' ? ['put the capture beside it'] : []),
     ];
     this.notify(`${as === 'recipe' ? `saved “${res.title}” as a recipe` : `exported “${res.title}” as a GRC program`}` +

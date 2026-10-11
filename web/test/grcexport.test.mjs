@@ -119,6 +119,37 @@ test('a CW chain uses the CW recipe as its block, and a decoder after it ends th
   assert.deepEqual(back.derived, { offsetHz: 'auto' });
 });
 
+test('AM and SSB chains use their recipes as blocks, compile, and come back as the same steps', { skip }, async (t) => {
+  const dir = work(t);
+  const e = await station(t, dir);
+  const blocksDir = path.join(dir, 'blocks');
+  fs.mkdirSync(blocksDir);
+  for (const r of ['am', 'ssb']) assert.ok(compile(path.join(REPO, 'recipes', `${r}.grc`), blocksDir).ok, r);
+  const recipes = path.join(dir, 'recipes');
+  fs.mkdirSync(recipes);
+  for (const [op, set, block] of [['core.am_envelope', {}, 'sdrflex_am'], ['core.ssb', { sideband: 'lsb', bfoHz: 150 }, 'sdrflex_ssb']]) {
+    const tu = await e.addNode({ parent: e.root.id, op: 'core.tuner', selection: { f0: 100e6 - 3e3, f1: 100e6 + 3e3 }, at: 0.05 });
+    const d = await e.addNode({ parent: tu.id, op, at: 0.05 });
+    for (const [k, v] of Object.entries(set)) await e.setParam(d.id, k, v, 'manual');
+    const r = recipeGrc(e, d.id, `my ${op}`);
+    assert.deepEqual(r.needs, [block]);
+    fs.writeFileSync(path.join(recipes, `${r.name}.grc`), r.text);
+    const c = compile(path.join(recipes, `${r.name}.grc`), dir, [blocksDir]);
+    assert.ok(c.ok, c.log);
+    const p = programGrc(e, d.id, `prog ${op}`);
+    const pf = path.join(dir, `${p.name}.grc`);
+    fs.writeFileSync(pf, p.text);
+    const pc = compile(pf, dir, [blocksDir]);
+    assert.ok(pc.ok, pc.log);
+  }
+  const { recipes: back, errors } = describe(recipes);
+  assert.deepEqual(errors, []);
+  const ssb = back.find((r) => chainOf(r)[0] === 'core.ssb');
+  assert.deepEqual(chainOf(back.find((r) => r !== ssb)), ['core.am_envelope']);
+  assert.equal(ssb.params.sideband.value, 'lsb');
+  assert.equal(Number(ssb.params.bfoHz.value), 150);
+});
+
 test('a step with no GNU Radio block ends the chain there, and the file says so', { skip }, async (t) => {
   const dir = work(t);
   const e = await station(t, dir);

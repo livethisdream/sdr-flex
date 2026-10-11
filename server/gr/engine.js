@@ -22,6 +22,15 @@ import { MockEngine } from '../../web/src/engine.js';
 import * as dsp from '../../web/src/dsp.js';
 import { PRIORITY } from './pool.js';
 
+/** The nodes that are a recipe run as one GNU Radio block, and the recipe's arguments. */
+const RECIPE_NODES = {
+  'core.am_envelope': { recipe: 'am', args: () => ({}) },
+  'core.ssb': { recipe: 'ssb', args: (p) => ({ sideband: p.sideband.value === 'lsb' ? 'lsb' : 'usb',
+                                               bfoHz: p.bfoHz.value, gain: p.gain.value || 1 }) },
+  'core.cw': { recipe: 'cw', args: (p) => ({ offsetHz: p.offsetHz.value, pitchHz: p.pitchHz.value, gain: p.gain.value || 1,
+                                              filterHz: p.filterHz ? Number(p.filterHz.value) : dsp.CW_FILTER_HZ }) },
+};
+
 const BLOCK_S = 0.25;
 // Beyond what a read itself spans: the detector cache (`_detectCached`) computes whole
 // 0.25 s blocks with a 30 ms margin either side, so a read can reach that far past its ends.
@@ -92,7 +101,7 @@ export class GrEngine extends MockEngine {
   _grKind(node) {
     if (this._grTuner(node)) return 'tuner';
     if (node && node.op === 'core.fm_discriminator' && this._grTuner(this.node(node.parent))) return 'fm';
-    if (node && node.op === 'core.cw' && this._grTuner(this.node(node.parent))) return 'cw';
+    if (node && RECIPE_NODES[node.op] && this._grTuner(this.node(node.parent))) return RECIPE_NODES[node.op].recipe;
     if (node && node.op === 'core.stereo' && this._grKind(this.node(node.parent)) === 'fm') return 'stereo';
     return null;
   }
@@ -106,15 +115,14 @@ export class GrEngine extends MockEngine {
       const scale = (node.params.gain.value || 1) / Math.max(1, node.params.deviationHz.value);
       return { ...t, op: 'fm', complex: false, scale, sig: `${t.sig}|fm|${scale}` };
     }
-    if (kind === 'cw') {
-      // The CW recipe (recipes/cw.grc), whose parameters are this node's. Its filter is the
-      // design `dsp.cwTaps` mirrors, which is what keeps the JS demod a faithful fallback.
-      const t = this._tunerSpec(this.node(node.parent)), p = node.params;
-      // Its parameters are named as the node's are, so they pass straight through.
-      const args = { offsetHz: p.offsetHz.value, pitchHz: p.pitchHz.value, gain: p.gain.value || 1,
-                     filterHz: p.filterHz ? Number(p.filterHz.value) : dsp.CW_FILTER_HZ };
-      return { ...t, op: 'recipe', recipe: 'cw', args, complex: false,
-               sig: `${t.sig}|cw|${args.offsetHz}|${args.pitchHz}|${args.gain}|${args.filterHz}` };
+    if (RECIPE_NODES[node.op]) {
+      // A recipe (recipes/<name>.grc) whose parameters are this node's, named as the node's
+      // are, so they pass straight through. Its filters are the designs dsp.js mirrors, which
+      // is what keeps the JS demod a faithful fallback.
+      const t = this._tunerSpec(this.node(node.parent));
+      const args = RECIPE_NODES[node.op].args(node.params);
+      return { ...t, op: 'recipe', recipe: kind, args, complex: false,
+               sig: `${t.sig}|${kind}|${JSON.stringify(args)}` };
     }
     if (kind === 'stereo') {
       const p = this.node(node.parent);
@@ -362,7 +370,7 @@ export class GrEngine extends MockEngine {
 
   _detectRaw(node, tEnd, count) {
     const kind = this._grKind(node);
-    if (kind === 'fm' || kind === 'stereo' || kind === 'cw') {
+    if (kind && kind !== 'tuner') {
       const out = this._fromBlocks(node, tEnd, count, kind === 'stereo' ? 2 : 1);
       if (out) return out;
     }

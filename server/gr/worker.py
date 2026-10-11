@@ -355,7 +355,9 @@ def recipe_chain(tb, req, k0, count):
     input's sample rate (`samp_rate`), and the capture sample its first input is
     (`start_index`), which a recipe's mixers reference their phase to so blocks join without a
     click. A recipe that filters names a variable holding how many inputs come before its first
-    whole output; the tuner is read from that much earlier and those outputs are dropped.
+    whole output; the tuner is read from that much earlier and those outputs are dropped. One
+    whose filter is centered also names how far ahead of an output it reads, and the tuner is
+    read that much further on.
     """
     cls, side = recipe(req['recipe'])
     fs = float(req['rate']) / int(req['decim'])
@@ -366,9 +368,10 @@ def recipe_chain(tb, req, k0, count):
         args['start_index'] = 0
     blk = cls(**args)
     h = int(getattr(blk, 'get_' + side['history'])()) if side['history'] else 0
+    lead = int(getattr(blk, 'get_' + side['lead'])()) if side.get('lead') else 0
     if 'start_index' in side['params']:
         blk.set_start_index(k0 - h)
-    tuned = tuner_chain(tb, req, k0 - h, count + h)
+    tuned = tuner_chain(tb, req, k0 - h, count + h + lead)
     size = COMPLEX if side['output'] == 'iq' else gr.sizeof_float
     drop = blocks.skiphead(size, h)
     tb.connect(tuned, blk, drop)

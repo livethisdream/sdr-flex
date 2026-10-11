@@ -39,6 +39,10 @@ parameters:
     label: History variable
     dtype: string
     default: ''
+-   id: lead
+    label: Lead variable
+    dtype: string
+    default: ''
 -   id: listen
     label: Ends in a Listen node
     dtype: enum
@@ -64,5 +68,9 @@ documentation: |-
 
     History variable: for a recipe that filters, the variable holding how many inputs come
     before its first whole output.
+
+    Lead variable: for a recipe whose filter is centered, the variable holding how many inputs
+    after an output it reads. Its outputs are lined up with its inputs, so it reads that far
+    ahead of the last one.
 
 file_format: 1

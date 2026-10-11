@@ -461,18 +461,25 @@ export function fmDiscriminate(iq, count, sampleRate) {
 /**
  * Hilbert transformer taps: odd length, antisymmetric, windowed. The companion
  * path has to be delayed by (n-1)/2 to line up, which `ssbDemod` does.
+ *
+ * GNU Radio's `firdes.hilbert(n, window.WIN_HAMMING)`, tap for tap, which is the design the
+ * SSB recipe (recipes/ssb.grc) uses: the ideal 1/k, Hamming-windowed, scaled so the passband
+ * is unity.
  */
 export function hilbertTaps(numTaps) {
   const n = numTaps | 1;                    // must be odd for a centered delay
   const mid = (n - 1) / 2;
+  const w = (i) => Math.fround(0.54 - 0.46 * Math.cos((2 * Math.PI * i) / (n - 1)));
   const h = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const k = i - mid;
-    if (k === 0 || k % 2 === 0) { h[i] = 0; continue; }
-    // Hamming, so the passband ripple does not put a tilt across the audio
-    const w = 0.54 - 0.46 * Math.cos((2 * Math.PI * i) / (n - 1));
-    h[i] = (2 / (Math.PI * k)) * w;
+  let gain = 0;
+  for (let k = 1; k <= mid; k++) {
+    if (!(k & 1)) continue;
+    h[mid + k] = (1 / k) * w(mid + k);
+    h[mid - k] = -(1 / k) * w(mid - k);
+    gain = h[mid + k] - gain;
   }
+  gain = 2 * Math.abs(gain);
+  for (let i = 0; i < n; i++) h[i] /= gain;
   return h;
 }
 

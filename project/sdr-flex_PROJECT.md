@@ -880,6 +880,12 @@ consecutive parallel runs afterwards: 450 passing in 28–33 s each.
 
 ## Wanted later
 
+- **Bug: the data stops while the clock keeps going (reported 2026-10-11).** Mid-session the
+  spectrum goes blank, or keeps showing a smeared repeat of the last good data, while the
+  playhead timer keeps moving. Reloading the page fixes it and restores the session. Not yet
+  reproduced; the server logs show no errors around it, which points at the page's view loop
+  or its link to the server rather than the GNU Radio worker. Chase it down.
+
 - ~~**Persistent sessions.**~~ Built (ADR-0042). The question it was waiting on —
   recipe written somewhere durable, or a live engine held open — is settled below, and
   the deciding argument was not effort.

@@ -21,6 +21,8 @@ export const STEPS = {
   blocks_complex_to_mag: ['core.am_envelope'],
   // A recipe that folds into one node is a block in another recipe, as itself.
   sdrflex_cw: ['core.cw'],
+  sdrflex_am: ['core.am_envelope'],
+  sdrflex_ssb: ['core.ssb'],
 };
 
 /**
