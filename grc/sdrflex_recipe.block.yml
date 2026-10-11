@@ -25,12 +25,12 @@ parameters:
     label: Input
     dtype: enum
     default: iq
-    options: [iq, real, audio]
+    options: [iq, real, audio, bits]
 -   id: output
     label: Output
     dtype: enum
     default: real
-    options: [iq, real, stereo, audio]
+    options: [iq, real, stereo, audio, bits]
 -   id: derived
     label: Derived settings
     dtype: string

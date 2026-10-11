@@ -62,7 +62,7 @@ const GAIN_TARGET = 0.25;
 
 // The matched filter's length, in symbols. M17's own tap table is span 8 at α = 0.5, and
 // a receiver's filter has to be the transmitter's or it is not matched to anything.
-const SYMBOL_SPAN = 8;
+export const SYMBOL_SPAN = 8;
 
 // M17's, and the only symbol rate anything here reads. A second one makes this a
 // parameter of the operation rather than a constant.
@@ -85,7 +85,7 @@ const SYMBOL_RATE = 4800;
 // of the block rather than of the read (which is what ADR-0040 wanted); and no grid is
 // ever used more than this far from where it was measured. Measured at 5, 10 and 20 s
 // blocks: 94–95 records every time, at both a 9 kHz and a 12 kHz selection.
-const SYMBOL_FIT_SECONDS = 10;
+export const SYMBOL_FIT_SECONDS = 10;
 
 /** The block a moment belongs to. Anchored at zero so every read agrees on the edges. */
 const fitBlock = (t) => Math.floor(Math.max(0, t) / SYMBOL_FIT_SECONDS);
@@ -806,14 +806,27 @@ export class MockEngine extends Graph {
 
     const msb = n.params.bitOrder.value !== 'lsb';
     const sync = dsp.syncBitsOf(n.params.syncHex.value, msb);
-    const r = manchester
-      ? dsp.manchesterSlice(got.data, n.params.threshold.value, fs, n.params.symbolUs.value,
-                            { msbFirst: msb, syncBits: sync, polarity: n.params.polarity.value })
-      : dsp.nrzSlice(got.data, n.params.threshold.value, fs, n.params.symbolUs.value,
-                     { msbFirst: msb, syncBits: sync });
+    const opts = manchester ? { msbFirst: msb, syncBits: sync, polarity: n.params.polarity.value }
+                            : { msbFirst: msb, syncBits: sync };
+    const slice = (o) => (manchester ? dsp.manchesterSlice : dsp.nrzSlice)(
+      got.data, n.params.threshold.value, fs, n.params.symbolUs.value, { ...opts, ...o });
+    let r = slice({});
+    // The grid's phase is an estimate, and stays ours; the decisions on it can be computed
+    // elsewhere (GNU Radio, in a server's engine), and are when they can.
+    const decisions = r.sps ? await this._gridDecisions(n, p, got, t0, r.phase, r.sps) : null;
+    if (decisions) r = { ...slice({ phase: r.phase, decisions }), engine: 'gnuradio' };
     n._sliced = { key: keyOf(), ...r, t0, t1, sampleRate: fs };
     return n._sliced;
   }
+
+  /**
+   * A slicer's decisions on the grid from `phase`, for an engine that computes them
+   * elsewhere (server/gr/engine.js); null means this one does, in dsp.js.
+   */
+  async _gridDecisions(_n, _p, _got, _t0, _phase, _sps) { return null; }
+
+  /** Bits through a recipe from bits to bits, elsewhere; null means here. */
+  async _bitsThrough(_recipe, _args, _bits) { return null; }
 
   /**
    * Every burst a PWM slicer found, over the whole span rather than a display window.
@@ -974,8 +987,11 @@ export class MockEngine extends Graph {
     if (n._sliced && n._sliced.key === keyOf()) return n._sliced;
     const src = await this.sliceBytes(p.id, onProgress, at);
     if (!src) return null;
-    const r = dsp.differentialDecode(src.bytes, n.params.mode.value,
-                                     { msbFirst: n.params.bitOrder.value !== 'lsb' });
+    const msbFirst = n.params.bitOrder.value !== 'lsb';
+    const bits = await this._bitsThrough('differential', { mode: n.params.mode.value },
+                                         dsp.unpackBits(src.bytes, msbFirst));
+    const r = bits ? { ...dsp.packBits(bits, { msbFirst }), engine: 'gnuradio' }
+                   : dsp.differentialDecode(src.bytes, n.params.mode.value, { msbFirst });
     n._sliced = { key: keyOf(), ...r, t0: src.t0, t1: src.t1, sampleRate: src.sampleRate };
     return n._sliced;
   }

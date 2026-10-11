@@ -23,6 +23,10 @@ export const STEPS = {
   sdrflex_cw: ['core.cw'],
   sdrflex_am: ['core.am_envelope'],
   sdrflex_ssb: ['core.ssb'],
+  sdrflex_nrz: ['core.nrz_slicer'],
+  sdrflex_manchester: ['core.manchester'],
+  sdrflex_differential: ['core.differential'],
+  sdrflex_symbols: ['core.symbols'],
 };
 
 /**

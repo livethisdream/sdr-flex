@@ -161,6 +161,21 @@ neighbors wherever it is cut. `web/test/grdemod.test.mjs` holds both engines to 
 samples. Exported chains use the recipes as blocks, so an AM or SSB step no longer drops its
 smoothing or ends the chain.
 
+## Slicers and symbol sync, as recipes (2026-10-11)
+
+`recipes/nrz.grc` and `manchester.grc` subtract the threshold, read the input on a grid with
+`mmse_resampler_ff`, and decide with `binary_slicer_fb`, one bit a byte; Manchester reads two a
+symbol and SDR Flex pairs them, so the count of symbols without a transition stays its
+evidence. `recipes/symbols.grc` is a root-raised-cosine `fir_filter_fff` read on the same kind
+of grid, centered and scaled. `recipes/differential.grc` is `diff_decoder_bb`, inverted for
+NRZ-S (GRC fixes an enum's value when it compiles, so the coding cannot follow a parameter).
+
+Two things the recipe block needed: an output (and input) type of **bits**, and, in these
+recipes, two variables saying where the grid is (`first` and `step`), which the worker reads to
+know how much input a span of decisions takes. The estimates stay SDR Flex's, with their
+evidence: threshold, symbol period, grid phase, the symbol fit. Exported, a chain that ends in
+bits writes them to a file beside the program instead of the speaker.
+
 ## Consequences
 
 - **The block ecosystem and GRC are both on-ramps,** in both directions.

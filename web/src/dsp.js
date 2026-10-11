@@ -1861,12 +1861,20 @@ export function pwmSlice(env, threshold, sampleRate, symbolUs) {
 export function nrzSlice(env, threshold, sampleRate, symbolUs, opts = {}) {
   const sps = (symbolUs * 1e-6) * sampleRate;
   if (!(sps >= 1) || !env.length) return { bytes: new Uint8Array(0), bits: 0, phase: 0, syncAt: -1, sps };
-  const msbFirst = opts.msbFirst !== false;
+  const phase = opts.phase != null ? opts.phase : nrzPhase(env, threshold, sps);
+  // The decisions themselves may come from elsewhere: GNU Radio's slicer recipe
+  // (recipes/nrz.grc) samples the same grid.
+  const bits = opts.decisions || nrzDecisions(env, threshold, phase, sps);
+  return { ...packBits(bits, opts), phase, sps };
+}
 
-  // Grid phase, by trying every offset within one symbol and keeping the one whose
-  // samples land furthest from the threshold. A sample taken mid-symbol is
-  // unambiguous; one taken on an edge is a coin toss, and a packet of coin tosses
-  // is what "it almost decodes" looks like.
+/**
+ * Grid phase, by trying every offset within one symbol and keeping the one whose
+ * samples land furthest from the threshold. A sample taken mid-symbol is
+ * unambiguous; one taken on an edge is a coin toss, and a packet of coin tosses
+ * is what "it almost decodes" looks like.
+ */
+export function nrzPhase(env, threshold, sps) {
   const tries = Math.max(4, Math.min(32, Math.round(sps)));
   let bestPhase = 0, bestScore = -Infinity;
   for (let k = 0; k < tries; k++) {
@@ -1878,33 +1886,14 @@ export function nrzSlice(env, threshold, sampleRate, symbolUs, opts = {}) {
     }
     if (n && score / n > bestScore) { bestScore = score / n; bestPhase = off; }
   }
+  return bestPhase;
+}
 
+/** One decision a symbol, on the grid from `phase`: the nearest sample against the threshold. */
+export function nrzDecisions(env, threshold, phase, sps) {
   const bits = [];
-  for (let i = bestPhase; i < env.length; i += sps) bits.push(env[Math.round(i)] > threshold ? 1 : 0);
-
-  // Byte alignment. The sync word is searched for rather than assumed at the start,
-  // because a capture rarely begins where the packet does.
-  let start = 0, syncAt = -1;
-  const sync = opts.syncBits;
-  if (sync && sync.length) {
-    outer: for (let i = 0; i + sync.length <= bits.length; i++) {
-      for (let j = 0; j < sync.length; j++) if (bits[i + j] !== sync[j]) continue outer;
-      syncAt = i;
-      start = i + sync.length;
-      break;
-    }
-  }
-
-  const out = new Uint8Array(Math.floor((bits.length - start) / 8));
-  for (let b = 0; b < out.length; b++) {
-    let v = 0;
-    for (let k = 0; k < 8; k++) {
-      const bit = bits[start + b * 8 + k];
-      v |= msbFirst ? (bit << (7 - k)) : (bit << k);
-    }
-    out[b] = v;
-  }
-  return { bytes: out, bits: bits.length, phase: bestPhase, syncAt, sps };
+  for (let i = phase; i < env.length; i += sps) bits.push(env[Math.round(i)] > threshold ? 1 : 0);
+  return bits;
 }
 
 /** A hex string like "aa aa ff ff" to the bits a slicer looks for. */
@@ -2079,19 +2068,9 @@ export function manchesterSlice(env, threshold, sampleRate, symbolUs, opts = {})
   if (!(half >= 1) || !env.length) return empty;
 
   const ieee0 = (opts.polarity || 'ieee') === 'ieee';
-  const sample = (i) => env[Math.max(0, Math.min(env.length - 1, Math.round(i)))] > threshold ? 1 : 0;
 
   /** Decode on a grid starting at `off`, and count the symbols that broke the rule. */
-  const tryPhase = (off) => {
-    const bits = [];
-    let violations = 0;
-    for (let pos = off; pos + sps <= env.length; pos += sps) {
-      const a = sample(pos + half * 0.5), b = sample(pos + half * 1.5);
-      if (a === b) { violations++; bits.push(a); continue; }
-      bits.push(ieee0 ? (a === 0 ? 1 : 0) : (a === 0 ? 0 : 1));
-    }
-    return { bits, violations };
-  };
+  const tryPhase = (off) => manchesterPairs(manchesterDecisions(env, threshold, off, sps), ieee0);
 
   // Phase, chosen by counting violations rather than by how far the samples land from
   // the threshold.
@@ -2107,15 +2086,22 @@ export function manchesterSlice(env, threshold, sampleRate, symbolUs, opts = {})
   // in every symbol by construction, and the wrong one violates whenever consecutive
   // bits differ — which is every symbol of an alternating preamble. Searching the full
   // symbol period rather than half of it is the other half of the same bug.
-  const tries = Math.max(8, Math.min(64, Math.round(sps)));
-  let bestPhase = 0, best = null;
-  for (let k = 0; k < tries; k++) {
-    const off = (k / tries) * sps;
-    const got = tryPhase(off);
-    if (!got.bits.length) continue;
-    if (!best || got.violations < best.violations) { best = got; bestPhase = off; }
+  let bestPhase = opts.phase, best = null;
+  if (bestPhase == null) {
+    const tries = Math.max(8, Math.min(64, Math.round(sps)));
+    for (let k = 0; k < tries; k++) {
+      const off = (k / tries) * sps;
+      const got = tryPhase(off);
+      if (!got.bits.length) continue;
+      if (!best || got.violations < best.violations) { best = got; bestPhase = off; }
+    }
+    if (!best) return empty;
   }
-  if (!best) return empty;
+  // The decisions on the chosen grid may come from elsewhere: GNU Radio's slicer recipe
+  // (recipes/manchester.grc) samples the same instants.
+  if (opts.decisions) best = manchesterPairs(opts.decisions, ieee0);
+  else if (!best) best = tryPhase(bestPhase);
+  if (!best.bits.length) return empty;
 
   // Sampled in the middle of each half-symbol, on a fixed grid.
   //
@@ -2140,6 +2126,27 @@ export function manchesterSlice(env, threshold, sampleRate, symbolUs, opts = {})
 
   return { ...packBits(bits, opts), violations, symbols: bits.length,
            phase: bestPhase, sps, polarity: ieee0 ? 'ieee' : 'thomas' };
+}
+
+/** Two decisions a symbol, in the middle of each half, on the grid from `phase`. */
+export function manchesterDecisions(env, threshold, phase, sps) {
+  const half = sps / 2;
+  const sample = (i) => env[Math.max(0, Math.min(env.length - 1, Math.round(i)))] > threshold ? 1 : 0;
+  const out = [];
+  for (let pos = phase; pos + sps <= env.length; pos += sps) out.push(sample(pos + half * 0.5), sample(pos + half * 1.5));
+  return out;
+}
+
+/** Half-symbol decisions to bits, and the symbols with no transition in them. */
+export function manchesterPairs(decisions, ieee0 = true) {
+  const bits = [];
+  let violations = 0;
+  for (let i = 0; i + 1 < decisions.length; i += 2) {
+    const a = decisions[i], b = decisions[i + 1];
+    if (a === b) { violations++; bits.push(a); continue; }
+    bits.push(ieee0 ? (a === 0 ? 1 : 0) : (a === 0 ? 0 : 1));
+  }
+  return { bits, violations };
 }
 
 /**
