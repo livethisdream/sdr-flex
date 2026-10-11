@@ -891,8 +891,8 @@ consecutive parallel runs afterwards: 450 passing in 28–33 s each.
   without closing, and a live view whose one request never came back stayed frozen. Now the
   page pings a quiet server, closes a connection that stops answering, re-asks a live frame
   after 5 s, and on a lost connection reloads itself once the server answers, restoring the
-  chain and the playhead where data stopped. A radio is not restored. The demo server shows a
-  connection readout (`?diag` anywhere). Waiting for a report from use to confirm it was this.
+  chain and the playhead where data stopped. A radio is not restored. `?diag` in the address shows a
+  connection readout. Waiting for a report from use to confirm it was this.
 
 - ~~**Persistent sessions.**~~ Built (ADR-0042). The question it was waiting on —
   recipe written somewhere durable, or a live engine held open — is settled below, and

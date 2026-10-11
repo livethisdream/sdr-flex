@@ -2575,7 +2575,7 @@ class App {
     tryNow();
   }
 
-  /** The connection readout: on the demo server, or with `?diag` in the address. */
+  /** The connection readout, with `?diag` in the address. */
   showDiag() {
     const el = document.createElement('div');
     el.className = 'diag';
@@ -2630,7 +2630,7 @@ class App {
                      `\n  the page and the engine are served by the same process, so this is both.`);
       }
       remote.onStatus(({ connected }) => { if (!connected) this.recover(); });
-      if (hello.debug || new URLSearchParams(location.search).has('diag')) this.showDiag();
+      if (new URLSearchParams(location.search).has('diag')) this.showDiag();
     } catch {
       // nothing there: the in-tab engine is a complete tool, not a degraded mode
     }

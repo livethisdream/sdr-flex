@@ -215,9 +215,7 @@ export const METHODS = {
              // to try *before* the first decoder answers — a panel that can only grow
              // as results land reads as "nothing found" for the first second.
              adapterTable: table,
-             recipes: recipeList(this.log, this.recipeDir),
-             // The demo server's diagnostics, shown on the page too (the connection readout).
-             debug: !!process.env.SDRFLEX_GR_DEBUG };
+             recipes: recipeList(this.log, this.recipeDir) };
   },
 
   /** The page asking whether the server is there, when it has heard nothing for a while. */
