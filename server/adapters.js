@@ -710,6 +710,13 @@ export const ADAPTERS = {
     // rather than 6: an SSB voice channel tunes to about 5.2, and its 2.6 kHz is the
     // whole of what SSB sends.
     minRate: 5_000,
+    // Read in 30 s windows that overlap by 5 s at each end, not the 5 s blocks the
+    // others get. Whisper decodes a word by the words around it: on a recorded LSB voice
+    // channel, 5 s blocks split words and invented ones ("Yup.") where 30 s gave the whole
+    // message right, and in a third of the time, since every run pays to load the model.
+    // Each window starts where the last segment it kept ended (web/src/blocks.js), so a
+    // sentence one window's edge cuts is read whole by the next.
+    block: { seconds: 30, overlap: 5 },
     params: [
       { id: 'model', type: 'text', default: '', label: 'model',
         placeholder: 'leave empty for the installed one',
@@ -742,6 +749,9 @@ export const ADAPTERS = {
       // something anybody can debug, and temperature fallback is where whisper does
       // most of its inventing.
       '-tp', '0',
+      // Its default is 4. Half the cores, up to 12, past which it barely gets faster
+      // (40 s of audio: 3.9 s on 4 threads, 2.1 s on 12, 1.9 s on 16).
+      '-t', String(Math.max(1, Math.min(12, Math.floor(os.availableParallelism() / 2)))),
       ...(params.quiet === 'default' ? [] : [
         // Its own gates, turned up. `-nth` is how sure it must be that there *is* no
         // speech before it gives up on a window; `-lpt` is the average log probability
@@ -783,6 +793,7 @@ export const ADAPTERS = {
         const at = seg.offsets && typeof seg.offsets.from === 'number' ? seg.offsets.from / 1000 : null;
         const rec = { text };
         if (at != null) rec.fromS = +at.toFixed(2);
+        if (seg.offsets && typeof seg.offsets.to === 'number') rec.toS = +(seg.offsets.to / 1000).toFixed(2);
         if (p != null) rec.confidence = +p.toFixed(3);
         // Said rather than dropped, which is the same rule the CRCs get: a decoder that
         // reports a guess as a decode is the thing ADR-0031 exists to prevent, and one
@@ -1145,6 +1156,9 @@ export function list() {
       ...(a.stream ? { stream: true } : {}),
       // The narrowest stream this decoder could possibly read, when it has an opinion.
       ...(a.minRate ? { minRate: a.minRate } : {}),
+      // How much of the capture a decoder that is not streamed reads at a time, when it
+      // needs more than the default.
+      ...(a.block ? { block: a.block } : {}),
       // And the stages that have to sit between a demodulated stream and it, for the one
       // kind of decoder that does not read samples (ADR-0040). Data, like everything else
       // here: the client builds the chain and must not have to know which decoders are

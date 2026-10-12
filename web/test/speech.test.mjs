@@ -21,6 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as adapters from '../../server/adapters.js';
+import * as blocks from '../src/blocks.js';
 
 const A = adapters.ADAPTERS['ext.whisper'];
 
@@ -120,4 +121,50 @@ test('an empty segment is not a record', () => {
   // Whisper emits these around its own timestamp tokens; a blank row in the pane is
   // worse than no row.
   assert.equal(parse(doc(seg('   ', [0.9, 0.9]), seg(' real', [0.9, 0.9]))).length, 1);
+});
+
+test('it runs on more than whisper’s default four threads', () => {
+  const args = A.args({ params: {} });
+  const t = Number(args[args.indexOf('-t') + 1]);
+  assert.ok(t >= 1 && t <= 12, `-t ${t}`);
+});
+
+test('it is read in long, overlapping windows, and the list says so', () => {
+  // 5 s blocks cut words in half and leave whisper nothing to read them by.
+  assert.ok(A.block.seconds >= 20 && A.block.overlap > 0);
+  const listed = adapters.list().find((a) => a.id === 'ext.whisper');
+  assert.deepEqual(listed.block, A.block);
+  assert.equal(adapters.list().find((a) => a.id === 'ext.multimon').block, undefined,
+    'a decoder that asks for nothing keeps the default');
+});
+
+test('each window starts where the last sentence kept ended, so none is cut or said twice', () => {
+  const { blocksDone, nextWindow, commitWindow } = blocks;
+  // 90 s capture, 30 s blocks plus 5 s of overlap.
+  assert.equal(nextWindow(0, 34, 90, 30, 5), null, 'the first window waits for its overlap');
+  const w = nextWindow(0, 35, 90, 30, 5);
+  assert.deepEqual([w.w0, w.w1, w.atEnd], [0, 35, false]);
+  // The last sentence runs 29–35 s, into the overlap, and may have been cut there. It is
+  // left for the next window, which starts where the sentence before it ended.
+  const c = commitWindow([{ text: 'flag 3 is', fromS: 0, toS: 7 }, { text: 'this is', fromS: 22, toS: 29 },
+                          { text: 'I say again', fromS: 29, toS: 35 }], w, 30, 5);
+  assert.deepEqual(c.keep.map((r) => r.text), ['flag 3 is', 'this is']);
+  assert.equal(c.next, 29);
+  // A window with nothing in it, or one long segment, still moves on by a block.
+  assert.equal(commitWindow([], w, 30, 5).next, 30);
+  assert.equal(commitWindow([{ text: 'long', fromS: 2, toS: 34 }], w, 30, 5).next, 34);
+  // The last window runs to the end of the capture and keeps everything.
+  const end = nextWindow(74, 90, 90, 30, 5);
+  assert.deepEqual([end.w0, end.w1, end.atEnd], [74, 90, true]);
+  assert.equal(commitWindow([{ text: 'flag 3', fromS: 11, toS: 16 }], end, 30, 5).keep.length, 1);
+  assert.equal(nextWindow(90, 90, 90, 30, 5), null);
+  // The fixed blocks the other decoders read are unchanged, but a short last one counts.
+  assert.equal(blocksDone(12, 90, 5), 2);
+  assert.equal(blocksDone(92, 92, 5), 19);
+});
+
+test('a segment says where it ends, which is what the windows are cut by', () => {
+  const [r] = parse(doc(seg('Echo', [0.9, 0.9], 3000, 7500)));
+  assert.equal(r.fromS, 3);
+  assert.equal(r.toS, 7.5);
 });

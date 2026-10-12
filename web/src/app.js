@@ -14,6 +14,7 @@ import { plan as identifyPlan, runPlugins } from './identify.js';
 import { Strip } from './strip.js';
 import { HOTKEYS, KEY_FOR, opForKey, firstOpNamed } from './keys.js';
 import { delayOf } from './delay.js';
+import { blocksDone, nextWindow, commitWindow } from './blocks.js';
 import { Metrics } from './metrics.js';
 import { fromFiles, FORMATS } from './capture.js';
 import * as out from './export.js';
@@ -3087,7 +3088,8 @@ class App {
    * A *block* rather than a sliding window, for the same reason the symbol sync in front
    * of it now fits per block: a block is the unit over which a decode is a decode, the
    * spans are disjoint so records never need de-duplicating, and re-reading the whole
-   * capture every frame would be quadratic in the length of the capture.
+   * capture every frame would be quadratic in the length of the capture. A decoder that
+   * asks for an overlap is read in windows instead (`streamWindows`).
    *
    * One at a time. An external decoder is a process, and letting the playhead start a
    * second before the first has answered is how a slow decoder turns into a queue of
@@ -3105,18 +3107,22 @@ class App {
     // than this can put back. Opening the pane while paused runs the capture; opening
     // it while playing streams. `Run again` clears both and starts over.
     if (n._records && !n._records.streamed) return;
+    // A decoder can ask for longer blocks, and for an overlap (Speech: see its adapter).
+    const B = (info && info.block && info.block.seconds) || STREAM_BLOCK_S;
+    if (info && info.block && info.block.overlap) return this.streamWindows(n, B, info.block.overlap);
     const d = this.engine.duration();
     const now = this.engine.effectiveTime(n.id);
     // Only blocks that are wholly behind the playhead: half a block is half a burst,
-    // and a decoder handed half a burst reports nothing and looks broken.
-    const done = Math.floor(now / STREAM_BLOCK_S);
+    // and a decoder handed half a burst reports nothing and looks broken. At the end of
+    // the capture the short last block counts as done.
+    const done = blocksDone(now, d, B);
     if (!(done > 0)) return;
     const seen = (n._blocks = n._blocks || new Set());
     let block = -1;
     for (let b = 0; b < done; b++) if (!seen.has(b)) { block = b; break; }
     if (block < 0) return;
-    const t0 = block * STREAM_BLOCK_S;
-    const t1 = Math.min(t0 + STREAM_BLOCK_S, isFinite(d) ? d : t0 + STREAM_BLOCK_S);
+    const t0 = block * B;
+    const t1 = Math.min(t0 + B, isFinite(d) ? d : t0 + B);
     seen.add(block);
     this._streamBusy = true;
     let out = null;
@@ -3141,18 +3147,57 @@ class App {
     // what makes an empty list readable: "nothing yet" and "nothing in the twelve
     // seconds looked at so far" are different claims, and only one of them is true.
     acc.records = acc.records.concat((out.records || []).map((r) => ({ ...r, at: t0 })));
+    acc.block = B;
     acc.slowest = Math.max(acc.slowest || 0, (performance.now() - began) / 1000);
 
     // Whether this is keeping up is a question about the backlog, not about any one
     // block: the first block of a capture also pays for the symbol sync's grid fit, and
     // calling a whole session slow because of that one would be wrong. What matters is
     // whether the playhead is pulling away from the decoding.
-    const total = isFinite(d) ? Math.ceil(d / STREAM_BLOCK_S) : 0;
-    const behind = Math.max(0, Math.floor(now / STREAM_BLOCK_S) - seen.size);
+    const total = isFinite(d) ? Math.ceil(d / B) : 0;
+    const behind = Math.max(0, blocksDone(now, d, B) - seen.size);
     acc.note = `as it plays · ${seen.size}${total ? ` of ${total}` : ''} block` +
-               `${seen.size === 1 ? '' : 's'} of ${STREAM_BLOCK_S} s` +
+               `${seen.size === 1 ? '' : 's'} of ${B} s` +
                `${behind > 1 ? ` · ${behind} behind the playhead` : ''}` +
-               `${acc.slowest > STREAM_BLOCK_S ? ` · slowest ${acc.slowest.toFixed(1)} s` : ''}`;
+               `${acc.slowest > B ? ` · slowest ${acc.slowest.toFixed(1)} s` : ''}`;
+    live._records = acc;
+    if (this.current === live.id && this.view() === 'Events') this.renderEvents();
+  }
+
+  /**
+   * Decoding as it plays in windows that follow what was said, for a decoder that reads a
+   * word by the words around it. Each window starts where the last record kept ended and
+   * runs a block plus the overlap; see `blocks.js`. One at a time, like the blocks.
+   */
+  async streamWindows(n, B, ov) {
+    const d = this.engine.duration();
+    const now = this.engine.effectiveTime(n.id);
+    const from = n._readTo || 0;
+    const win = nextWindow(from, now, d, B, ov);
+    if (!win) return;
+    this._streamBusy = true;
+    let out = null;
+    const began = performance.now();
+    try {
+      out = await this.engine.runRecordsSpan(n.id, win.w0, win.w1);
+    } catch (err) {
+      this.notify(`decoding ${win.w0.toFixed(0)}–${win.w1.toFixed(0)} s failed: ${err.message}`, 6000);
+    }
+    this._streamBusy = false;
+    const live = this.engine.node(n.id);
+    if (!live || !out) return;
+    const { keep, next } = commitWindow(out.records, win, B, ov);
+    live._readTo = next;
+    const acc = live._records && live._records.streamed
+      ? live._records : { records: [], note: '', streamed: true, continuous: true };
+    // Timed by when it was said rather than by the window, which is not a fixed grid.
+    acc.records = acc.records.concat(keep.map(({ fromS, toS, ...r }) =>
+      ({ ...r, at: fromS != null ? +(win.w0 + fromS).toFixed(1) : win.w0 })));
+    acc.slowest = Math.max(acc.slowest || 0, (performance.now() - began) / 1000);
+    const behind = now - next - B - ov;
+    acc.note = `as it plays · read to ${next.toFixed(0)}${isFinite(d) ? ` of ${d.toFixed(0)}` : ''} s` +
+               ` in windows of ${B} + ${ov} s` +
+               `${behind > B ? ` · ${behind.toFixed(0)} s behind the playhead` : ''}`;
     live._records = acc;
     if (this.current === live.id && this.view() === 'Events') this.renderEvents();
   }
@@ -3249,7 +3294,7 @@ class App {
       const extra = Object.entries(rec).filter(([k]) => k !== 'text' && k !== 'at')
         .map(([k, v]) => `<span class="evk">${k}</span> ${v}`).join(' ');
       const when = rec.at != null
-        ? `<span class="evat" title="${r.continuous ? 'when it was heard' : `the ${STREAM_BLOCK_S} s block it came from`}">${
+        ? `<span class="evat" title="${r.continuous ? 'when it was heard' : `the ${r.block || STREAM_BLOCK_S} s block it came from`}">${
             rec.at.toFixed(r.continuous ? 1 : 0)}s</span>` : '';
       return `<li><i>${i + 1}</i>${when}<span class="evt">${(rec.text ?? JSON.stringify(rec))
         .replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span>${extra}</li>`;
@@ -3271,7 +3316,7 @@ class App {
       </div>`;
     const btn = $('#evrun');
     if (btn) btn.addEventListener('click', () => {
-      n._records = null; n._blocks = null; this.renderEvents(true);
+      n._records = null; n._blocks = null; n._readTo = 0; this.renderEvents(true);
     });
     const sug = $('#usesug');
     if (sug) {
