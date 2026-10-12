@@ -200,7 +200,10 @@ const byRank = (a, b) => rankOf(a) - rankOf(b) || a.name.localeCompare(b.name);
  */
 export function arrange(ops, { filter = '', expanded = false } = {}) {
   const q = filter.toLowerCase();
-  const hit = (o) => !q || o.name.toLowerCase().includes(q) || (o.group || '').toLowerCase().includes(q);
+  // The name, the group, and what an entry says it is or runs: "whisper" or "transcribe"
+  // find Speech, "aprs" finds direwolf.
+  const hit = (o) => !q || [o.name, o.group, o.blurb, o.hint, o.command]
+    .some((f) => f && String(f).toLowerCase().includes(q));
   const leadOp = ops.find((o) => o.lead && hit(o)) || null;
   const rest = ops.filter((o) => !o.lead && hit(o)).sort(byRank);
 

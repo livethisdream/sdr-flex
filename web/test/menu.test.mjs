@@ -4,7 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { arrange, GROUP_ORDER, LEAD_ROWS } from '../src/menu.js';
-import { OPS } from '../src/engine.js';
+import { OPS, MockEngine } from '../src/engine.js';
+import { Capture } from '../src/capture.js';
 
 const catalog = (kind) => Object.entries(OPS)
   .filter(([, o]) => (Array.isArray(o.in) ? o.in : [o.in]).some((k) => k === '*' || k === kind))
@@ -72,4 +73,31 @@ test('an unranked operation (a plugin, a local decoder) never leads', () => {
   const plugin = { id: 'p', name: 'Aardvark', group: 'Decode', in: 'iq' };
   const m = arrange([...catalog('iq'), plugin]);
   assert.ok(!m.top.includes(plugin));
+});
+
+test('search reads what an entry says it is and runs, not only its name', () => {
+  const speech = { id: 'ext.whisper', name: 'Speech', group: 'Decode', rank: 36, external: true,
+                   blurb: 'Speech to text — voice traffic, transcribed', command: 'whisper-cli' };
+  const aprs = { id: 'ext.direwolf', name: 'direwolf', group: 'Decode', rank: 36, external: true,
+                 blurb: 'APRS / AX.25 packet radio', command: 'direwolf' };
+  const ops = [...catalog('real'), speech, aprs];
+  const found = (q) => arrange(ops, { filter: q }).groups.flatMap((g) => g.items).map((o) => o.id);
+  for (const q of ['Whisper', 'transcribe', 'speech']) assert.ok(found(q).includes('ext.whisper'), q);
+  assert.deepEqual(found('aprs'), ['ext.direwolf']);
+});
+
+test('after SSB or AM, Speech is in the first rows; after FM it stays folded', async () => {
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  const buf = new ArrayBuffer(250_000 * 2);
+  await e.openCapture(new Capture({ buffer: buf, format: 'cu8', sampleRate: 250_000, centerHz: 7e6, label: 'x' }));
+  e.adapters = [{ id: 'ext.whisper', name: 'Speech', group: 'Decode', in: 'real', out: 'events', voice: true,
+                  available: true, command: 'whisper-cli', blurb: 'Speech to text', params: [] }];
+  const tu = await e.addNode({ parent: e.root.id, op: 'core.tuner', selection: { f0: 7e6 - 3e3, f1: 7e6 + 3e3 }, at: 0.1 });
+  for (const [op, lead] of [['core.ssb', true], ['core.am_envelope', true], ['core.fm_discriminator', false]]) {
+    const d = await e.addNode({ parent: tu.id, op, at: 0.1 });
+    const top = arrange(await e.palette(d.id)).top.map((o) => o.id);
+    assert.equal(top.includes('ext.whisper'), lead, `${op}: ${top.join(', ')}`);
+    if (lead) assert.equal(top[top.indexOf('core.audio') + 1], 'ext.whisper', 'right after Listen');
+  }
 });
