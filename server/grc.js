@@ -5,7 +5,7 @@
 //   - a recipe: a GRC hier block from a channel's input to a node, with SDR Flex's recipe block
 //     on it, so it opens in GRC and comes back into SDR Flex as one menu entry;
 //   - a program: the same chain as a GRC flowgraph a desktop can run, reading the capture and
-//     ending in the speaker.
+//     ending in the speaker, or in a file of bits after a slicer.
 //
 // Written here, from the graph the server holds, and never from anything the page sends but a
 // node id and a name: a .grc can carry Python, and the page has no authentication. Every value
@@ -48,7 +48,32 @@ const EXPORT = {
     blocks: [{ id: 'sdrflex_ssb', params: { samp_rate: 'samp_rate', sideband: 'sideband', bfoHz: 'bfoHz',
                                             gain: 'gain', start_index: '0' } }],
     rate: 'samp_rate', output: 'real', needs: 'sdrflex_ssb' }),
+  // The slicers' recipes (recipes/nrz.grc, manchester.grc): one decision a byte. The grid's
+  // phase is SDR Flex's estimate over the span it sliced, which is not a setting of the node.
+  'core.nrz_slicer': (n) => slicer(n, 'sdrflex_nrz'),
+  'core.manchester': (n) => ({ ...slicer(n, 'sdrflex_manchester'),
+    note: 'Manchester comes out as two decisions a symbol; which pair is which bit is SDR Flex\'s' }),
+  'core.differential': (n) => ({
+    fuses: 1, params: [[n, 'mode']],
+    blocks: [{ id: 'sdrflex_differential', params: { mode: 'mode' } }],
+    rate: 'samp_rate', output: 'bits', needs: 'sdrflex_differential',
+    note: 'differential decoding here runs on every bit, from before the sync word SDR Flex finds' }),
+  // recipes/symbols.grc on the grid SDR Flex fitted where the playhead was; the gain is
+  // written as a number, since a demod before it has a setting of the same name.
+  'core.symbols': (n) => ({
+    fuses: 1, params: [[n, 'phase'], [n, 'center']],
+    blocks: [{ id: 'sdrflex_symbols', params: { samp_rate: 'samp_rate', symbolRate: num(n.out.sampleRate), alpha: '0.5',
+      span: '8', phase: 'phase', center: 'center', gain: num(n.params.gain.value) || '1',
+      invert: n.params.invert.value === 'yes' ? 'yes' : 'no' } }],
+    rate: num(n.out.sampleRate), output: 'real', needs: 'sdrflex_symbols' }),
 };
+
+function slicer(n, id) {
+  const phase = n._sliced && n._sliced.t0 === 0 ? num(n._sliced.phase) || '0' : '0';
+  return { fuses: 1, params: [[n, 'threshold'], [n, 'symbolUs']], vars: { phase },
+           blocks: [{ id, params: { samp_rate: 'samp_rate', threshold: 'threshold', symbolUs: 'symbolUs', phase: 'phase' } }],
+           rate: 'samp_rate', output: 'bits', needs: id };
+}
 
 /** The nodes from `nodeId` up to the channel it is in, channel first. */
 function chainTo(engine, nodeId) {
@@ -85,6 +110,7 @@ function plan(engine, nodeId) {
     steps.push(...ex.blocks);
     if (ex.imports) imports.add(ex.imports);
     if (ex.needs) needs.add(ex.needs);
+    if (ex.note) notes.push(ex.note);
     Object.assign(vars, ex.vars || {});
     output = ex.output;
     rate = ex.rate;
@@ -164,7 +190,7 @@ export function recipeGrc(engine, nodeId, title) {
   });
   const labels = outs === 2 ? ['left', 'right'] : ['out'];
   labels.forEach((label, i) => {
-    blocks.push(block(`pad_sink_${i}`, 'pad_sink', { label, type: 'float', vlen: '1', num_streams: '1', optional: 'False' },
+    blocks.push(block(`pad_sink_${i}`, 'pad_sink', { label, type: pl.output === 'bits' ? 'byte' : 'float', vlen: '1', num_streams: '1', optional: 'False' },
                       240 + pl.steps.length * 200, 280 + i * 80));
     conns.push([prev, String(i), `pad_sink_${i}`, '0']);
   });
@@ -243,14 +269,22 @@ export function programGrc(engine, nodeId, title) {
     prev = name;
     outs = s.outs || 1;
   });
+  // Bits are written to a file, one a byte, beside the program.
+  if (pl.output === 'bits') {
+    blocks.push(block('bits', 'blocks_file_sink', { file: 'bits.u8', type: 'byte', append: 'False', unbuffered: 'False', vlen: '1' },
+                      640 + pl.steps.length * 200, 400));
+    conns.push([prev, '0', 'bits', '0']);
+  }
   // A sound card takes 48 kHz; the chain's own rate goes through a resampler to get there.
-  blocks.push(block('audio_rate', 'variable', { value: '48000' }, 840, 120));
-  for (let c = 0; c < outs; c++) {
+  if (pl.output !== 'bits') blocks.push(block('audio_rate', 'variable', { value: '48000' }, 840, 120));
+  for (let c = 0; c < (pl.output === 'bits' ? 0 : outs); c++) {
     const rs = `resample_${c}`;
     blocks.push(block(rs, 'rational_resampler_xxx', { type: 'fff', interp: 'audio_rate', decim: `int(${pl.rate})`, taps: '[]', fbw: '0.4' }, 640 + pl.steps.length * 200, 380 + c * 80));
     conns.push([prev, String(c), rs, '0'], [rs, '0', 'speaker', String(c)]);
   }
-  blocks.push(block('speaker', 'audio_sink', { samp_rate: 'audio_rate', device_name: '', ok_to_block: 'True', num_inputs: String(outs) }, 900 + pl.steps.length * 200, 400));
+  if (pl.output !== 'bits') {
+    blocks.push(block('speaker', 'audio_sink', { samp_rate: 'audio_rate', device_name: '', ok_to_block: 'True', num_inputs: String(outs) }, 900 + pl.steps.length * 200, 400));
+  }
   for (const [i, text] of pl.notes.entries()) blocks.push(block(`note_${i}`, 'note', { note: text }, 8, 560 + i * 40));
   blocks.push(block('note_capture', 'note', { note: `Reads ${fileName}, expected beside this file. Exported from SDR Flex.` }, 8, 520));
   const id = slug(title);

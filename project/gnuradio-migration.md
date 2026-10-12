@@ -255,3 +255,24 @@ sideband rejects an upper-sideband tone by 48 dB; the JS Hilbert taps equal `fir
 1e-7; AM and SSB chains export as recipes and programs that `grcc` compiles. Full image 619 pass,
 0 fail. What is left in JS: Gain and To real (one block each), and the slicers and framers,
 which are the next step.
+
+**Slicers and symbol sync, as recipes (ADR-0043), 2026-10-11.** `recipes/nrz.grc`,
+`manchester.grc` and `symbols.grc` read their input on a grid (a fractional resampler, then a
+binary slicer or a centered level); `differential.grc` is `diff_decoder_bb`. SDR Flex keeps
+the estimates (threshold, symbol period, grid phase, the symbol fit) and the sync-word search
+and packing; GNU Radio makes the decisions, in one flowgraph with the demod under them. Gates:
+- NRZ and Manchester give the same bytes from both engines on a known OOK signal, with GNU
+  Radio deciding 95% of them (50 ms at each end of the recording stay JS); Manchester's 1,320
+  symbols without a transition are the same count; differential matches in both modes.
+- Symbol sync: no symbol on a different level of 4,800; soft values within 0.077 on ±3, GNU
+  Radio's nearer the levels (dsp.js interpolates linearly, which shaves peaks at 6.7 samples
+  a symbol; the MMSE interpolator does not).
+- Every fixture passes on the GNU Radio engine (`SDRFLEX_ENGINE=gnuradio` on
+  conformance.test.mjs); m17-packet decodes from GNU Radio's soft symbols. A block the worker
+  refuses at the start of a recording is now JS for that block only, not the whole read.
+- **Speed: not met.** Slicing a 2 s capture: 0.35 s against JS 0.05 s the first time, 28 ms
+  against 3 ms after. The worker runs the demod again under the slicer, where JS reuses the
+  samples it read for the estimates. It happens on a setting change, not per frame. Recipes
+  now compile when the image is built, which took the first use from 2.2 s to 0.35 s.
+
+Still JS: PWM and despread (no GNU Radio block; a plugin each), Frames & CRC, Gain, To real.

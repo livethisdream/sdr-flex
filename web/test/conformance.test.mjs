@@ -19,6 +19,15 @@ import { MockEngine } from '../src/engine.js';
 import { Capture } from '../src/capture.js';
 import * as adapters from '../../server/adapters.js';
 import * as plugins from '../src/plugins.js';
+import { GrEngine } from '../../server/gr/engine.js';
+import { GrWorker } from '../../server/gr/worker.js';
+import { FileCapture } from '../../server/filecapture.js';
+
+// `SDRFLEX_ENGINE=gnuradio` runs every fixture on the engine a server with GNU Radio runs
+// (ADR-0044), reading the capture from its file as a server does.
+const GNURADIO = process.env.SDRFLEX_ENGINE === 'gnuradio';
+const workers = [];
+test.after(() => { for (const w of workers) w.stop(); });
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures');
 
@@ -30,7 +39,13 @@ function load(dir) {
   const meta = JSON.parse(fs.readFileSync(path.join(dir, `${stem}.sigmf-meta`), 'utf8'));
   const buf = fs.readFileSync(path.join(dir, spec.capture));
   const g = meta.global, c = (meta.captures || [])[0] || {};
-  const capture = new Capture({
+  const capture = GNURADIO ? new FileCapture({
+    path: path.join(dir, spec.capture),
+    format: SIGMF[g['core:datatype']] || 'cu8',
+    sampleRate: g['core:sample_rate'],
+    centerHz: c['core:frequency'] || 0,
+    label: path.basename(dir),
+  }) : new Capture({
     buffer: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
     format: SIGMF[g['core:datatype']] || 'cu8',
     sampleRate: g['core:sample_rate'],
@@ -59,7 +74,14 @@ const pluginsReady = (async () => {
 
 /** An engine with the adapter table wired in, the way the server wires it. */
 function engineWithAdapters() {
-  const e = new MockEngine({ latency: false });
+  let e;
+  if (GNURADIO) {
+    const w = new GrWorker();
+    workers.push(w);
+    e = new GrEngine({ latency: false }, w);
+  } else {
+    e = new MockEngine({ latency: false });
+  }
   e.adapters = adapters.list();
   e.adapter = (id) => (adapters.ADAPTERS[id] ? { id, ...adapters.ADAPTERS[id] } : null);
   e.runAdapter = async (n, at) => {
@@ -230,6 +252,11 @@ for (const name of dirs) {
       ? gridAsResult(await e.sliceGrid(last.id, 0.05))
       : await e.runRecords(last.id, 0.05);
     assert.ok(out, 'the last node produced nothing at all');
+    if (GNURADIO) {
+      // What GNU Radio computed, against what fell back to the JS engine.
+      const kinds = [...new Set(made.map((n) => e._grKind(e.node(n.id))).filter(Boolean))];
+      t.diagnostic(`GNU Radio: ${kinds.join(', ') || 'nothing'}; ${JSON.stringify(e.grStats)}`);
+    }
 
     const x = spec.expect || {};
     if (x.noError) assert.equal(out.error, undefined, `reported an error: ${out.error}`);

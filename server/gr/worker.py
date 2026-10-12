@@ -23,7 +23,15 @@ Requests:
   {"op": "fm", ...the tuner's fields, "scale"}
       -> {"ok", "bytes"}, then `count` float32: the JS FM demod's outputs k0 .. k0+count-1,
          in hertz times `scale` (gain / deviation)
+  {"op": "grid", ...the parent's fields, "from", "slicer", "slicer_args"}
+      -> {"ok", "bytes"}, then `count` outputs of a recipe that reads its input on a grid (a
+         slicer's decisions, a byte each; soft symbols, float32), run on the parent (an FM
+         demod, or a recipe, named by "from") from its sample k0 on
+  {"op": "bits", "recipe", "args", "bits"}
+      -> {"ok", "bytes"}, then one byte per bit: a recipe from bits to bits, run on "bits"
+         (base64, one bit per byte)
 """
+import base64
 import cmath
 import hashlib
 import importlib.util
@@ -337,6 +345,7 @@ def recipe(name):
                               env={**os.environ, 'HOME': tmp, 'GRC_BLOCKS_PATH': path})
         if done.returncode:
             raise RuntimeError(f'grcc could not compile {name}: {done.stderr.strip()[-400:]}')
+        os.chmod(tmp, 0o755)      # mkdtemp's is 0700, and the cache is shared by whoever runs a worker
         try:
             os.rename(tmp, out)   # whole, or not at all; a worker that lost the race uses the winner's
         except OSError:
@@ -385,8 +394,52 @@ def op_recipe(req):
     finish(tb, last, size, count)
 
 
+def recipe_block(req, name, args, fs=None):
+    """A recipe's hier block made with `args`, the ones it does not have dropped."""
+    cls, side = recipe(name)
+    args = {k: v for k, v in dict(args or {}).items() if k in side['params']}
+    if fs is not None and 'samp_rate' in side['params']:
+        args['samp_rate'] = fs
+    return cls(**args), side
+
+
+def op_grid(req):
+    """A grid recipe's outputs over a span, the parent computed in the same flowgraph.
+
+    A grid recipe (recipes/nrz.grc, manchester.grc, symbols.grc) has two variables saying
+    where its grid is: output d is read at input `first` + d*`step`, counted from the span's
+    first sample, and `history` inputs come before that sample; a centered filter reads `lead`
+    past the last. Its fractional resampler reads four samples past the instant it
+    interpolates, so the parent runs a few past that.
+    """
+    tb = gr.top_block()
+    count, k0 = int(req['count']), int(req['k0'])
+    fs = float(req['rate']) / int(req['decim'])
+    blk, side = recipe_block(req, req['slicer'], req.get('slicer_args'), fs)
+    lag = int(getattr(blk, 'get_' + side['history'])()) if side['history'] else 0
+    lead = int(getattr(blk, 'get_' + side['lead'])()) if side.get('lead') else 0
+    first, step = float(blk.get_first()), float(blk.get_step())
+    n_in = lag + int(math.ceil(first + (count - 1) * step)) + lead + 8
+    if req['from'] == 'fm':
+        parent = fm_chain(tb, req, k0 - lag, n_in)
+    else:
+        parent, _ = recipe_chain(tb, {**req, 'recipe': req['parent_recipe'], 'args': req.get('parent_args') or {}},
+                                 k0 - lag, n_in)
+    tb.connect(parent, blk)
+    finish(tb, blk, 1 if side['output'] == 'bits' else gr.sizeof_float, count)
+
+
+def op_bits(req):
+    """A recipe from bits to bits (recipes/differential.grc), on bits sent with the request."""
+    bits = base64.b64decode(req['bits'])
+    tb = gr.top_block()
+    blk, _ = recipe_block(req, req['recipe'], req.get('args'))
+    tb.connect(blocks.vector_source_b(list(bits)), blk)
+    finish(tb, blk, 1, len(bits))
+
+
 OPS = {'ping': op_ping, 'tone': op_tone, 'tuner': op_tuner, 'fm': op_fm, 'stereo': op_stereo,
-       'recipe': op_recipe}
+       'recipe': op_recipe, 'grid': op_grid, 'bits': op_bits}
 
 
 def main():

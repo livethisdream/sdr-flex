@@ -150,6 +150,43 @@ test('AM and SSB chains use their recipes as blocks, compile, and come back as t
   assert.equal(Number(ssb.params.bfoHz.value), 150);
 });
 
+test('slicer, differential and symbol chains use their recipes as blocks, compile, and come back as the same steps', { skip }, async (t) => {
+  const dir = work(t);
+  const e = await station(t, dir);
+  const blocksDir = path.join(dir, 'blocks');
+  fs.mkdirSync(blocksDir);
+  for (const r of ['am', 'nrz', 'manchester', 'differential', 'symbols']) {
+    assert.ok(compile(path.join(REPO, 'recipes', `${r}.grc`), blocksDir).ok, r);
+  }
+  const recipes = path.join(dir, 'recipes');
+  fs.mkdirSync(recipes);
+  const chains = [
+    [['core.am_envelope', 'core.nrz_slicer', 'core.differential'], ['sdrflex_am', 'sdrflex_nrz', 'sdrflex_differential'], 'bits'],
+    [['core.am_envelope', 'core.manchester'], ['sdrflex_am', 'sdrflex_manchester'], 'bits'],
+    [['core.fm_discriminator', 'core.symbols'], ['sdrflex_symbols'], 'real'],
+  ];
+  for (const [ops, needs, output] of chains) {
+    const tu = await e.addNode({ parent: e.root.id, op: 'core.tuner', selection: { f0: 100e6 - 12e3, f1: 100e6 + 12e3 }, at: 0.05 });
+    let parent = tu;
+    for (const op of ops) parent = await e.addNode({ parent: parent.id, op, at: 0.05 });
+    const r = recipeGrc(e, parent.id, `my ${ops.join(' ')}`);
+    assert.deepEqual(r.needs, needs);
+    fs.writeFileSync(path.join(recipes, `${r.name}.grc`), r.text);
+    const c = compile(path.join(recipes, `${r.name}.grc`), dir, [blocksDir]);
+    assert.ok(c.ok, c.log);
+    const p = programGrc(e, parent.id, `prog ${ops.join(' ')}`);
+    if (output === 'bits') assert.match(p.text, /blocks_file_sink/, 'bits go to a file, not the speaker');
+    const pf = path.join(dir, `${p.name}.grc`);
+    fs.writeFileSync(pf, p.text);
+    const pc = compile(pf, dir, [blocksDir]);
+    assert.ok(pc.ok, pc.log);
+  }
+  const { recipes: back, errors } = describe(recipes);
+  assert.deepEqual(errors, []);
+  const got = back.map(chainOf).map((c) => c.join(' ')).sort();
+  assert.deepEqual(got, chains.map(([ops]) => ops.join(' ')).sort());
+});
+
 test('a step with no GNU Radio block ends the chain there, and the file says so', { skip }, async (t) => {
   const dir = work(t);
   const e = await station(t, dir);

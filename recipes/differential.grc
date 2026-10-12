@@ -1,0 +1,114 @@
+options:
+  parameters:
+    author: SDR Flex
+    category: '[SDR Flex]'
+    description: 'Differential decoding, one bit per byte: NRZ-M (a 1 is a transition) or NRZ-S (a 0
+      is). GNU Radio''s diff_decoder_bb, whose first bit is read against a 0.'
+    generate_options: hb
+    hier_block_src_path: '.:'
+    id: sdrflex_differential
+    output_language: python
+    title: Differential decode
+  states:
+    coordinate: [8, 8]
+    rotation: 0
+    state: enabled
+
+blocks:
+- name: mode
+  id: parameter
+  parameters:
+    hide: none
+    label: Mode
+    short_id: ''
+    type: str
+    value: 'nrz-m'
+  states:
+    coordinate: [200, 8]
+    rotation: 0
+    state: enabled
+- name: recipe
+  id: sdrflex_recipe
+  parameters:
+    kind: node
+    node: core.differential
+    input: bits
+    output: bits
+    derived: 
+    history: 
+    lead: 
+    listen: 'no'
+    comment: ''
+  states:
+    coordinate: [8, 320]
+    rotation: 0
+    state: enabled
+- name: invert
+  id: variable
+  parameters:
+    value: '1 if mode == ''nrz-s'' else 0'
+  states:
+    coordinate: [360, 120]
+    rotation: 0
+    state: enabled
+- name: digital_diff_decoder_bb_0
+  id: digital_diff_decoder_bb
+  parameters:
+    coding: digital.DIFF_DIFFERENTIAL
+    modulus: '2'
+  states:
+    coordinate: [136, 232]
+    rotation: 0
+    state: enabled
+- name: blocks_add_const_vxx_0
+  id: blocks_add_const_vxx
+  parameters:
+    const: invert
+    type: byte
+    vlen: '1'
+  states:
+    coordinate: [304, 232]
+    rotation: 0
+    state: enabled
+- name: blocks_and_const_xx_0
+  id: blocks_and_const_xx
+  parameters:
+    const: '1'
+    type: byte
+  states:
+    coordinate: [456, 232]
+    rotation: 0
+    state: enabled
+- name: pad_source_0
+  id: pad_source
+  parameters:
+    label: in
+    num_streams: '1'
+    optional: 'False'
+    type: byte
+    vlen: '1'
+  states:
+    coordinate: [8, 232]
+    rotation: 0
+    state: enabled
+- name: pad_sink_0
+  id: pad_sink
+  parameters:
+    label: out
+    num_streams: '1'
+    optional: 'False'
+    type: byte
+    vlen: '1'
+  states:
+    coordinate: [600, 232]
+    rotation: 0
+    state: enabled
+
+connections:
+- [pad_source_0, '0', digital_diff_decoder_bb_0, '0']
+- [digital_diff_decoder_bb_0, '0', blocks_add_const_vxx_0, '0']
+- [blocks_add_const_vxx_0, '0', blocks_and_const_xx_0, '0']
+- [blocks_and_const_xx_0, '0', pad_sink_0, '0']
+
+metadata:
+  file_format: 1

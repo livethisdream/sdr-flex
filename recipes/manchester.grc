@@ -1,0 +1,201 @@
+options:
+  parameters:
+    author: SDR Flex
+    category: '[SDR Flex]'
+    description: 'Manchester: the level against a threshold, sampled in the middle of each half-symbol.
+      Outputs 2k and 2k+1 are the two halves of symbol k, one bit per byte; which pair
+      means which bit, and the symbols with no transition, are counted by SDR Flex.'
+    generate_options: hb
+    hier_block_src_path: '.:'
+    id: sdrflex_manchester
+    output_language: python
+    title: Manchester slicer
+  states:
+    coordinate: [8, 8]
+    rotation: 0
+    state: enabled
+
+blocks:
+- name: samp_rate
+  id: parameter
+  parameters:
+    hide: none
+    label: Sample rate
+    short_id: ''
+    type: eng_float
+    value: '48000'
+  states:
+    coordinate: [200, 8]
+    rotation: 0
+    state: enabled
+- name: threshold
+  id: parameter
+  parameters:
+    hide: none
+    label: Threshold
+    short_id: ''
+    type: eng_float
+    value: '0'
+  states:
+    coordinate: [328, 8]
+    rotation: 0
+    state: enabled
+- name: symbolUs
+  id: parameter
+  parameters:
+    hide: none
+    label: Symbol (us)
+    short_id: ''
+    type: eng_float
+    value: '1000'
+  states:
+    coordinate: [456, 8]
+    rotation: 0
+    state: enabled
+- name: phase
+  id: parameter
+  parameters:
+    hide: none
+    label: Grid phase (samples)
+    short_id: ''
+    type: eng_float
+    value: '0'
+  states:
+    coordinate: [600, 8]
+    rotation: 0
+    state: enabled
+- name: recipe
+  id: sdrflex_recipe
+  parameters:
+    kind: node
+    node: core.manchester
+    input: real
+    output: bits
+    derived: threshold=otsu,symbolUs=run-lengths,phase=grid-search
+    history: history
+    lead: 
+    listen: 'no'
+    comment: ''
+  states:
+    coordinate: [8, 320]
+    rotation: 0
+    state: enabled
+- name: imports
+  id: import
+  parameters:
+    imports: import math
+  states:
+    coordinate: [8, 120]
+    rotation: 0
+    state: enabled
+- name: step
+  id: variable
+  parameters:
+    value: symbolUs * 1e-6 * samp_rate / 2
+  states:
+    coordinate: [200, 120]
+    rotation: 0
+    state: enabled
+- name: first
+  id: variable
+  parameters:
+    value: phase + step / 2
+  states:
+    coordinate: [400, 120]
+    rotation: 0
+    state: enabled
+- name: skip
+  id: variable
+  parameters:
+    value: int(math.floor(first))
+  states:
+    coordinate: [560, 120]
+    rotation: 0
+    state: enabled
+- name: mu
+  id: variable
+  parameters:
+    value: first - skip
+  states:
+    coordinate: [680, 120]
+    rotation: 0
+    state: enabled
+- name: history
+  id: variable
+  parameters:
+    value: 3
+  states:
+    coordinate: [800, 120]
+    rotation: 0
+    state: enabled
+- name: pad_source_0
+  id: pad_source
+  parameters:
+    label: in
+    num_streams: '1'
+    optional: 'False'
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [8, 232]
+    rotation: 0
+    state: enabled
+- name: blocks_add_const_vxx_0
+  id: blocks_add_const_vxx
+  parameters:
+    const: -threshold
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [136, 232]
+    rotation: 0
+    state: enabled
+- name: blocks_skiphead_0
+  id: blocks_skiphead
+  parameters:
+    num_items: skip
+    type: float
+  states:
+    coordinate: [304, 232]
+    rotation: 0
+    state: enabled
+- name: mmse_resampler_xx_0
+  id: mmse_resampler_xx
+  parameters:
+    phase_shift: mu
+    resamp_ratio: step
+    type: float
+  states:
+    coordinate: [456, 232]
+    rotation: 0
+    state: enabled
+- name: digital_binary_slicer_fb_0
+  id: digital_binary_slicer_fb
+  parameters:
+    alias: ''
+  states:
+    coordinate: [640, 232]
+    rotation: 0
+    state: enabled
+- name: pad_sink_0
+  id: pad_sink
+  parameters:
+    label: out
+    num_streams: '1'
+    optional: 'False'
+    type: byte
+    vlen: '1'
+  states:
+    coordinate: [800, 232]
+    rotation: 0
+    state: enabled
+
+connections:
+- [pad_source_0, '0', blocks_add_const_vxx_0, '0']
+- [blocks_add_const_vxx_0, '0', blocks_skiphead_0, '0']
+- [blocks_skiphead_0, '0', mmse_resampler_xx_0, '0']
+- [mmse_resampler_xx_0, '0', digital_binary_slicer_fb_0, '0']
+- [digital_binary_slicer_fb_0, '0', pad_sink_0, '0']
+
+metadata:
+  file_format: 1

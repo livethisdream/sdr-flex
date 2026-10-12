@@ -18,7 +18,7 @@
 // finds a block missing is answered by the JS engine, which gives the same samples more
 // slowly, and is counted — a miss is a prepare that asked for the wrong span, and the count is
 // how that shows up in a measurement rather than in a wrong answer.
-import { MockEngine } from '../../web/src/engine.js';
+import { MockEngine, SYMBOL_SPAN, SYMBOL_FIT_SECONDS } from '../../web/src/engine.js';
 import * as dsp from '../../web/src/dsp.js';
 import { PRIORITY } from './pool.js';
 
@@ -30,6 +30,12 @@ const RECIPE_NODES = {
   'core.cw': { recipe: 'cw', args: (p) => ({ offsetHz: p.offsetHz.value, pitchHz: p.pitchHz.value, gain: p.gain.value || 1,
                                               filterHz: p.filterHz ? Number(p.filterHz.value) : dsp.CW_FILTER_HZ }) },
 };
+
+/** The slicers that are a recipe whose decisions GNU Radio makes (recipes/nrz.grc, manchester.grc). */
+const SLICERS = { 'core.nrz_slicer': 'nrz', 'core.manchester': 'manchester' };
+// How far from either end of what is on disk a slicer's grid is GNU Radio's: its parent's
+// filters read past both ends of what they make. Decisions nearer an end are dsp.js's.
+const GRID_EDGE_S = 0.05;
 
 const BLOCK_S = 0.25;
 // Beyond what a read itself spans: the detector cache (`_detectCached`) computes whole
@@ -100,6 +106,10 @@ export class GrEngine extends MockEngine {
   /** Which of the operations GNU Radio computes this node is, or null. */
   _grKind(node) {
     if (this._grTuner(node)) return 'tuner';
+    if (node && node.op === 'core.symbols') {
+      const k = this._grKind(this.node(node.parent));
+      return k && k !== 'tuner' && k !== 'stereo' ? 'symbols' : null;
+    }
     if (node && node.op === 'core.fm_discriminator' && this._grTuner(this.node(node.parent))) return 'fm';
     if (node && RECIPE_NODES[node.op] && this._grTuner(this.node(node.parent))) return RECIPE_NODES[node.op].recipe;
     if (node && node.op === 'core.stereo' && this._grKind(this.node(node.parent)) === 'fm') return 'stereo';
@@ -123,6 +133,32 @@ export class GrEngine extends MockEngine {
       const args = RECIPE_NODES[node.op].args(node.params);
       return { ...t, op: 'recipe', recipe: kind, args, complex: false,
                sig: `${t.sig}|${kind}|${JSON.stringify(args)}` };
+    }
+    if (kind === 'symbols') {
+      // recipes/symbols.grc on the grid each ten seconds were fitted on (`_symbolGrid`), or
+      // the one a person held. A refit replaces `_grids`, so its identity is in the signature.
+      const p = this.node(node.parent);
+      const f = this._grSpec(p);
+      const pr = node.params;
+      const held = pr.phase.mode === 'manual'
+        ? { phase: pr.phase.value, center: pr.center.value, gain: pr.gain.value } : null;
+      if (!node._grids) node._grids = new Map();
+      const rate = node.out.sampleRate, sps = p.out.sampleRate / rate;
+      const invert = pr.invert.value === 'yes' ? 'yes' : 'no';
+      return {
+        ...f, op: 'grid', from: f.op, recipe: null, args: null, complex: false,
+        ...(f.recipe ? { parent_recipe: f.recipe, parent_args: f.args } : {}),
+        // Block j's symbols from j*B, on the grid of the ten seconds it is in. A block never
+        // straddles two, since BLOCK_S divides SYMBOL_FIT_SECONDS.
+        perBlock: (k0, count) => {
+          const g = held || this._symbolGrid(node, Math.floor(Math.max(0, k0 / rate) / SYMBOL_FIT_SECONDS));
+          const P = k0 * sps + g.phase, K = Math.floor(P);
+          return { k0: K, count, slicer: 'symbols',
+                   slicer_args: { symbolRate: rate, alpha: 0.5, span: SYMBOL_SPAN, phase: P - K,
+                                  center: g.center, gain: g.gain, invert } };
+        },
+        sig: `${f.sig}|symbols|${invert}|${held ? JSON.stringify(held) : `auto${captureId(node._grids)}`}`,
+      };
     }
     if (kind === 'stereo') {
       const p = this.node(node.parent);
@@ -197,8 +233,10 @@ export class GrEngine extends MockEngine {
       op: spec.op, path: this._store().path, format: this._store().format, rate: spec.fsIn,
       ring: this._store().ring,
       k0: j * B, count: B, taps: Array.from(spec.taps), decim: spec.decim, offset: spec.offset,
-      ...Object.fromEntries(['scale', 'audio_decim', 'mode', 'deemph_us', 'runin_s', 'phase', 'recipe', 'args']
+      ...Object.fromEntries(['scale', 'audio_decim', 'mode', 'deemph_us', 'runin_s', 'phase', 'recipe', 'args',
+                             'from', 'parent_recipe', 'parent_args']
         .filter((k) => spec[k] != null).map((k) => [k, spec[k]])),
+      ...(spec.perBlock ? spec.perBlock(j * B, B) : {}),
     }, priority, key).then(({ bytes }) => {
       blocks.set(j, new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)));
       this.grStats.blocks++;
@@ -339,6 +377,65 @@ export class GrEngine extends MockEngine {
     return { data: out, sampleRate: fs, kind: n.out.kind, count: total };
   }
 
+  /**
+   * A slicer's decisions, made by its recipe in the worker on the same span, the parent
+   * computed in the same flowgraph. The span's first sample is where `readSpan` put it;
+   * decisions within GRID_EDGE_S of either end of the recording are the JS engine's.
+   */
+  async _gridDecisions(n, p, got, t0, phase, sps) {
+    const slicer = SLICERS[n.op];
+    const kind = this._grKind(p);
+    if (!this.gr || !slicer || !kind || kind === 'tuner' || kind === 'stereo') return null;
+    const fs = p.out.sampleRate, N = got.data.length;
+    const want0 = Math.min(1 << 16, N);
+    const k0 = Math.floor((t0 + want0 / fs) * fs) - want0;
+    const manchester = slicer === 'manchester';
+    const th = n.params.threshold.value;
+    const all = manchester ? dsp.manchesterDecisions(got.data, th, phase, sps) : dsp.nrzDecisions(got.data, th, phase, sps);
+    const per = manchester ? 2 : 1;                       // decisions a symbol
+    const first = phase + (manchester ? sps / 4 : 0), step = sps / per;
+    const [lo, hi] = this._onDisk();
+    const M = GRID_EDGE_S * fs;
+    // Whole symbols, so a Manchester pair is never split between the two engines.
+    let a = Math.max(0, Math.ceil((lo * fs + M - k0 - first) / step));
+    let b = Math.min(all.length, Math.floor((hi * fs - M - k0 - first) / step));
+    a = Math.ceil(a / per) * per; b = Math.floor(b / per) * per;
+    if (b - a < per) return null;
+    const P = phase + (a / per) * sps, K = Math.floor(P);
+    const spec = this._grSpec(p);
+    const st = this._store();
+    try {
+      const { bytes } = await this.gr.request({
+        op: 'grid', from: spec.op, path: st.path, format: st.format, rate: spec.fsIn, ring: st.ring,
+        taps: Array.from(spec.taps), decim: spec.decim, offset: spec.offset,
+        ...(spec.scale != null ? { scale: spec.scale } : {}),
+        ...(spec.recipe ? { parent_recipe: spec.recipe, parent_args: spec.args } : {}),
+        slicer, slicer_args: { threshold: th, symbolUs: n.params.symbolUs.value, phase: P - K },
+        k0: k0 + K, count: b - a,
+      }, PRIORITY.read, `grid|${n.id}|${k0}|${a}|${b}`);
+      const out = Uint8Array.from(all);
+      out.set(bytes.subarray(0, b - a), a);
+      this.grStats.grid = (this.grStats.grid || 0) + (b - a);
+      return out;
+    } catch (e) {
+      if (process.env.SDRFLEX_GR_DEBUG) console.error(`gr grid ${n.op}: ${e.message}`);
+      return null;
+    }
+  }
+
+  async _bitsThrough(recipe, args, bits) {
+    if (!this.gr || !bits.length) return null;
+    try {
+      const { bytes } = await this.gr.request({
+        op: 'bits', recipe, args, bits: Buffer.from(Uint8Array.from(bits)).toString('base64'),
+      }, PRIORITY.read, `bits|${recipe}|${JSON.stringify(args)}|${bits.length}`);
+      return Uint8Array.from(bytes.subarray(0, bits.length));
+    } catch (e) {
+      if (process.env.SDRFLEX_GR_DEBUG) console.error(`gr bits ${recipe}: ${e.message}`);
+      return null;
+    }
+  }
+
   _readIQ(node, tEnd, count) {
     if (this._grTuner(node)) {
       const spec = this._tunerSpec(node);
@@ -377,7 +474,12 @@ export class GrEngine extends MockEngine {
     return super._detectRaw(node, tEnd, count);
   }
 
-  /** `count` samples ending at `tEnd` from a node's GNU Radio blocks, or null if any is missing. */
+  /**
+   * `count` samples ending at `tEnd` from a node's GNU Radio blocks, or null if any has not
+   * been fetched. A block the worker refused (one whose filters would read before the
+   * recording starts) is the JS engine's, for that block's samples only: the two agree, and
+   * one refused block at the start of a short capture otherwise sent every read to JS.
+   */
   _fromBlocks(node, tEnd, count, width) {
     const blocks = this._blocksOf(node, this._grSpec(node).sig);
     const fs = node.out.sampleRate, B = this._blockSize(node);
@@ -386,6 +488,12 @@ export class GrEngine extends MockEngine {
     const out = new Float32Array(count * width);
     for (let j = Math.floor(kStart / B); j * B < kEnd; j++) {
       const blk = blocks.get(j);
+      if (blk === null) {
+        const a = Math.max(kStart, j * B), b = Math.min(kEnd, (j + 1) * B);
+        out.set(super._detectRaw(node, (b + 0.5) / fs, b - a), (a - kStart) * width);
+        this.grStats.refused = (this.grStats.refused || 0) + 1;
+        continue;
+      }
       if (!blk) {
         this.grStats.misses++;
         if (process.env.SDRFLEX_GR_DEBUG) {

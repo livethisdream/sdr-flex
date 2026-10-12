@@ -336,6 +336,13 @@ VOLUME /rings
 EXPOSE 8722
 USER sdrflex
 
+# The shipped recipes, compiled by grcc now rather than on first use, which takes most of a
+# second each (server/gr/worker.py keeps the compiles in $TMPDIR/sdrflex-recipes).
+RUN cd server/gr && python3 -c "import os, recipes, worker; \
+  [worker.recipe(f[:-4]) for f in sorted(os.listdir(recipes.RECIPES)) if f.endswith('.grc') \
+   and recipes.describe(os.path.join(recipes.RECIPES, f))['kind'] == 'node']" \
+  && chmod 1777 /tmp/sdrflex-recipes && ls /tmp/sdrflex-recipes
+
 HEALTHCHECK --interval=30s --timeout=3s --start-period=3s \
   CMD node -e "fetch('http://127.0.0.1:8722/index.html').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 

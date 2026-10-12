@@ -44,7 +44,9 @@ Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
 
 **GNU Radio is the engine (ADR-0044), opt-in with `SDRFLEX_ENGINE=gnuradio`.** The tuner,
-FM, stereo and the CW recipe (`recipes/cw.grc`, ADR-0043) run in GNU Radio workers; the
+FM, stereo, and the CW, AM, SSB, NRZ, Manchester, differential and symbol-sync recipes
+(`recipes/*.grc`, ADR-0043) run in GNU Radio workers; the slicers' estimates (threshold, symbol
+period, grid phase) stay SDR Flex's, and GNU Radio makes the decisions; the
 synthetic scene is recorded once so GNU Radio reads it like a capture; every decoder's input is
 resampled and converted by a GNU Radio flowgraph (`server/gr/feed.py`). Progress, measurements
 and what is left: `project/gnuradio-migration.md`. Unset, the JS engine runs as before.
