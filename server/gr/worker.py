@@ -42,6 +42,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 
 from gnuradio import analog, blocks, fft, filter as grfilter, gr
 from gnuradio.filter import firdes
@@ -315,6 +316,7 @@ def op_stereo(req):
 
 
 _recipes = {}
+_loading = threading.Lock()
 
 
 def recipe(name):
@@ -323,6 +325,13 @@ def recipe(name):
     block path so its metadata block is known to it."""
     if name in _recipes:
         return _recipes[name]
+    with _loading:
+        if name not in _recipes:
+            _recipes[name] = _load(name)
+    return _recipes[name]
+
+
+def _load(name):
     if not name.replace('_', '').isalnum():
         raise ValueError(f'no recipe called {name!r}')
     grc = os.path.join(recipes.RECIPES, f'{name}.grc')
@@ -353,8 +362,19 @@ def recipe(name):
     spec = importlib.util.spec_from_file_location(side['block'], os.path.join(out, side['block'] + '.py'))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    _recipes[name] = (getattr(mod, side['block']), side)
-    return _recipes[name]
+    return getattr(mod, side['block']), side
+
+
+def preload():
+    """Load every shipped node recipe, behind the requests. The first use of one cost ~45 ms
+    (parsing its .grc and importing its module) on the request that needed it, which for a
+    slicer was the first slice somebody asked for; a worker starts long before that."""
+    for f in sorted(os.listdir(recipes.RECIPES)):
+        if f.endswith('.grc'):
+            try:
+                recipe(f[:-4])
+            except Exception:   # a chain recipe, or one that will not compile: its request says so
+                pass
 
 
 def recipe_chain(tb, req, k0, count):
@@ -443,6 +463,7 @@ OPS = {'ping': op_ping, 'tone': op_tone, 'tuner': op_tuner, 'fm': op_fm, 'stereo
 
 
 def main():
+    threading.Thread(target=preload, daemon=True).start()
     for line in sys.stdin:
         try:
             req = json.loads(line)

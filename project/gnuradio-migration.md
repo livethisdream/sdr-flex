@@ -274,5 +274,14 @@ and packing; GNU Radio makes the decisions, in one flowgraph with the demod unde
   against 3 ms after. The worker runs the demod again under the slicer, where JS reuses the
   samples it read for the estimates. It happens on a setting change, not per frame. Recipes
   now compile when the image is built, which took the first use from 2.2 s to 0.35 s.
+  **Measured again 2026-10-14.** Of that 0.35 s, ~0.2 s was the worker process starting, which
+  a running server pays once per session. Each worker now loads the shipped recipes in the
+  background when it starts (~45 ms each, previously paid by the first request that used
+  one). With warm workers, the first slice is ~170–200 ms against JS ~55 ms; after that it is
+  ~25 ms against 1–3 ms. About 10 ms of every GNU Radio request is a flowgraph starting and
+  stopping, so per-request work cannot get to JS's 3 ms. Fetching consecutive blocks in one
+  run instead of one per 0.25 s cut the read ~60–100 ms but was backed out: GNU Radio's
+  rotator drifts ~1e-3 in phase over half a second, which breaks the exact JS parity the
+  tuner, SSB and CW tests hold it to. A change of setting costing 25 ms is not noticeable.
 
 Still JS: PWM and despread (no GNU Radio block; a plugin each), Frames & CRC, Gain, To real.
