@@ -1927,8 +1927,20 @@ export function estimateNrzSymbol(env, threshold, sampleRate) {
   }
   runs.push(len);
   if (runs.length < 8) return { value: 0, confident: false, runs: runs.length };
-  // The first and last runs are cut off by the window rather than by the data.
-  const inner = runs.slice(1, -1);
+  // The first and last runs are cut off by the window rather than by the data. And the gaps
+  // between packets are not data either, and weighted by length (below) a few seconds of
+  // silence outvote every packet in the capture. They are told apart by a break: sorted,
+  // a packet's runs climb smoothly and the silences sit far above them (63 samples, then
+  // 8770, on a test signal), while a sparse code's long runs of zeros are data and climb
+  // smoothly all the way (13 up to 2027 on the BBC fixture). Everything above the first
+  // jump of 8x or more is left out.
+  const cut = runs.slice(1, -1);
+  const sorted = [...cut].sort((x, y) => x - y);
+  let limit = Infinity;
+  for (let i = Math.floor(sorted.length / 2); i < sorted.length - 1; i++) {
+    if (sorted[i + 1] > 8 * Math.max(1, sorted[i])) { limit = sorted[i]; break; }
+  }
+  const inner = cut.filter((r) => r <= limit);
   if (inner.length < 6) return { value: 0, confident: false, runs: runs.length };
 
   // Find the period that explains every run, rather than assuming the shortest run is
