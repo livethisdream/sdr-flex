@@ -1333,7 +1333,8 @@ class App {
     if (!this.onSyntheticSource()) return '';
     return scene.SIGNALS.map((s) => {
       const center = n.out.centerHz + s.offsetHz;
-      const left = ((center - s.widthHz / 2 - lo) / span) * 100;
+      const from = s.side === 'upper' ? center : center - s.widthHz / 2;
+      const left = ((from - lo) / span) * 100;
       const width = (s.widthHz / span) * 100;
       if (left > 100 || left + width < 0) return '';
       return `<span class="scenemark" style="left:${left}%;width:${width}%">` +

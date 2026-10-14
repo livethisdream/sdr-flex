@@ -23,7 +23,8 @@ export const BURST_PERIOD_S = 0.9;
 export const SIGNALS = [
   { offsetHz: -180_000, widthHz:   2_000, kind: 'cw',   label: 'keyed carrier' },
   { offsetHz: -140_000, widthHz:  16_000, kind: 'nbfm', label: 'NBFM, ±3 kHz' },
-  { offsetHz:  -90_000, widthHz:   6_000, kind: 'ssb',  label: 'USB, two tones' },
+  // A sideband is all on one side of its carrier, so its mark starts at the carrier.
+  { offsetHz:  -90_000, widthHz:   3_000, kind: 'ssb',  label: 'USB, two tones', side: 'upper' },
   { offsetHz:  -25_000, widthHz:  50_000, kind: 'ook',  label: 'OOK burst train' },
   { offsetHz:  130_000, widthHz: 180_000, kind: 'wbfm', label: 'WBFM, \u00b165 kHz + pilot' },
 ];
