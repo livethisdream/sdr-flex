@@ -3,7 +3,7 @@
 // library, because a client library only ever produces the frames it produces — and
 // the cases that break a parser are the ones nothing normal sends.
 
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import crypto from 'node:crypto';
@@ -12,10 +12,26 @@ import { accept } from '../../server/wsserver.js';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
+// Every socket a test opens, closed when it ends. One left open kept this file's process
+// alive after its last test, and under the full suite's load that was an occasional
+// silent hang of the whole run rather than a failure with a name.
+const open = new Set();
+const track = (s) => { open.add(s); s.on('close', () => open.delete(s)); return s; };
+afterEach(() => { for (const s of open) s.destroy(); open.clear(); });
+
+/** The next `event` on `sock`, or a failure that says what never came. */
+function next(sock, event, what, ms = 5000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no ${what} within ${ms} ms`)), ms);
+    sock.once(event, (v) => { clearTimeout(timer); resolve(v); });
+  });
+}
+
 /** A server that echoes whatever message it is given, so a test can see what arrived. */
 async function echoServer(t) {
   const seen = [];
   const server = http.createServer();
+  server.on('connection', track);
   server.on('upgrade', (req, socket, head) => {
     const c = accept(req, socket, head);
     if (!c) return;
@@ -31,12 +47,12 @@ async function echoServer(t) {
 /** Open a raw TCP connection and do the handshake by hand. */
 async function raw(port) {
   const key = crypto.randomBytes(16).toString('base64');
-  const sock = net.connect(port, '127.0.0.1');
-  await new Promise((r) => sock.once('connect', r));
+  const sock = track(net.connect(port, '127.0.0.1'));
+  await next(sock, 'connect', 'connection');
   sock.write(
     `GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
     `Sec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
-  const head = await new Promise((r) => sock.once('data', r));
+  const head = await next(sock, 'data', 'handshake reply');
   const text = head.toString('latin1');
   const expect = crypto.createHash('sha1').update(key + GUID).digest('base64');
   return { sock, text, expect, rest: head.subarray(text.indexOf('\r\n\r\n') + 4) };
@@ -188,10 +204,10 @@ test('a client hanging up mid-message does not take the server with it', async (
 
 test('a non-websocket upgrade is refused without crashing', async (t) => {
   const { port } = await echoServer(t);
-  const sock = net.connect(port, '127.0.0.1');
-  await new Promise((r) => sock.once('connect', r));
+  const sock = track(net.connect(port, '127.0.0.1'));
+  await next(sock, 'connect', 'connection');
   sock.write('GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
-  const d = await new Promise((r) => sock.once('data', r));
+  const d = await next(sock, 'data', 'refusal');
   assert.match(d.toString(), /400/);
   sock.destroy();
 });
