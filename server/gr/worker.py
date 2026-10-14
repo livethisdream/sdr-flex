@@ -463,7 +463,7 @@ OPS = {'ping': op_ping, 'tone': op_tone, 'tuner': op_tuner, 'fm': op_fm, 'stereo
 
 
 def main():
-    threading.Thread(target=preload, daemon=True).start()
+    loader = None
     for line in sys.stdin:
         try:
             req = json.loads(line)
@@ -472,6 +472,11 @@ def main():
             out = {'ok': False, 'error': f'{type(e).__name__}: {e}'}
         if out is not None:
             reply(out)
+        # After the first answer, which is how the server learns the worker is up: loading
+        # alongside it held that answer back.
+        if loader is None:
+            loader = threading.Thread(target=preload, daemon=True)
+            loader.start()
 
 
 if __name__ == '__main__':
