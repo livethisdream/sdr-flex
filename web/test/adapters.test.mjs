@@ -35,7 +35,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ADAPTERS, available, resolve, list, run, convert, multimonDemods, wants as adapterWants } from '../../server/adapters.js';
+import { ADAPTERS, available, resolve, list, run, convert, multimonDemods, morseJunk, wants as adapterWants } from '../../server/adapters.js';
 import * as mod from './support/modulate.mjs';
 import { demodulate } from '../src/engine.js';
 
@@ -658,4 +658,19 @@ test('a decoder that writes to /dev/stdout by path still gets its output read', 
     delete ADAPTERS['test.bypath'];
     delete ADAPTERS['test.plain'];
   }
+});
+
+test('multimon Morse that is a tone or a voice is marked, and real Morse is not', () => {
+  // Read off its MORSE_CW decoder: a chopped tone, static on a keyed signal, a voice.
+  const parse = (s) => ADAPTERS['ext.multimon'].parse(s);
+  const [real, noisy, tone, voice, codes] = parse([
+    'CQ CQ DE KF0ABC TEST K', '<.._.___>Q CQ DE KF0ABC TEST K',
+    'TTTTTTTTTTTTTTTTTTTT', 'E T E I E E T', '<___.__>'].join('\n'));
+  assert.equal(real.suspect, undefined);
+  assert.equal(noisy.suspect, undefined, 'one bad character does not make a message noise');
+  for (const r of [tone, voice, codes]) assert.ok(r.suspect, `${r.text} should be suspect`);
+  // Short real answers are left to Identify's own floor, not called junk here.
+  assert.equal(morseJunk('SOS'), null);
+  // And a prefixed line from another demod is never read as Morse.
+  assert.equal(parse('DTMF: 1111')[0].suspect, undefined);
 });

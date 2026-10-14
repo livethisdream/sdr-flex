@@ -201,7 +201,12 @@ export const ADAPTERS = {
         if (prev && !prev.envelope && isAx25Header(prev.text)) {
           prev.envelope = prev.text;
           prev.text = line;
-        } else out.push({ text: line });
+        } else {
+          // Unprefixed and not an AX.25 body: Morse. Its decoder spells any steady tone, and a
+          // voice, as Morse, so what that looks like is marked the way a failed checksum is.
+          const junk = morseJunk(line);
+          out.push(junk ? { text: line, suspect: junk } : { text: line });
+        }
       }
       return out;
     },
@@ -1412,6 +1417,28 @@ function fmtTitle(title, o) {
   if (Array.isArray(title)) return title.join(' ');
   if (title != null) return String(title);
   return JSON.stringify(o).slice(0, 120);
+}
+
+/**
+ * Why a line of multimon-ng's Morse is not Morse, or null when it may be.
+ *
+ * Measured on its MORSE_CW decoder: white noise prints nothing, but a steady or chopped tone
+ * prints one letter over and over ("TTTTTTTT"), static on a keyed signal prints unknown
+ * codes in brackets ("<.._.___>"), and a voice prints runs of E, T and I. Real Morse, even
+ * noisy, is mostly letters of several kinds ("CQ CQ DE KF0ABC TEST K").
+ */
+export function morseJunk(text) {
+  const raw = String(text || '');
+  const unknown = (raw.match(/<[._]+>/g) || []).join('').length;
+  const letters = raw.replace(/<[._]+>/g, '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+  if (raw.replace(/\s/g, '').length >= 4 && unknown > 0.5 * raw.replace(/\s/g, '').length) {
+    return 'mostly codes that are not Morse characters';
+  }
+  if (letters.length >= 4 && new Set(letters).size <= 2) return 'one or two letters over and over: a tone, not Morse';
+  if (letters.length >= 6 && [...letters].filter((c) => 'ETI'.includes(c)).length > 0.8 * letters.length) {
+    return 'nearly all E, T and I: what noise and voices look like to a Morse decoder';
+  }
+  return null;
 }
 
 /**
