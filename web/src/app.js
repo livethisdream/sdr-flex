@@ -89,6 +89,8 @@ const atPointer = (x, y) => ({
 const attr = (x) => String(x ?? '').replace(/[<>&"']/g, (c) =>
   ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtHz = (hz) => (hz / 1e6).toFixed(4);
+// A carrier to 10 Hz: an SSB voice 100 Hz off its carrier already sounds wrong.
+const fmtCarrier = (hz) => (hz / 1e6).toFixed(5);
 /** The frequencies a node's spectrum covers, as a cell's limits. */
 const bandOf = (p) => (p && p.out && p.out.kind === 'iq'
   ? { min: p.out.centerHz - p.out.sampleRate / 2, max: p.out.centerHz + p.out.sampleRate / 2 } : {});
@@ -158,6 +160,10 @@ const RECOVER_KEY = 'sdrflex.recover';
 const RECOVER_FRESH_MS = 60_000;
 
 const CUE_LABEL = { offsetHz: 'CW carrier', pitchHz: 'pitch', bfoHz: 'SSB carrier' };
+// A carrier is labeled with where it is, not only how far it sits from the channel's
+// center: the tuner shows the center, and for SSB the two are kilohertz apart.
+const cueText = (key, hz, offset) => (offset == null ? `${CUE_LABEL[key]} ${Math.round(hz)} Hz`
+  : `${CUE_LABEL[key]} ${fmtCarrier(hz)} MHz · ${offset > 0 ? '+' : ''}${Math.round(offset)} Hz`);
 const CUE_TITLE = { offsetHz: 'drag onto the carrier', pitchHz: 'drag onto the tone',
                     bfoHz: 'drag to the suppressed carrier: the voice goes in the shaded band' };
 // How much of a sideband the shading marks: a voice channel's audio.
@@ -1156,17 +1162,17 @@ class App {
       if (!k.params) continue;
       if (k.op === 'core.cw' && k.params.offsetHz) {
         const o = k.params.offsetHz;
-        html += line(k.id, 'offsetHz', n.out.centerHz + o.value, `${CUE_LABEL.offsetHz} ${Math.round(o.value)} Hz`, o.mode === 'auto');
+        html += line(k.id, 'offsetHz', n.out.centerHz + o.value, cueText('offsetHz', n.out.centerHz + o.value, o.value), o.mode === 'auto');
       } else if (k.op === 'core.ssb' && k.params.bfoHz) {
         const b = k.params.bfoHz, hz = n.out.centerHz + b.value;
         const lsb = k.params.sideband && k.params.sideband.value === 'lsb';
         html += `<div class="cueband" data-band="${k.id}" style="${ssbBandStyle(hz, lsb, lo, span)}"></div>`;
-        html += line(k.id, 'bfoHz', hz, `${CUE_LABEL.bfoHz} ${Math.round(b.value)} Hz`, b.mode === 'auto');
+        html += line(k.id, 'bfoHz', hz, cueText('bfoHz', hz, b.value), b.mode === 'auto');
       }
     }
     // The tone, on the demod's own one-sided spectrum.
     if (n.op === 'core.cw' && n.params && n.params.pitchHz && this.onRealSpectrum()) {
-      html += line(n.id, 'pitchHz', n.params.pitchHz.value, `pitch ${Math.round(n.params.pitchHz.value)} Hz`, false);
+      html += line(n.id, 'pitchHz', n.params.pitchHz.value, cueText('pitchHz', n.params.pitchHz.value), false);
     }
     return html;
   }
@@ -1273,7 +1279,7 @@ class App {
         el.style.left = `${((ev.clientX - r.left) / r.width) * 100}%`;
         last = value(ev.clientX);
         const label = el.querySelector('span');
-        if (label) label.textContent = `${CUE_LABEL[key]} ${last} Hz`;
+        if (label) label.textContent = inChannel ? cueText(key, n.out.centerHz + last, last) : cueText(key, last);
         if (band) band.style.cssText = ssbBandStyle(hzAt(ev.clientX), k.params.sideband && k.params.sideband.value === 'lsb', lo, hi - lo);
         if (live) live({ [key]: last });
       };
@@ -1619,6 +1625,14 @@ class App {
           autoNote: pr.auto ? pr.auto.from : null,
           autoValue: pr.auto ? pr.auto.suggested ?? pr.auto.initial : null,
         });
+      }
+      // Where the carrier is, as a frequency: the BFO and the offset are distances from the
+      // channel's center, and the center is not the number a receiver's dial would show.
+      const carrierKey = n.op === 'core.ssb' ? 'bfoHz' : n.op === 'core.cw' ? 'offsetHz' : null;
+      const tunedBy = carrierKey && n.params[carrierKey] && n.parent != null && this.engine.node(n.parent);
+      if (tunedBy && tunedBy.out && tunedBy.out.centerHz != null) {
+        nodeCells.push({ key: 'carrier', label: 'carrier', unit: 'MHz', type: 'ro',
+                         value: tunedBy.out.centerHz + Number(n.params[carrierKey].value || 0), fmt: fmtCarrier });
       }
       // a sink has no output; what its rate describes is what it is being fed
       nodeCells.push({ key: 'out', label: n.out.kind === 'audio' ? 'in' : 'out', unit: 'kS/s',
