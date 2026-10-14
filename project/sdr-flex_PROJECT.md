@@ -882,6 +882,11 @@ consecutive parallel runs afterwards: 450 passing in 28–33 s each.
 
 ## Wanted later
 
+- **A default signal that decodes to something real (asked 2026-10-14).** The synthetic scene
+  a new session opens on decodes to nothing meaningful, which teaches nobody anything. Replace
+  it with one whose decoders return real messages. Later, drop the default altogether and open
+  on the last signal the user had open.
+
 - **Bug: the data stops while the clock keeps going (reported 2026-10-11).** Mid-session the
   spectrum goes blank, or keeps showing a smeared repeat of the last good data, while the
   playhead timer keeps moving. Reloading the page fixes it and restores the session. Not yet
