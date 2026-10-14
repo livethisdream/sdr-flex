@@ -92,7 +92,7 @@ function payloads(bytes) {
 }
 
 test('NRZ: GNU Radio makes the decisions, and they are the JS slicer\'s', { skip }, async (t) => {
-  const { js, gr } = await engines(t, NRZ_HZ, [['core.nrz_slicer', { syncHex: '2dd4', symbolUs: 1e6 / NRZ_BAUD }], ['core.differential', {}]]);
+  const { js, gr } = await engines(t, NRZ_HZ, [['core.nrz_slicer', { syncHex: '2dd4' }], ['core.differential', {}]]);
   // Timed against warm workers, as a running server's are: a cold one is ~200 ms of Python
   // and GNU Radio starting, paid once per session and not per slice.
   if (process.env.SLICETIME) {
