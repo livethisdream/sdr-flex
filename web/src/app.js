@@ -3305,8 +3305,12 @@ class App {
       // `at` is the block a streamed record came out of, and it is a fact about the
       // capture rather than a field the decoder returned — so it is drawn as the
       // timestamp it is rather than mixed in with the decoder's own keys.
-      const extra = Object.entries(rec).filter(([k]) => k !== 'text' && k !== 'at')
-        .map(([k, v]) => `<span class="evk">${k}</span> ${v}`).join(' ');
+      // A decoder that says when in its span each record was (Speech's `fromS`, `toS`) gets
+      // one time range, rather than two field names nobody reads.
+      const span = rec.fromS != null
+        ? `<span class="evk">time</span> ${rec.fromS}${rec.toS != null ? `–${rec.toS}` : ''} s` : '';
+      const extra = [span, ...Object.entries(rec).filter(([k]) => !['text', 'at', 'fromS', 'toS'].includes(k))
+        .map(([k, v]) => `<span class="evk">${k}</span> ${v}`)].filter(Boolean).join(' ');
       const when = rec.at != null
         ? `<span class="evat" title="${r.continuous ? 'when it was heard' : `the ${r.block || STREAM_BLOCK_S} s block it came from`}">${
             rec.at.toFixed(r.continuous ? 1 : 0)}s</span>` : '';
