@@ -171,3 +171,34 @@ test('something that is not a Pluto is not mistaken for one', async (t) => {
   await c.exit();
   assert.ok(!ctx.devices.some((d) => d.name === 'ad9361-phy'));
 });
+
+// ── laid out as the real board is ────────────────────────────────────────
+// The mock above puts the radio at iio:device1 with one I/Q pair. A real Pluto puts it
+// at iio:device0, with a temperature sensor at iio:device1, and in two-receiver mode
+// its RX device lists four scan elements. Both differences broke the first run on
+// hardware.
+const XML_2R2T = path.join(HERE, 'support', 'pluto-2r2t-context.xml');
+
+test('on a real layout, the first tune goes to the radio and not to device1', async (t) => {
+  const m = await serve({ port: PORT, xmlPath: XML_2R2T, samples: fakeSamples(), phyId: 'iio:device0' });
+  t.after(() => m.stop());
+  const src = new PlutoSource({ host: '127.0.0.1', port: PORT });
+  await src.start({ centerHz: 433_920_000, sampleRate: 2_400_000, bufferSamples: 4096 }, () => {});
+  src.stop();
+  assert.equal(m.attrs.get('iio:device0/OUTPUT/altvoltage0/frequency'), '433920000');
+  assert.equal(m.attrs.get('iio:device0/INPUT/voltage0/sampling_frequency'), '2400000');
+});
+
+test('with two receivers listed, only RX1\'s I and Q are streamed', async (t) => {
+  const m = await serve({ port: PORT, xmlPath: XML_2R2T, samples: fakeSamples(), phyId: 'iio:device0' });
+  t.after(() => m.stop());
+  const src = new PlutoSource({ host: '127.0.0.1', port: PORT });
+  const chunks = [];
+  await src.start({ centerHz: 433_920_000, sampleRate: 2_400_000, bufferSamples: 4096 }, (b) => chunks.push(b));
+  await new Promise((r) => setTimeout(r, 200));
+  src.stop();
+  assert.ok(m.log.includes('OPEN iio:device4 4096 00000003'),
+    `opened with ${m.log.find((l) => l.startsWith('OPEN'))}`);
+  assert.ok(m.log.some((l) => l === `READBUF iio:device4 ${4096 * 4}`), 'and read four bytes a sample, not eight');
+  assert.ok(chunks.length > 0);
+});
