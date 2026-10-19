@@ -312,6 +312,9 @@ COPY recipes ./recipes
 COPY grc ./grc
 COPY fixtures ./fixtures
 COPY seed-captures.mjs ./
+# The fixtures, where the library can read them, so a first `docker run` has something to
+# open: `-e SDRFLEX_CAPTURES=/app/examples`. Your own captures go on /captures as before.
+RUN node seed-captures.mjs /app/examples > /dev/null
 
 VOLUME /captures
 # One path the adapter looks at, whichever model the image was built with.
@@ -332,6 +335,13 @@ ENV TMPDIR=/tmp
 # layer is somewhere you would rather not put that.
 RUN mkdir -p /rings && chown sdrflex /rings
 VOLUME /rings
+
+# Saved sessions, in a place of their own. By default they go beside the captures, and
+# the captures are read-only here — mounted `:ro`, or the examples, which belong to root —
+# so saving failed with EACCES. Mount a volume here to keep them past the container.
+RUN mkdir -p /sessions && chown sdrflex /sessions
+ENV SDRFLEX_SESSIONS=/sessions
+VOLUME /sessions
 
 EXPOSE 8722
 USER sdrflex
