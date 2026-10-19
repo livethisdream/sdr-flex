@@ -2,6 +2,19 @@
 
 A modern, extensible signal analysis toolkit.
 
+## Try It
+
+The browser version runs at **https://livethisdream.github.io/sdr-flex/** with nothing
+to install. It opens on a synthetic scene of several signals. Right-click or long-press
+the source chip in the top left to open one of fourteen example captures, and drag across
+the waterfall to select a signal and choose what to do with it.
+
+![SDR Flex showing a spectrum and waterfall of a synthetic scene](docs/images/sdr-flex.webp)
+
+The browser version runs the DSP, the demodulators, and the decoders that ship with the
+client. The external decoders (rtl_433, direwolf, dump1090, and others), live radios, and
+a capture library need the server; see [server/README.md](server/README.md).
+
 **Thesis:** you start at the spectrum and drill in. Every time you drag a box on a
 waterfall, pick a demodulator, or attach a decoder, the tool builds a GNU Radio
 flowgraph behind you. You never author a flowgraph — you get one.

@@ -230,6 +230,7 @@ class App {
   async start() {
     await this.connectEngine();
     await this.loadPlugins();
+    if (!this.remote) this.loadExamples();
     let want = true;
     try { want = localStorage.getItem('sdrflex.loop') !== '0'; } catch { /* no store */ }
     this.setLoop(want);
@@ -1080,6 +1081,9 @@ class App {
     $('#pane-stream').hidden = v !== 'Stream';
     $('#pane-bytes').hidden = v !== 'Bytes';
     $('#pane-grid').hidden = v !== 'Grid';
+    // The empty state docs/08 allows: gone the moment anything hangs off the source.
+    const root = this.engine.root;
+    $('#stagehint').hidden = !(root && this.current === root.id && !this.engine.children(root.id).length);
     if (v === 'Spectrum' || both) {
       // The waterfall holds rows for one node at a time, and this pane no longer belongs
       // to one node: a demodulator's baseband spectrum draws here too. Changing tabs can
@@ -1482,6 +1486,11 @@ class App {
       if (this.hasLibrary) {
         nodeCells.push({ key: 'library', label: 'open from the server…', type: 'action', value: '' });
       }
+      // The hosted copy has no library, and a newcomer has no capture: the shipped
+      // fixtures are published beside it so there is something real to open.
+      if (!this.remote && this.examples && this.examples.length) {
+        nodeCells.push({ key: 'example', label: 'open an example…', type: 'action', value: '' });
+      }
       if (this.hasRadios) {
         // "Listen" was wrong twice. Most of the time nobody is listening — a radio here
         // is a process writing raw IQ into a ring recording (ADR-0030), and hearing any
@@ -1729,6 +1738,7 @@ class App {
       const x = e ? e.clientX : null, y = e ? e.clientY : null;
       if (k === 'file') $('#file').click();
       if (k === 'library') this.openLibrary(x, y);
+      if (k === 'example') this.openExamples(x, y);
       if (k === 'radio') this.openRadios(x, y);
       if (k === 'stopradio') this.stopRadio();
       if (k === 'sessions') this.openSessions(x, y);
@@ -2718,6 +2728,47 @@ class App {
         this.notify(`could not open that: ${err.message}`, 8000);
       }
       this.metrics.endOp();
+    });
+  }
+
+  /**
+   * The fixtures, as the hosted copy publishes them (`seed-captures.mjs --index`).
+   * Served from a box or a bare `web/`, there is no index and nothing is offered.
+   */
+  async loadExamples() {
+    try {
+      const r = await fetch('examples/index.json');
+      this.examples = r.ok ? (await r.json()).examples : [];
+    } catch { this.examples = []; }
+    // Before the session exists the first draw picks the list up by itself.
+    if (this.examples.length && this.channel) this.refresh();
+  }
+
+  openExamples(x, y) {
+    // What decodes in this tab leads, smallest first: a first visit should open fast.
+    const lead = this.examples.filter((c) => !c.needs).sort((a, b) => a.bytes - b.bytes);
+    const ops = this.examples.map((c) => ({
+      id: c.id,
+      name: `${c.name} — ${(c.sampleRate / 1e6).toFixed(3)} MS/s · ` +
+            (c.durationS < 1 ? `${(c.durationS * 1e3).toFixed(1)} ms` : `${c.durationS.toFixed(1)} s`),
+      // A decoder that is a program is not in a browser tab; the signal still is.
+      group: c.needs ? 'its decoder needs the server' : 'decodes here',
+      rank: lead.indexOf(c) >= 0 ? lead.indexOf(c) + 1 : undefined,
+    }));
+    const px = x != null ? x : innerWidth / 2, py = y != null ? y : innerHeight - 120;
+    this.menu.open(px, py, ops, async (id) => {
+      const c = this.examples.find((k) => k.id === id);
+      if (!c) return;
+      try {
+        const files = await Promise.all(c.files.map(async (f) => {
+          const r = await fetch(`examples/${f}`);
+          if (!r.ok) throw new Error(`${f}: ${r.status}`);
+          return new File([await r.blob()], f);
+        }));
+        await this.openFiles(files);
+      } catch (err) {
+        this.notify(`could not fetch that example: ${err.message}`, 8000);
+      }
     });
   }
 

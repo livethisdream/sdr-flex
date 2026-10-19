@@ -29,6 +29,10 @@
 # "no engine here" and falls back to the in-tab one in well under a second rather than
 # waiting out a timeout.
 #
+# **The examples are the fixtures**, copied into `web/examples/` with an index at deploy
+# time. The source menu offers them only when that index is there, so a box (which has
+# its library) and a bare local `web/` show nothing new.
+#
 # The push trigger is on, which is the point of moving to Actions: the site cannot drift
 # behind `main` the way it did while the trigger named a branch that had stopped moving.
 name: Deploy toy model
@@ -37,7 +41,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['web/**', '.github/workflows/pages.yml']
+    paths: ['web/**', 'fixtures/**', 'seed-captures.mjs', '.github/workflows/pages.yml']
 
 permissions:
   contents: read
@@ -57,6 +61,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # The shipped fixtures, so a first visit has something real to open. Copied in
+      # here rather than committed under web/, which would keep two of every capture.
+      - run: node seed-captures.mjs web/examples --index
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web

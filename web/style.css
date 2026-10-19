@@ -798,6 +798,13 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 }
 .stagebadge[hidden] { display:none; }
 .stagebadge.pin { color:var(--accent); }
+.stagehint {
+  position:absolute; left:50%; top:62%; transform:translate(-50%,-50%); z-index:3;
+  font-size:.82rem; color:var(--on-stage-dim, var(--dim));
+  background:var(--stage-veil); padding:.3rem .7rem; border-radius:3px;
+  pointer-events:none; max-width:calc(100% - 32px); text-align:center;
+}
+.stagehint[hidden], .selbox:not([hidden]) ~ .stagehint { display:none; }
 .marker {
   position:absolute; top:0; bottom:0; padding:0;
   background:var(--accent-veil);

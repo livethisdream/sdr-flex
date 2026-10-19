@@ -3,3 +3,6 @@
 web/_c_*
 web/_t.*
 __pycache__/
+
+# the hosted copy's examples, copied from fixtures/ at deploy time
+web/examples/
