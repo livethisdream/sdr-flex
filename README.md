@@ -19,6 +19,27 @@ Two constraints shape everything else:
   and the choice of decoder itself — carries an explicit auto/manual state, and auto
   always shows the evidence it reasoned from.
 
+## Run It Yourself
+
+The full tool, with the server, every external decoder, and GNU Radio, is one image:
+
+```sh
+docker run --rm -p 127.0.0.1:8722:8722 -e SDRFLEX_CAPTURES=/app/examples \
+  ghcr.io/livethisdream/sdr-flex
+```
+
+Then open http://localhost:8722. The `SDRFLEX_CAPTURES` setting points the library at the
+example captures in the image. To open your own instead, drop that setting and mount a
+directory: `-v "$PWD/captures:/captures:ro"`. Saved sessions are lost with the container
+unless you also add `-v sdrflex-sessions:/sessions`.
+
+A Pluto works with no extra flags, because it is a network device at `192.168.2.1`. An
+RTL-SDR is a USB device and needs `--device /dev/bus/usb`. The image is amd64 only.
+
+The server has no authentication. The command above publishes it on this machine only;
+do not publish it on a network you share with anyone else. [server/README.md](server/README.md)
+covers running it on a box, over a tailnet, and with Docker Compose.
+
 ## Why another one
 
 | Tool | What it gets right | What we take, what we fix |
