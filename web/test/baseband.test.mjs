@@ -49,6 +49,25 @@ test('a full-scale sine reads 0 dBFS, the same as it would in the IQ view', () =
   assert.ok(Math.abs(p.db) < 0.1, `full scale is 0 dBFS, got ${p.db.toFixed(2)}`);
 });
 
+test('a full-scale tone reads 0 dBFS under every window, in both views', () => {
+  // The views default to Hann, and dividing by the bin count read a full-scale tone at
+  // -6 dBFS there — found on a Pluto loopback, against a level measured by hand.
+  const bins = 512;
+  const iq = new Float32Array(bins * 2);
+  for (let i = 0; i < bins; i++) {
+    const ph = (2 * Math.PI * 40 * i) / bins;
+    iq[i * 2] = Math.cos(ph); iq[i * 2 + 1] = Math.sin(ph);
+  }
+  const x = new Float32Array(bins * 2);
+  for (let i = 0; i < x.length; i++) x[i] = Math.sin((2 * Math.PI * 40 * i) / bins);
+  for (const win of ['Rect', 'Hann', 'Blackman']) {
+    const sp = dsp.spectrum(iq, bins, win);
+    assert.ok(Math.abs(sp[bins / 2 + 40]) < 0.1, `IQ under ${win}: ${sp[bins / 2 + 40].toFixed(2)} dBFS`);
+    const p = peak(dsp.realSpectrum(x, bins, win), RATE);
+    assert.ok(Math.abs(p.db) < 0.1, `real under ${win}: ${p.db.toFixed(2)} dBFS`);
+  }
+});
+
 test('DC is not doubled along with the bins that come in pairs', () => {
   const bins = 256;
   const x = new Float32Array(bins * 2).fill(1);

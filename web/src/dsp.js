@@ -80,6 +80,12 @@ export function windowFn(name, n) {
   return w;
 }
 
+function windowSum(w) {
+  let s = 0;
+  for (let i = 0; i < w.length; i++) s += w[i];
+  return s;
+}
+
 /**
  * Power spectrum in dBFS, DC-centered, of interleaved IQ.
  * Returns Float32Array(bins).
@@ -95,7 +101,9 @@ export function spectrum(iq, bins, windowName, out) {
 
   const res = out && out.length === bins ? out : new Float32Array(bins);
   const half = bins / 2;
-  const norm = 1 / bins;
+  // By the window's sum rather than the bin count: a window scales a tone by its mean,
+  // so dividing by `bins` read a full-scale tone 6 dB low under Hann.
+  const norm = 1 / windowSum(w);
   for (let i = 0; i < bins; i++) {
     // fftshift: negative frequencies first
     const src = i < half ? i + half : i - half;
@@ -128,11 +136,12 @@ export function realSpectrum(x, bins, windowName, out) {
   fft(buf);
 
   const res = out && out.length === bins ? out : new Float32Array(bins);
+  const sum = windowSum(w);
   for (let i = 0; i < bins; i++) {
     // The mirrored half carries half the energy, so folding it back in is what makes
     // a full-scale sine read 0 dBFS here, the same as it does in the IQ view. DC has
     // no mirror image to fold in, so it is the one bin that is not doubled.
-    const norm = i === 0 ? 1 / n : 2 / n;
+    const norm = (i === 0 ? 1 : 2) / sum;
     const re = buf[i * 2] * norm;
     const im = buf[i * 2 + 1] * norm;
     res[i] = 10 * Math.log10(re * re + im * im + 1e-20);
