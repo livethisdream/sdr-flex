@@ -10,7 +10,9 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-10-03 (phone pass: the path folds to its current entry with a drop-down at ≤600px; long presses fire once and do not select text; the deck's track stays inside it; the library leads with recently opened captures, then the newest — `recent.js`)
+**Last updated:** 2026-10-18 (the first real radio: a Pluto on a TX1→RX1 loopback. Two driver bugs the mock hid, fixed; the spectrum read 6 dB low under Hann, fixed on its own branch; how to run the whole suite)
+
+Previous: 2026-10-03 (phone pass: the path folds to its current entry with a drop-down at ≤600px; long presses fire once and do not select text; the deck's track stays inside it; the library leads with recently opened captures, then the newest — `recent.js`)
 
 Previous: 2026-10-03 (real streams open on `domain: both`; the view menu on a long press, so a touch screen can reach it — ADR-0036 amended)
 
@@ -213,12 +215,9 @@ detectors, pinned clips and auto-derived parameters all work on live signal unch
 - **A synthetic driver is first-class**: the same scene the in-tab engine draws, at a
   real rate in real time. It is how the live path was tested here, and it is how anyone
   without an SDR can see the tool work.
-- **Only the synthetic driver has run.** The RTL-SDR and Pluto command lines have since
-  been checked against the real `rtl_sdr`, `iio_attr` and `iio_readdev` binaries — they
-  parse and reach the point of looking for hardware — but no radio has been attached.
-  Known suspect: the Pluto's channels are commonly 12 bits in a 16-bit word, and this
-  reads them as `cs16`, so a real signal about 24 dB quiet means a scale factor is
-  needed.
+- **The native Pluto has run on a real board** (2026-10-18, below). The RTL-SDR, UHD,
+  Soapy and libiio-tool rows still have not: their command lines were checked against
+  the real binaries, which parse them and get as far as looking for hardware.
 - **A radio needs `Dockerfile.radio`**, not the default image — the default has none of
   the vendor capture programs in it. `SDRFLEX_DOCKERFILE=Dockerfile.radio docker
   compose up -d --build`.
@@ -280,8 +279,40 @@ built and **validated by libiio's own tools** — `iio_info`, `iio_attr` and `ii
 all drive it successfully — and only then used to test our client. A mock of a protocol
 written from memory tests the memory.
 
-Still unverified against a real board: whether an actual Pluto agrees with all of it.
-The first one plugged in is the test.
+### On a real board, 2026-10-18
+
+A Pluto with TX1 cabled to RX1 through a 3 dB pad, on the box's own network (netplan
+matches the board by MAC: `/etc/netplan/60-pluto.yaml`, DHCP, `optional: true`, or the
+interface sits unmanaged and down). The board's built-in DDS made the test signal — a
+tone at LO + offset is attribute writes on `cf-ad9361-dds-core-lpc`, no TX buffer — with
+TX at −40 dB attenuation. Full TX into RX1 through 3 dB is about +4 dBm, over the AD936x's
++2.5 dBm input limit.
+
+**The mock hid two bugs, and the first run found both.** It put the radio at
+`iio:device1` with one I/Q pair. The real board has `ad9361-phy` at `iio:device0`, the
+`xadc` temperature sensor at `iio:device1`, and four RX scan elements (two-receiver mode).
+- The first tune ran before `phyId` was set and wrote to the fallback `iio:device1` —
+  the sensor — so the server could not open the Pluto at all. The fallback is now the
+  device name, which iiod accepts.
+- All four scan elements were enabled, which interleaves RX1 and RX2 into one stream.
+  Only RX1's I and Q are now.
+
+The mock now refuses writes to attributes it does not have, as iiod does, and
+`pluto-2r2t-context.xml` lays the devices out as the real board does.
+
+**What held:** the tone where it was put and on the right side (I/Q orientation), the
+`cs12` scale (samples clip at 2044–2048 at gain 50, so full scale is 2048 — the 24 dB
+suspicion was unfounded), 10 dB per 10 dB of gain from 0 to 40, retuning without dropping
+the stream, and exactly the asked-for rate at 2.4 and 4 MS/s, then through the whole
+server path: ring, engine, socket, spectrum frame.
+
+**What a loopback cannot say:** the frequency error. TX and RX share one reference, so
+it cancels. That needs a known signal off the air.
+
+**Not yet looked at:** each attribute write seemed to cost a few hundred ms of samples
+(a run with seven gain changes and a retune averaged 2.12 MS/s against a steady 2.40).
+If the stream really stalls on a write, the ring's timeline gains a gap it does not know
+about. Measure it before relying on time across a retune.
 
 ## Third-party decoders, as built
 
@@ -1588,8 +1619,6 @@ filling are tested through the engine and the planner rather than by clicking.
 
 ## Open, needs a decision
 
-- **No real radio has ever been attached.** The first one plugged into the box is the
-  real test of the driver table.
 - **For a Pluto on a Windows machine, the shortest path is running the server on
   Windows** — the Pluto is a network device on `192.168.2.1`, and Windows is already
   the machine that can reach it. WSL sits behind its own NAT and needs a port forward
@@ -1605,18 +1634,20 @@ filling are tested through the engine and the planner rather than by clicking.
 - **`Dockerfile.decoders` is the image for working on recordings** — the five external
   decoders and no radio programs. `Dockerfile.radio` now carries both, because a radio
   with nothing to decode what it hears is half a tool.
-- **History rewrite.** A commit in pushed history contains a symlink target naming a
-  private repository path. The symlinks were removed in a follow-up commit and are
-  gitignored, but the string remains in history. Not yet decided whether to rewrite.
+- ~~History rewrite.~~ **Decided 2026-10-18: leave it.** A commit in pushed history
+  contains a symlink target naming a private repository path; it stays.
 - **Challenge names** appear in code comments and one test fixture in this public
-  repo. Not yet decided whether to scrub them.
+  repo. It matters only if the CTF has not run yet, or will run again: a player could
+  read which challenges exist and how the tool goes at each. Asked 2026-10-18.
 - **The `view` group label** on the parameter bar may want a more generic name, since
   its contents change with context.
 - **Where a decoder's records are shown (asked 2026-10-07, not yet answered).** Can a person
   choose between a decoder's records as a third pane beside spectrum and time, and the Events
-  tab of its own it has now?
+  tab of its own it has now? 2026-10-18: no better idea, and a pane feels like clutter.
+  Proposed instead: a marker on the waterfall at each record's time and frequency, its
+  text on hover, a click going to the row in Events. Not decided.
 
-## The chrome is too tall, and it is parked (measured, not built)
+## The chrome was too tall (measured 2026-09-18, built 2026-09-27)
 
 Reported: "the bottom pills are stacked and are different sizes, there's lots of wasted
 space around them. Same with the top bar — a ton of wasted space up and to the right."
@@ -1810,6 +1841,13 @@ uptime is the one indicator that works on every version, including the ones too 
 have `/version`.
 
 ## Loose ends
+
+- **Running the whole suite.** On the host, the GNU Radio and decoder tests fail or skip,
+  because only the container has them. In the container, `SDRFLEX_ENGINE=gnuradio` is in
+  the environment and five mock-versus-server parity tests fail on it, by a few dB that
+  change run to run. Clean, 632 of 632: `docker exec -e SDRFLEX_ENGINE= -w <a copy of the
+  tree> sdr-flex-gr node --test "web/test/*.test.mjs"`. Decoders need GNU Radio in practice
+  (`feed.py` converts their input), though ADR-0044 still calls it opt-in.
 
 - ~~Plugins do not survive a reload.~~ Fixed: the box serves every `.js` in
   `SDRFLEX_PLUGINS` (default `web/plugins`, so `bbc.js` is finally live) to every tab,
