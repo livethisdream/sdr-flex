@@ -1636,9 +1636,8 @@ filling are tested through the engine and the planner rather than by clicking.
   with nothing to decode what it hears is half a tool.
 - ~~History rewrite.~~ **Decided 2026-10-18: leave it.** A commit in pushed history
   contains a symlink target naming a private repository path; it stays.
-- **Challenge names** appear in code comments and one test fixture in this public
-  repo. It matters only if the CTF has not run yet, or will run again: a player could
-  read which challenges exist and how the tool goes at each. Asked 2026-10-18.
+- ~~Challenge names~~ in code comments and one test fixture. **Decided 2026-10-18: they
+  stay.** The CTF has been played, so there is nothing left to spoil.
 - **The `view` group label** on the parameter bar may want a more generic name, since
   its contents change with context.
 - **Where a decoder's records are shown (asked 2026-10-07, not yet answered).** Can a person
