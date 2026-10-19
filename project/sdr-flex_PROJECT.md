@@ -1845,7 +1845,7 @@ have `/version`.
 - **Running the whole suite.** On the host, the GNU Radio and decoder tests fail or skip,
   because only the container has them. In the container, `SDRFLEX_ENGINE=gnuradio` is in
   the environment and five mock-versus-server parity tests fail on it, by a few dB that
-  change run to run. Clean, 632 of 632: `docker exec -e SDRFLEX_ENGINE= -w <a copy of the
+  change run to run. Clean (all pass but the one that needs a gr-bbc checkout): `docker exec -e SDRFLEX_ENGINE= -w <a copy of the
   tree> sdr-flex-gr node --test "web/test/*.test.mjs"`. Decoders need GNU Radio in practice
   (`feed.py` converts their input), though ADR-0044 still calls it opt-in.
 
