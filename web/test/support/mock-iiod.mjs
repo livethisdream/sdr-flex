@@ -14,14 +14,14 @@
 import net from 'node:net';
 import fs from 'node:fs';
 
-export function serve({ port = 0, xmlPath, samples }) {
+export function serve({ port = 0, xmlPath, samples, phyId = 'iio:device1' }) {
   const XML = fs.readFileSync(xmlPath, 'utf8');
   const attrs = new Map([
-    ['iio:device1/OUTPUT/altvoltage0/frequency', '2400000000'],
-    ['iio:device1/INPUT/voltage0/sampling_frequency', '2000000'],
-    ['iio:device1/INPUT/voltage0/rf_bandwidth', '2000000'],
-    ['iio:device1/INPUT/voltage0/gain_control_mode', 'slow_attack'],
-    ['iio:device1/INPUT/voltage0/hardwaregain', '30.000000 dB'],
+    [`${phyId}/OUTPUT/altvoltage0/frequency`, '2400000000'],
+    [`${phyId}/INPUT/voltage0/sampling_frequency`, '2000000'],
+    [`${phyId}/INPUT/voltage0/rf_bandwidth`, '2000000'],
+    [`${phyId}/INPUT/voltage0/gain_control_mode`, 'slow_attack'],
+    [`${phyId}/INPUT/voltage0/hardwaregain`, '30.000000 dB'],
   ]);
   const log = [];
   const live = new Set();
@@ -44,8 +44,9 @@ export function serve({ port = 0, xmlPath, samples }) {
           if (buf.length < pending.len) return;
           const value = buf.subarray(0, pending.len).toString('latin1').replace(/\0+$/, '');
           buf = buf.subarray(pending.len);
-          attrs.set(pending.key, value);
-          ok(pending.len);
+          // A real iiod refuses an attribute the device does not have, which is how a
+          // write to the wrong device shows itself.
+          if (attrs.has(pending.key)) { attrs.set(pending.key, value); ok(pending.len); } else ok(-2);
           pending = null;
           continue;
         }

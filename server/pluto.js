@@ -55,18 +55,23 @@ export class PlutoSource {
       throw new Error(`that is not a Pluto — it has ${ctx.devices.map((d) => d.name).join(', ') || 'no devices'}`);
     }
 
-    const scan = rx.channels.filter((ch) => ch.scan).sort((a, b) => a.scan.index - b.scan.index);
+    // RX1's I and Q only. A board in two-receiver mode lists RX2's pair as well, and
+    // enabling all four interleaves the two receivers into one garbled stream.
+    const scan = rx.channels.filter((ch) => ch.scan).sort((a, b) => a.scan.index - b.scan.index).slice(0, 2);
     if (scan.length < 2) { c.disconnect(); throw new Error('the receive device has no I and Q to stream'); }
     const fmt = parseFormat(scan[0].scan.format);
     // 12-in-16 and 16-in-16 are both int16 on the wire; only the full-scale differs.
     this.format = fmt.storage === 16 && fmt.bits <= 12 ? 'cs12' : 'cs16';
     this.log(`${scan.length} scan elements, format ${scan[0].scan.format} → ${this.format}`);
 
+    // Before the first tune, which would otherwise write to whatever the fallback
+    // names — on a real Pluto that is the temperature sensor.
+    this.phyId = phy.id;
     await c.setTimeout_(5000);
     await this.tune({ centerHz, sampleRate, gain, bandwidthHz });
 
-    // one bit per enabled scan element
-    const mask = (((1 << scan.length) - 1) >>> 0).toString(16).padStart(8, '0');
+    // one bit per enabled scan element, at that element's index
+    const mask = (scan.reduce((m, ch) => m | (1 << ch.scan.index), 0) >>> 0).toString(16).padStart(8, '0');
     const bytes = bufferSamples * scan.length * (fmt.storage / 8);
 
     const d = new Iiod({ host: this.host, port: this.port });
@@ -75,7 +80,6 @@ export class PlutoSource {
     await d.setTimeout_(5000);
     await d.open(rx.id, bufferSamples, mask);
     this.rxId = rx.id;
-    this.phyId = phy.id;
     this.running = true;
 
     // The read loop. iiod blocks until the buffer is full, so this paces itself to the
@@ -102,7 +106,7 @@ export class PlutoSource {
   async tune({ centerHz, sampleRate, gain = null, bandwidthHz = null }) {
     const c = this.ctrl;
     if (!c) throw new Error('not connected');
-    const phyId = this.phyId || 'iio:device1';
+    const phyId = this.phyId || PHY;
     if (sampleRate != null) {
       await c.writeAttr(phyId, 'INPUT', 'voltage0', 'sampling_frequency', Math.round(sampleRate));
       await c.writeAttr(phyId, 'INPUT', 'voltage0', 'rf_bandwidth',
@@ -124,7 +128,7 @@ export class PlutoSource {
   async actual() {
     const c = this.ctrl;
     if (!c) return null;
-    const phyId = this.phyId || 'iio:device1';
+    const phyId = this.phyId || PHY;
     const num = async (kind, chn, attr) => {
       try { return parseFloat(await c.readAttr(phyId, kind, chn, attr)); } catch { return null; }
     };
