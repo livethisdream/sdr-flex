@@ -28,6 +28,8 @@ as they are, and the server is Node's own `http`, `net` and `crypto`. Node 22 or
 | `SDRFLEX_RINGS` | the system temp directory | Where live recordings are kept |
 | `SDRFLEX_PLUGINS` | `../web/plugins` | Decoders the box offers every tab |
 | `SDRFLEX_SESSIONS` | `<captures>/.sessions` | Saved sessions. Inside the capture directory because that is the directory you mounted — one beside the source tree is one a rebuild deletes. No capture directory, no sessions |
+| `SDRFLEX_ENGINE` | found at startup | `gnuradio` requires GNU Radio and stops with the reason if there is none. Any other value, such as `js`, runs the built-in JavaScript engine. Unset, GNU Radio is used when it is found |
+| `SDRFLEX_GR_PYTHON` | `python3`, then radioconda's | The Python that has GNU Radio. Any installation works, because the server starts that Python rather than linking against GNU Radio |
 
 ## In a container, on a tailnet
 
@@ -513,7 +515,7 @@ Checking the module is installed costs about half a second, so it is done once w
 server starts rather than on the first click. The startup banner says how many decoders
 are actually here.
 
-The container images do not carry GNU Radio — it is about a gigabyte. A decoder whose
+Only `Dockerfile.full` carries GNU Radio — it is about a gigabyte. A decoder whose
 module is missing is not offered in the operation menu at all; `Identify` names it and
 says what is absent, which is where that belongs (ADR-0039).
 

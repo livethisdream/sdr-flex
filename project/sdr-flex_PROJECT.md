@@ -10,9 +10,9 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-10-18 (the first real radio: a Pluto on a TX1→RX1 loopback. Two driver bugs the mock hid, fixed; the spectrum read 6 dB low under Hann, fixed on its own branch; how to run the whole suite)
+**Last updated:** 2026-10-19 (out to other people: the hosted copy opens real example captures, and the full image is published, public, at `ghcr.io/livethisdream/sdr-flex`; the server finds GNU Radio on its own and uses any installation, checked with radioconda)
 
-Previous: 2026-10-03 (phone pass: the path folds to its current entry with a drop-down at ≤600px; long presses fire once and do not select text; the deck's track stays inside it; the library leads with recently opened captures, then the newest — `recent.js`)
+Previous: 2026-10-18 (the first real radio: a Pluto on a TX1→RX1 loopback. Two driver bugs the mock hid, fixed; the spectrum read 6 dB low under Hann, fixed on its own branch; how to run the whole suite)
 
 Previous: 2026-10-03 (real streams open on `domain: both`; the view menu on a long press, so a touch screen can reach it — ADR-0036 amended)
 
@@ -45,13 +45,16 @@ ring recording. Static ES modules, no build step, no dependencies on either side
 Run it on a box: see `server/README.md`. Short version, on a tailnet:
 `SDRFLEX_HOST_IP=$(tailscale ip -4) docker compose up -d`.
 
-**GNU Radio is the engine (ADR-0044), opt-in with `SDRFLEX_ENGINE=gnuradio`.** The tuner,
+**GNU Radio is the engine (ADR-0044), used whenever the box has it.** The tuner,
 FM, stereo, and the CW, AM, SSB, NRZ, Manchester, differential and symbol-sync recipes
 (`recipes/*.grc`, ADR-0043) run in GNU Radio workers; the slicers' estimates (threshold, symbol
 period, grid phase) stay SDR Flex's, and GNU Radio makes the decisions; the
 synthetic scene is recorded once so GNU Radio reads it like a capture; every decoder's input is
 resampled and converted by a GNU Radio flowgraph (`server/gr/feed.py`). Progress, measurements
-and what is left: `project/gnuradio-migration.md`. Unset, the JS engine runs as before.
+and what is left: `project/gnuradio-migration.md`. At startup `server/gr/find.js` asks
+`SDRFLEX_GR_PYTHON`, or else `python3` and then radioconda's default place, to import GNU Radio,
+and the banner names what it found. `SDRFLEX_ENGINE=gnuradio` makes a missing GNU Radio fatal;
+any other value, such as `js`, runs the JS engine.
 
 Working end to end:
 
@@ -1841,12 +1844,17 @@ have `/version`.
 
 ## Loose ends
 
-- **Running the whole suite.** On the host, the GNU Radio and decoder tests fail or skip,
-  because only the container has them. In the container, `SDRFLEX_ENGINE=gnuradio` is in
+- **Running the whole suite.** On this box's host, GNU Radio 3.10.9 from apt and radioconda
+  3.10.12 both pass every GNU Radio test (2026-10-19, `SDRFLEX_GR_PYTHON` picks the second); the
+  decoder tests skip, because only the container has the decoders, and the guard that wants at
+  least one decoder exercised fails unless LoRa is there (radioconda has it). The 300 ms worker
+  start gate in `grworker.test.mjs` failed once at 477 ms under the full parallel suite; alone
+  it is 163-189 ms on either install. In the container, `SDRFLEX_ENGINE=gnuradio` is in
   the environment and five mock-versus-server parity tests fail on it, by a few dB that
   change run to run. Clean (all pass but the one that needs a gr-bbc checkout): `docker exec -e SDRFLEX_ENGINE= -w <a copy of the
   tree> sdr-flex-gr node --test "web/test/*.test.mjs"`. Decoders need GNU Radio in practice
-  (`feed.py` converts their input), though ADR-0044 still calls it opt-in.
+  (`feed.py` converts their input), which is one reason the server now uses GNU Radio
+  whenever it finds one.
 
 - ~~Plugins do not survive a reload.~~ Fixed: the box serves every `.js` in
   `SDRFLEX_PLUGINS` (default `web/plugins`, so `bbc.js` is finally live) to every tab,
