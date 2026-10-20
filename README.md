@@ -53,6 +53,30 @@ The server has no authentication. The command above publishes it on this machine
 do not publish it on a network you share with anyone else. [server/README.md](server/README.md)
 covers running it on a box, over a tailnet, and with Docker Compose.
 
+### With Your Own GNU Radio
+
+If you already have GNU Radio, you do not need the image. Clone this repository and run
+the server with Node 22 or newer:
+
+```sh
+node seed-captures.mjs
+node server/main.js
+```
+
+The server looks for GNU Radio when it starts, first through `python3` and then in
+radioconda's default location, and the startup lines say which one it found. If yours is
+somewhere else, point the server at the Python it was built for:
+
+```sh
+SDRFLEX_GR_PYTHON=/opt/gnuradio/bin/python3 node server/main.js
+```
+
+With no GNU Radio, the server falls back to the built-in JavaScript engine and says so.
+This has been checked on Linux with GNU Radio 3.10.9 from Ubuntu's packages and 3.10.12
+from radioconda. Windows outside WSL has not been tried yet. The external decoders are
+separate programs, and [server/README.md](server/README.md#decoders) covers installing
+each one.
+
 ## Why another one
 
 | Tool | What it gets right | What we take, what we fix |

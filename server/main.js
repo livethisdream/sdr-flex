@@ -25,6 +25,7 @@ import { version, versionLine } from './version.js';
 import { AdapterDir } from './adapterdir.js';
 import { SessionStore, MAX_BYTES } from './sessions.js';
 import { sceneRecording } from './gr/scene.js';
+import { findGnuRadio } from './gr/find.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -284,7 +285,35 @@ async function loadLocalAdapters(cfg) {
   return { adapters: added, problems };
 }
 
+/**
+ * GNU Radio when the box has it, the JS engine when it does not (ADR-0044). Settled before
+ * anything else starts, because everything after — the workers, the recipes, the decoder
+ * feed, the LoRa adapter — starts the interpreter this picks. Returns the banner line.
+ */
+function chooseEngine() {
+  const want = process.env.SDRFLEX_ENGINE;
+  if (want && want !== 'gnuradio') return `${want} engine, because SDRFLEX_ENGINE says so`;
+  const found = findGnuRadio();
+  if (found.python) {
+    process.env.SDRFLEX_ENGINE = 'gnuradio';
+    process.env.SDRFLEX_GR_PYTHON = found.python;
+    return `GNU Radio ${found.version} engine, through ${found.python}`;
+  }
+  const tried = found.tried.map((t) => `${t.python}: ${t.why}`);
+  if (want === 'gnuradio') {
+    // Asked for by name, so falling back would be a different program than the one asked for.
+    console.error('[sdr-flex] SDRFLEX_ENGINE=gnuradio, but no Python here has GNU Radio:');
+    for (const t of tried) console.error(`[sdr-flex]   ${t}`);
+    console.error('[sdr-flex] set SDRFLEX_GR_PYTHON to the Python that does');
+    process.exit(1);
+  }
+  return `no GNU Radio found (${tried.join('; ')}), so the JS engine. ` +
+         'Set SDRFLEX_GR_PYTHON to the Python that has it';
+}
+
 export async function start(cfg = CONFIG) {
+  const engine = chooseEngine();
+
   // Decoders the operator added, before anything is probed — they are adapters like any
   // other once they are in the table, and one that fails to load says why rather than
   // simply not appearing.
@@ -313,6 +342,7 @@ export async function start(cfg = CONFIG) {
     // has after a rebuild and the decoder count cannot answer it — that line reads the
     // same before and after any change that is not about decoders.
     log(versionLine());
+    log(engine);
     if (library) {
       const n = library.list().length;
       log(`${n} capture${n === 1 ? '' : 's'} in ${cfg.captureDir}`);

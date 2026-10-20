@@ -942,7 +942,11 @@ export const ADAPTERS = {
     name: 'LoRa', group: 'Decode', in: 'iq', out: 'events',
     // The interpreter that has the bindings, which is not necessarily the one called
     // `python3`: GNU Radio's are built against one CPython and a box can have five.
-    command: ['python3.12', 'python3.11', 'python3.10', 'python3'],
+    // The engine's own first, when it has one: radioconda's is not on PATH.
+    get command() {
+      const own = process.env.SDRFLEX_GR_PYTHON;
+      return [...(own ? [own] : []), 'python3.12', 'python3.11', 'python3.10', 'python3'];
+    },
     module: 'gnuradio.lora_sdr',
     flowgraph: 'lora.py',
     blurb: 'LoRa — chirp spread spectrum, SF7 to SF12',
@@ -1040,6 +1044,11 @@ export function resolve(id) {
     : [];
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
   for (const name of wanted) {
+    // A path, such as the engine's own Python, is looked at where it says rather than on PATH.
+    if (path.basename(name) !== name) {
+      try { if (fs.statSync(name).isFile()) return name; } catch { /* next */ }
+      continue;
+    }
     const names = exts.length ? [name, ...exts.flatMap((e) => [name + e.toLowerCase(), name + e])] : [name];
     for (const dir of dirs) {
       for (const n of names) {
@@ -1228,12 +1237,11 @@ export function levelGain(data, kind, want) {
 }
 
 const FEED = path.join(path.dirname(fileURLToPath(import.meta.url)), 'gr', 'feed.py');
-const PYTHON = process.env.SDRFLEX_GR_PYTHON || 'python3';
 
 /** The GNU Radio flowgraph between SDR Flex and a decoder (server/gr/feed.py). */
 function spawnFeed(kind, fromRate, want, gain, { wav = false } = {}) {
   const spec = { kind, from: fromRate, to: want.rate, format: want.format, gain, wav };
-  return spawn(PYTHON, [FEED, JSON.stringify(spec)], { stdio: ['pipe', 'ignore', 'pipe', 'pipe'] });
+  return spawn(process.env.SDRFLEX_GR_PYTHON || 'python3', [FEED, JSON.stringify(spec)], { stdio: ['pipe', 'ignore', 'pipe', 'pipe'] });
 }
 
 /**
