@@ -1,5 +1,6 @@
 {
   "name": "dump1090 over Mode S",
+  "label": "ADS-B",
   "why": "The one adapter that takes IQ straight off the root with no tuner and no demodulator in front of it, at a sample rate it will not negotiate. It pins two things that were wrong when the adapter was written from documentation: the program is installed as dump1090-mutability or dump1090-fa on the distributions that ship it, and --quiet does not mean 'no banner', it means 'no stdout' — which is where --raw puts the decodes.",
   "capture": "capture.sigmf-data",
   "needs": "ext.dump1090",

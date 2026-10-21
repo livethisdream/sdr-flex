@@ -1,5 +1,6 @@
 {
   "name": "Manchester frames with a CRC",
+  "label": "Manchester",
   "why": "The native chain end to end, and the two derivations that carry it: the symbol period, from the fact that a transition-per-symbol code has runs of exactly two lengths; and the CRC, from trying the catalog against every frame. Nobody is told either one. If a change makes them need to be told, ADR-0017 has quietly stopped being true and this is where it shows.",
   "capture": "capture.sigmf-data",
   "chain": [

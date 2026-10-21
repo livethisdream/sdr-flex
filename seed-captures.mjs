@@ -44,7 +44,8 @@ for (const name of fs.readdirSync(from)) {
     const bps = BYTES[g['core:datatype']];
     if (!bps) throw new Error(`${name}: no size known for ${g['core:datatype']}`);
     examples.push({
-      id: name, name: fx.name, sampleRate: rate,
+      // `label` is what the picker shows; `name` is the sentence the tests are named by.
+      id: name, name: fx.label || fx.name, sampleRate: rate,
       durationS: fs.statSync(data).size / bps / rate,
       bytes: fs.statSync(data).size,
       needs: fx.needs && fx.needs.startsWith('ext.') ? fx.needs : null,

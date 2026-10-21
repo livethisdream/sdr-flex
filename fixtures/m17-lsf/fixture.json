@@ -1,5 +1,6 @@
 {
   "name": "M17 over FM",
+  "label": "M17",
   "why": "The third adapter shape, and the one that forced a change to the contract: m17-demod writes decoded voice to stdout and its link setup frame to stderr, so an adapter can say where its records are and the other stream is counted rather than kept — a few seconds of audio coerced into a JavaScript string is both wrong and a way to run a server out of memory on a long capture. It also exercises the same spectrum-tuner-discriminator chain the APRS fixture does, on a signal that is 4FSK rather than AFSK.",
   "capture": "capture.sigmf-data",
   "needs": "ext.m17",

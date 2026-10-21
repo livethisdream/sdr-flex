@@ -2749,10 +2749,9 @@ class App {
     const lead = this.examples.filter((c) => !c.needs).sort((a, b) => a.bytes - b.bytes);
     const ops = this.examples.map((c) => ({
       id: c.id,
-      name: `${c.name} — ${(c.sampleRate / 1e6).toFixed(3)} MS/s · ` +
-            (c.durationS < 1 ? `${(c.durationS * 1e3).toFixed(1)} ms` : `${c.durationS.toFixed(1)} s`),
+      name: c.name,
       // A decoder that is a program is not in a browser tab; the signal still is.
-      group: c.needs ? 'its decoder needs the server' : 'decodes here',
+      group: c.needs ? 'needs the server' : 'decodes here',
       rank: lead.indexOf(c) >= 0 ? lead.indexOf(c) + 1 : undefined,
     }));
     const px = x != null ? x : innerWidth / 2, py = y != null ? y : innerHeight - 120;

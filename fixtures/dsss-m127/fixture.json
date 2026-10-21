@@ -1,5 +1,6 @@
 {
   "name": "Direct-sequence spread spectrum: which code, and then the bits",
+  "label": "DSSS",
   "why": "A spread signal is unreadable until you know its code, so \"which code\" is the whole question and the rest follows from it. This pins the order the three unknowns have to be solved in — chip rate from the transitions, carrier offset from the squared signal, code by correlation — and in particular that the offset has to come out before the search rather than after it: a correlation across a code period is a coherent integration across it, and 900 Hz at 60 kchip/s is two full rotations over 127 chips, which makes the right code score like every wrong one. It also pins two things that are easy to get wrong and silent when you do: a chip phase rotated up into [0, chip) instead of taken nearest zero starts the stream one chip late and loses the first bit of the message, and a peak-to-sidelobe ratio measured over too few code periods makes a long code win against anything.",
   "capture": "capture.sigmf-data",
   "chain": [

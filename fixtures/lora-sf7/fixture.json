@@ -1,5 +1,6 @@
 {
   "name": "LoRa over a GNU Radio flowgraph",
+  "label": "LoRa",
   "why": "The adapter kind that is not a program: a GNU Radio flowgraph, satisfying the same samples-in-records-out contract as rtl_433, with the difference that what must be installed is a module inside an interpreter rather than a name on PATH. It also pins the one adapter whose sample rate is not a constant \u2014 LoRa is sampled at a whole multiple of its bandwidth, so the bandwidth parameter decides what the decoder is fed, and a static `wants` would have starved every setting but the default.",
   "capture": "capture.sigmf-data",
   "needs": "ext.lora",

@@ -1,5 +1,6 @@
 {
   "name": "direwolf over AX.25 on FM",
+  "label": "APRS",
   "why": "The external-decoder path as a person actually walks it: spectrum, a tuner, an FM discriminator, then somebody else's packet decoder on the audio. Everything before the adapter is this tool's own code, so this catches a regression in the tuner, the decimator or the discriminator — and it catches it the way a user would, as a decoder that suddenly says nothing. It also pins the three things about direwolf that were wrong when the adapter was written from documentation: a bare dash is not stdin, it will not start without a config file on a machine with no sound card, and -q hd suppresses the decodes.",
   "capture": "capture.sigmf-data",
   "needs": "ext.direwolf",
