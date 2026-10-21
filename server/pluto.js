@@ -68,6 +68,7 @@ export class PlutoSource {
     // names — on a real Pluto that is the temperature sensor.
     this.phyId = phy.id;
     await c.setTimeout_(5000);
+    await this.reclaim();
     await this.tune({ centerHz, sampleRate, gain, bandwidthHz });
 
     // one bit per enabled scan element, at that element's index
@@ -100,6 +101,27 @@ export class PlutoSource {
     })();
 
     return { format: this.format, sampleRate, centerHz };
+  }
+
+  /**
+   * Undo what another program can leave behind. Put to sleep, the radio refuses the sample
+   * rate and the filter alike. With a FIR filter loaded for some other rate, it refuses
+   * ours, and on 2026-10-20 a real board asked for 2.4 MS/s under a filter loaded for 22
+   * restarted itself instead of refusing. So: awake first, the filter off second, and
+   * only then a rate. Receive and transmit share one clock chain, and the board turns
+   * both filters off together, through the channel called `out`, or neither.
+   */
+  async reclaim() {
+    const c = this.ctrl, phyId = this.phyId;
+    const read = (kind, chn, attr) => c.readAttr(phyId, kind, chn, attr).then((s) => s.trim(), () => null);
+    if (await read(null, null, 'ensm_mode') === 'sleep') {
+      this.log('the radio was left asleep; waking it');
+      await c.writeAttr(phyId, null, null, 'ensm_mode', 'fdd');
+    }
+    if (await read('INPUT', 'voltage0', 'filter_fir_en') === '1' || await read('OUTPUT', 'voltage0', 'filter_fir_en') === '1') {
+      this.log('the radio was left with a FIR filter on; turning it off');
+      await c.writeAttr(phyId, 'INPUT', 'out', 'voltage_filter_fir_en', 0);
+    }
   }
 
   /** Retune without restarting anything. Three attribute writes, on the control link. */

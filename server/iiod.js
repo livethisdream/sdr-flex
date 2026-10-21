@@ -128,16 +128,17 @@ export class Iiod {
 
   async setTimeout_(ms) { this._send(`TIMEOUT ${Math.round(ms)}`); try { return await this._status('TIMEOUT'); } catch { return 0; } }
 
+  // No `kind` means an attribute of the device itself rather than of one of its channels.
   async readAttr(dev, kind, chn, attr) {
-    this._send(`READ ${dev} ${kind} ${chn} ${attr}`);
-    return this._value(`reading ${chn}/${attr}`);
+    this._send(kind ? `READ ${dev} ${kind} ${chn} ${attr}` : `READ ${dev} ${attr}`);
+    return this._value(`reading ${kind ? `${chn}/` : ''}${attr}`);
   }
 
   async writeAttr(dev, kind, chn, attr, value) {
     const body = Buffer.from(String(value) + '\0', 'latin1');
-    this._send(`WRITE ${dev} ${kind} ${chn} ${attr} ${body.length}`);
+    this._send(kind ? `WRITE ${dev} ${kind} ${chn} ${attr} ${body.length}` : `WRITE ${dev} ${attr} ${body.length}`);
     this.sock.write(body);
-    return this._status(`setting ${chn}/${attr}`);
+    return this._status(`setting ${kind ? `${chn}/` : ''}${attr}`);
   }
 
   /** `mask` is hex, one bit per enabled scan element. */

@@ -317,6 +317,22 @@ it cancels. That needs a known signal off the air.
 If the stream really stalls on a write, the ring's timeline gains a gap it does not know
 about. Measure it before relying on time across a retune.
 
+### After another program, 2026-10-20
+
+The Pluto would not open after another tool had used it: "setting voltage0/sampling_frequency:
+invalid argument". That tool had left the radio at 22 MS/s with a 128-tap FIR filter
+(decimate by 2) loaded and on, and its state machine (`ensm_mode`) asleep. Asleep, the board
+refuses the rate and the filter alike. Awake, the filter turned off cleanly, but only through
+the combined `out` channel (`voltage_filter_fir_en`), never receive alone. And woken, then
+asked for 2.4 MS/s with that filter still on, the board **restarted itself** rather than
+refusing. It came back at its power-on state: 30.72 MS/s, no filter, `fdd`, transmit
+attenuation back at -10 dB. So check TX after any restart.
+
+`PlutoSource.reclaim()` now runs before the first tune: wake it if asleep, filter off if on,
+then the rate. Checked on the board for the sleep half. The filter half is checked in the
+simulated board only, because after the restart no filter was loaded to turn off. The
+container on 8722 was rebuilt from main the same day and streams the Pluto at 2.4 MS/s.
+
 ## Third-party decoders, as built
 
 M4.5, and the roadmap was right that it is the best ratio in the plan.
