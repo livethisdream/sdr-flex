@@ -1,5 +1,6 @@
 {
   "name": "A screen leaking, folded back into a picture",
+  "label": "TEMPEST raster",
   "why": "Nothing is told the resolution. The line period comes from an autocorrelation and the frame from the best whole number of lines, and the picture falls out of folding at the first and averaging at the second. It also pins why this node takes IQ rather than a demodulated stream: the AM detector's post-detection filter is sized for audio at forty microseconds, a pixel here is a fraction of one, and running a screen through it smears eight pixels together and turns the letters into bars.",
   "capture": "capture.sigmf-data",
   "chain": [{ "op": "core.raster" }],

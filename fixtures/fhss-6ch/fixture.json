@@ -1,5 +1,6 @@
 {
   "name": "Frequency hopping: the sequence and the payload",
+  "label": "FHSS",
   "why": "Two answers out of one capability. The hop map derives the dwell time, the channel spacing and the channel set from the signal and reports the order the channels were used in; the de-hopper follows that order and hands the ordinary demodulator and slicer a signal they already know how to read. It also pins three fixes that this exposed and that reach much further than hopping: Otsu ranged its histogram by minimum and maximum so a handful of outliers destroyed it, the NRZ symbol estimator assumed the shortest run was one symbol so a few glitches set the rate, and every auto-derived parameter was estimated from a window that could lie mostly before the start of a short capture.",
   "capture": "capture.sigmf-data",
   "chain": [

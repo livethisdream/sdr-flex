@@ -1,5 +1,6 @@
 {
   "name": "BBC concurrent codes: two messages in one codeword",
+  "label": "BBC codes",
   "why": "The plugin boundary end to end (ADR-0028) and the property the codec is named for. A BBC codeword is a Z channel: marks are set by any message and cleared by none, so several messages superimpose as a bitwise OR and all of them decode back out. A decoder that returns the first message and stops passes every single-message test there is, which is why this asserts both. It is also the only fixture whose chain ends in a browser plugin rather than a native node or an external program, so it is what proves the harness can reach one at all — the reason this decoder went without a fixture was that it could not.",
   "capture": "capture.sigmf-data",
   "chain": [

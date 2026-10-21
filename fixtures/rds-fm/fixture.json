@@ -1,5 +1,6 @@
 {
   "name": "redsea over RDS on an FM broadcast composite",
+  "label": "RDS",
   "why": "The only chain in the suite whose decoder reads something nobody could listen to. RDS rides a suppressed 57 kHz subcarrier, so what redsea needs is the FM discriminator's whole output rather than the audible part of it — and the way that goes wrong is silent: size the tuner for audio, or put a post-detection filter on the demodulator, and the subcarrier is gone three nodes before the decoder, which then finds nothing and has nothing to report. This pins the wide path end to end: a 140 kHz channel, decimation left at 1, a discriminator that filters nothing, and 57 kHz still there on the other side. It also pins the two things about redsea that a manifest gets wrong from documentation — that raw samples on stdin need --input mpx rather than the default file reader, and that below 128 kHz it exits rather than decoding badly.",
   "capture": "capture.sigmf-data",
   "needs": "ext.redsea",

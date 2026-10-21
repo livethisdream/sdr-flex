@@ -1,5 +1,6 @@
 {
   "name": "M17 packet mode, through a symbol sync",
+  "label": "M17 packet",
   "why": "The only chain whose decoder does not read samples. m17-packet-decode wants one float per symbol, already on the symbol grid, because it correlates for a syncword rather than finding a clock — so between the discriminator and it there has to be a node that decides where in each symbol period to look. Hand it samples instead and the conversion in front of it resamples 48 kS/s down to 4800, which low-passes and decimates and picks no instant at all; the decode then fails by finding nothing, which is the failure mode this whole suite exists to catch. It also pins the other half of M17: stream mode and packet mode are two programs from two different upstreams, and the capture for one decodes as nothing under the other.",
   "capture": "capture.sigmf-data",
   "needs": "ext.m17_packet",
