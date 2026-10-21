@@ -14,7 +14,7 @@
 import net from 'node:net';
 import fs from 'node:fs';
 
-export function serve({ port = 0, xmlPath, samples, phyId = 'iio:device1' }) {
+export function serve({ port = 0, xmlPath, samples, phyId = 'iio:device1', fir = false, asleep = false }) {
   const XML = fs.readFileSync(xmlPath, 'utf8');
   const attrs = new Map([
     [`${phyId}/OUTPUT/altvoltage0/frequency`, '2400000000'],
@@ -22,7 +22,18 @@ export function serve({ port = 0, xmlPath, samples, phyId = 'iio:device1' }) {
     [`${phyId}/INPUT/voltage0/rf_bandwidth`, '2000000'],
     [`${phyId}/INPUT/voltage0/gain_control_mode`, 'slow_attack'],
     [`${phyId}/INPUT/voltage0/hardwaregain`, '30.000000 dB'],
+    // `fir` and `asleep` are a board another program left with its FIR filter loaded and
+    // on, or with its state machine asleep
+    [`${phyId}/INPUT/voltage0/filter_fir_en`, fir ? '1' : '0'],
+    [`${phyId}/OUTPUT/voltage0/filter_fir_en`, fir ? '1' : '0'],
+    [`${phyId}/INPUT/out/voltage_filter_fir_en`, fir ? '1' : '0'],
+    [`${phyId}/ensm_mode`, asleep ? 'sleep' : 'fdd'],
   ]);
+  const ENSM = `${phyId}/ensm_mode`;
+  // On the real board one filter cannot be turned off without the other; `out` sets both.
+  const BOTH = `${phyId}/INPUT/out/voltage_filter_fir_en`;
+  const firOn = () => attrs.get(`${phyId}/INPUT/voltage0/filter_fir_en`) === '1'
+                   || attrs.get(`${phyId}/OUTPUT/voltage0/filter_fir_en`) === '1';
   const log = [];
   const live = new Set();
   let cursor = 0;
@@ -46,7 +57,19 @@ export function serve({ port = 0, xmlPath, samples, phyId = 'iio:device1' }) {
           buf = buf.subarray(pending.len);
           // A real iiod refuses an attribute the device does not have, which is how a
           // write to the wrong device shows itself.
-          if (attrs.has(pending.key)) { attrs.set(pending.key, value); ok(pending.len); } else ok(-2);
+          if (!attrs.has(pending.key)) ok(-2);
+          // The FIR refuses any rate it was not loaded for; the real rule depends on its taps.
+          else if (attrs.get(ENSM) === 'sleep' && pending.key !== ENSM) ok(-22);
+          else if (pending.key.endsWith('/INPUT/voltage0/sampling_frequency') && firOn()) ok(-22);
+          else if (pending.key.endsWith('/voltage0/filter_fir_en') && value === '0' && firOn()) ok(-22);
+          else {
+            attrs.set(pending.key, value);
+            if (pending.key === BOTH) {
+              attrs.set(`${phyId}/INPUT/voltage0/filter_fir_en`, value);
+              attrs.set(`${phyId}/OUTPUT/voltage0/filter_fir_en`, value);
+            }
+            ok(pending.len);
+          }
           pending = null;
           continue;
         }
@@ -62,14 +85,15 @@ export function serve({ port = 0, xmlPath, samples, phyId = 'iio:device1' }) {
           case 'PRINT': data(XML); break;
           case 'TIMEOUT': ok(0); break;
           case 'READ': {
-            const v = attrs.get(`${p[1]}/${p[2]}/${p[3]}/${p[4]}`);
+            const v = attrs.get(p.length === 3 ? `${p[1]}/${p[2]}` : `${p[1]}/${p[2]}/${p[3]}/${p[4]}`);
             if (v == null) ok(-2); else data(v + '\0');
             break;
           }
           case 'WRITE': {
-            const len = parseInt(p[5], 10);
+            const device = p.length === 4;
+            const len = parseInt(device ? p[3] : p[5], 10);
             if (!Number.isFinite(len)) { ok(-22); break; }
-            pending = { key: `${p[1]}/${p[2]}/${p[3]}/${p[4]}`, len };
+            pending = { key: device ? `${p[1]}/${p[2]}` : `${p[1]}/${p[2]}/${p[3]}/${p[4]}`, len };
             break;
           }
           case 'OPEN': ok(0); break;

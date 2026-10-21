@@ -202,3 +202,43 @@ test('with two receivers listed, only RX1\'s I and Q are streamed', async (t) =>
   assert.ok(m.log.some((l) => l === `READBUF iio:device4 ${4096 * 4}`), 'and read four bytes a sample, not eight');
   assert.ok(chunks.length > 0);
 });
+
+test('a board another program left with its FIR filter on is opened anyway', async (t) => {
+  const m = await serve({ port: PORT, xmlPath: XML_2R2T, samples: fakeSamples(), phyId: 'iio:device0', fir: true });
+  t.after(() => m.stop());
+  const said = [];
+  const src = new PlutoSource({ host: '127.0.0.1', port: PORT, log: (s) => said.push(s) });
+  await src.start({ centerHz: 433_920_000, sampleRate: 2_400_000, bufferSamples: 4096 }, () => {});
+  src.stop();
+  assert.equal(m.attrs.get('iio:device0/INPUT/voltage0/sampling_frequency'), '2400000');
+  assert.equal(m.attrs.get('iio:device0/INPUT/voltage0/filter_fir_en'), '0');
+  assert.equal(m.attrs.get('iio:device0/OUTPUT/voltage0/filter_fir_en'), '0');
+  assert.ok(said.some((s) => /FIR filter on/.test(s)), 'and the log says why it touched the filter');
+  // A real board restarted when asked for a rate its filter was not loaded for, so the
+  // filter has to be off before the rate is ever written.
+  const fir = m.log.findIndex((l) => l.includes('voltage_filter_fir_en'));
+  const rate = m.log.findIndex((l) => l.includes('sampling_frequency'));
+  assert.ok(fir >= 0 && fir < rate, 'the filter goes off before any rate is written');
+});
+
+test('a board another program left asleep is woken before anything else', async (t) => {
+  const m = await serve({ port: PORT, xmlPath: XML_2R2T, samples: fakeSamples(), phyId: 'iio:device0', fir: true, asleep: true });
+  t.after(() => m.stop());
+  const src = new PlutoSource({ host: '127.0.0.1', port: PORT });
+  await src.start({ centerHz: 433_920_000, sampleRate: 2_400_000, bufferSamples: 4096 }, () => {});
+  src.stop();
+  assert.equal(m.attrs.get('iio:device0/ensm_mode'), 'fdd');
+  assert.equal(m.attrs.get('iio:device0/INPUT/voltage0/sampling_frequency'), '2400000');
+  assert.ok(m.log.findIndex((l) => l.startsWith('WRITE iio:device0 ensm_mode')) <
+            m.log.findIndex((l) => l.includes('filter_fir_en')), 'awake before the filter is touched');
+});
+
+test('a board in its usual state is left alone', async (t) => {
+  const m = await serve({ port: PORT, xmlPath: XML_2R2T, samples: fakeSamples(), phyId: 'iio:device0' });
+  t.after(() => m.stop());
+  const src = new PlutoSource({ host: '127.0.0.1', port: PORT });
+  await src.start({ centerHz: 433_920_000, sampleRate: 2_400_000, bufferSamples: 4096 }, () => {});
+  src.stop();
+  assert.ok(!m.log.some((l) => l.startsWith('WRITE') && /filter_fir_en|ensm_mode/.test(l)),
+    'nothing written to the filter or the state machine');
+});
