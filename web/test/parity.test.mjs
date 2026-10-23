@@ -284,3 +284,36 @@ test('dropping a file on a remote engine says where captures live', async (t) =>
   await f.remote.createSession();
   await assert.rejects(() => f.remote.openCapture({ name: 'x.cu8' }), /from the server/);
 });
+
+test('a framer hands both engines the same frames to compare', async (t) => {
+  // The Manchester fixture, served off disk to one engine and held in memory by the other.
+  const src = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'fixtures', 'manchester-crc');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdrflex-parity-'));
+  for (const f of ['capture.sigmf-data', 'capture.sigmf-meta']) fs.copyFileSync(path.join(src, f), path.join(dir, f));
+  const { server } = createServer({ webDir: dir, captureDir: dir, quiet: true });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const remote = new RemoteEngine(`ws://127.0.0.1:${server.address().port}/ws`);
+  await remote.connect();
+  t.after(() => { remote._sock.close(); server.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const bytes = fs.readFileSync(path.join(dir, 'capture.sigmf-data'));
+  const inMemory = new Capture({
+    buffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    format: 'cu8', sampleRate: 200_000, centerHz: 433_920_000, label: 'manchester',
+  });
+  const run = async (e, openWith) => {
+    await e.createSession();
+    await e.openCapture(openWith);
+    let parent = e.root.id;
+    for (const op of ['core.am_envelope', 'core.manchester', 'core.framer']) {
+      parent = (await e.addNode({ parent, op, at: 0.05,
+        selection: { f0: 433_870_000, f1: 433_970_000 } })).id;
+    }
+    await e.setParam(parent, 'syncHex', '2dd4');
+    return e.runRecords(parent, 0.05);
+  };
+  const a = await run(new MockEngine({ latency: false }), inMemory);
+  const b = await run(remote, 'capture.sigmf-data');
+  assert.equal(a.frames.length, 9);
+  assert.deepEqual(b.frames, a.frames);
+});

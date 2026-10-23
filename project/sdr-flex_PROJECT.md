@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-10-19 (out to other people: the hosted copy opens real example captures, and the full image is published, public, at `ghcr.io/livethisdream/sdr-flex`; the server finds GNU Radio on its own and uses any installation, checked with radioconda)
+**Last updated:** 2026-10-22 (frames can be compared, URH-style, on any framer; out to other people: the hosted copy opens real example captures, and the full image is published, public, at `ghcr.io/livethisdream/sdr-flex`; the server finds GNU Radio on its own and uses any installation, checked with radioconda)
 
 Previous: 2026-10-18 (the first real radio: a Pluto on a TX1→RX1 loopback. Two driver bugs the mock hid, fixed; the spectrum read 6 dB low under Hann, fixed on its own branch; how to run the whole suite)
 
@@ -1857,6 +1857,33 @@ the reader to know that it builds local files. There is an *Updating* section no
 the two failure shapes side by side and `docker compose ps` as the tell — a container's
 uptime is the one indicator that works on every version, including the ones too old to
 have `/version`.
+
+## Comparing frames, as built (2026-10-22)
+
+Asked as "could we integrate the URH capabilities?" Yes for the analysis half, which M6
+already called for; no for URH's generator, fuzzer and simulator, which transmit (the vision
+says this is not a transmitter). Message diffing first, because it is the URH view that
+finds fields in a protocol nobody documented, and it needs no new data model.
+
+**A `list | compare` switch on a framer's Events pane, not a tab.** A tab here is a node; this
+is one node read two ways, which is what ADR-0036 made a view parameter (`frames` in the
+view parameters). Compare groups frames by length — a nine-byte message and a twelve-byte
+one are two message types, and diffing them marks everything — lines each group up at bit 0,
+dims the columns that never change, and reads a dragged-out field from every frame, saying
+when it counts up by a fixed step. Bits or hex; frames that fail their CRC can be hidden.
+
+**The framer's result carries `frames`**: each one as a string of bits, through its CRC and
+no further, or a slicer's whole burst when nothing trimmed it, since packing to bytes drops a
+trailing part-byte. Runs in the engine both builds share, so the server sends the same frames
+(a parity test says so).
+
+**Found on the way: the framer's list had been broken since 75b016a.** Its records carry `at`
+as text ("1.234 s", "bit 96") and the Events pane called `toFixed` on it, so any framer with
+a frame in it sat on "running Frames…" forever. Fixed in the same change.
+
+Next, if this earns its keep: names for fields, kept on the node and written into SigMF
+annotations (ADR-0007, M6's open item); aligning on a sync word rather than bit 0. On a phone a
+sideways drag on the grid selects rather than scrolls; the row labels scroll it.
 
 ## Loose ends
 
