@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { MockEngine, OPS } from '../src/engine.js';
 import { Capture } from '../src/capture.js';
 import { crc, crcById, bytesOfHex } from '../src/frames.js';
+import { columns, field, FIXED, VARIES } from '../src/compare.js';
 
 const RATE = 200_000, SYMBOL_US = 500, CENTER = 433_920_000;
 
@@ -167,6 +168,23 @@ test('a CRC that validates nothing is reported as validating nothing', async () 
     assert.ok(!derived.auto.confident || /nothing in the catalog/.test(derived.auto.from),
       `should not claim a CRC for arbitrary boundaries: ${derived.auto.from}`);
   }
+});
+
+test('the framer hands its frames on as bits, and comparing them finds the counter', async () => {
+  const spec = crcById('crc16-ccitt-false');
+  const payloads = [0, 1, 2, 3, 4].map((c) => [0x5a, 0x17, c, 0x40]);
+  const cap = transmit(payloads, { spec });
+  const { e, made } = await chain(cap, ['core.am_envelope', 'core.manchester', 'core.framer']);
+  await e.setParam(made[2].id, 'syncHex', '2dd4');
+  const out = await e.runRecords(made[2].id, 0.05);
+
+  assert.equal(out.frames.length, payloads.length);
+  // body and CRC, without the dead air after it
+  for (const f of out.frames) { assert.equal(f.bits.length, 48); assert.equal(f.ok, true); }
+
+  const states = columns(out.frames.map((f) => f.bits), 8);
+  assert.deepEqual([...states], [FIXED, FIXED, VARIES, FIXED, VARIES, VARIES]);
+  assert.equal(field(out.frames.map((f) => f.bits), 16, 24).step, 1n);
 });
 
 test('differential sits on bytes and hands bytes on', async () => {

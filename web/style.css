@@ -254,7 +254,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 /* Events. The count is the headline because a decoder can return many records from
    one packet, and a view that hides that turns six messages into one. */
 .evwrap { display:flex; flex-direction:column; gap:.6rem; }
-.evhead { display:flex; align-items:baseline; gap:.5rem; }
+.evhead { display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap; }
 .evhead b { font-size:1.05rem; color:var(--bright); }
 .evhead span { font-size:.72rem; color:var(--dim); font-family:var(--mono); }
 .evhead .exgo { margin-left:auto; }
@@ -731,6 +731,41 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   width:1px; background:var(--accent);
 }
 .bits-foot { margin-top:.8rem; font-family:var(--mono); font-size:.64rem; color:var(--dim); }
+
+/* ── compare: a framer's frames lined up, the columns that change bright ── */
+.seg { display:inline-flex; border:1px solid var(--rule); border-radius:5px; overflow:hidden; }
+.seg button { padding:.22rem .6rem; font-size:.7rem; font-family:var(--mono); color:var(--dim); background:none; }
+.seg button + button { border-left:1px solid var(--rule); }
+.seg button.on { color:var(--bright); background:var(--view-lo); }
+.evshow { margin-left:auto; }
+.evshow + .exgo { margin-left:0; }
+.cmpbar { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; font-size:.72rem; color:var(--dim); }
+.cmpbar label { display:inline-flex; align-items:center; gap:.3rem; }
+.cmpsum { font-family:var(--mono); font-size:.68rem; }
+.cmpfield { font-family:var(--mono); font-size:.68rem; color:var(--dim); min-height:1.4em; }
+.cmpfield u { color:var(--ok); text-decoration:none; }
+.cmpclr { margin-left:.4rem; font-family:var(--mono); font-size:.64rem; color:var(--accent); background:none; }
+.cmpgrid { overflow-x:auto; }
+.cmptable { border-collapse:collapse; font-family:var(--mono); font-size:.68rem; }
+.cmptable th { text-align:left; font-size:.56rem; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--dim); font-weight:500; padding:0 .8rem .35rem 0; border-bottom:1px solid var(--rule); white-space:nowrap; }
+.cmptable td { padding:.12rem .8rem .12rem 0; white-space:nowrap; vertical-align:middle; }
+.cn, .ct { color:var(--dim); font-variant-numeric:tabular-nums; text-align:right; }
+.ck.ok { color:var(--ok); } .ck.bad { color:var(--crit); }
+.cv { color:var(--bright); } .cv s { text-decoration:none; color:var(--dim); margin-left:.3rem; }
+.cmpcells { display:inline-flex; gap:1px; font-size:.68rem; letter-spacing:0; touch-action:pan-y; user-select:none; cursor:crosshair; }
+.cmpcells i { width:7px; height:13px; border-radius:1px; }
+.cmpcells i.one { background:var(--ok); }
+.cmpcells i.zero { background:var(--rule-lo); box-shadow:inset 0 0 0 1px var(--rule); }
+.cmpcells b { min-width:1.7em; text-align:center; font-weight:400; color:var(--bright); }
+.cmpcells .brk { margin-right:5px; }
+.cmpcells .f:not(.st) { opacity:.22; }
+.cmpcells .m:not(.st) { opacity:.5; }
+.cmpcells .st { height:5px; border-radius:1px; background:var(--rule); }
+.cmpcells .st.v { background:var(--view); }
+.cmpcells .st.m { background:var(--warn); }
+.cmpcells .pick { outline:1px solid var(--accent); outline-offset:0; }
+.cmpcells .st.pick { background:var(--accent); outline:0; }
 
 /* ── time pane: a latched display says so ── */
 .tstage { position:relative; flex:1; min-height:0; background:var(--stage); }

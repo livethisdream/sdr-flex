@@ -7,6 +7,8 @@
 // app derives from the active colormap. The time-series has no colormap, so it draws
 // on `--stage` in `--trace`, which follow the theme.
 
+import * as cmp from './compare.js';
+
 function css(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
@@ -197,4 +199,121 @@ export class BitRaster {
       <div class="bits-foot">One row per burst, newest first · ${symbolUs ? symbolUs + ' µs/symbol' : ''}
         · the tick after bit 16 marks the end of the preamble</div>`;
   }
+}
+
+/**
+ * Frames lined up at their first bit, with the columns that never change dimmed.
+ *
+ * One group of same-length frames at a time (compare.js says why). Dragging across columns
+ * picks a field, and its value in every frame appears at the end of that frame's row,
+ * which is where a counter or an ID is read off. Holds its own choices — group, bits or
+ * hex, the field — so a redraw while the capture plays does not throw them away; a
+ * different node starts over.
+ */
+export class FrameCompare {
+  constructor() { this.node = null; }
+
+  draw(el, frames, nodeId) {
+    if (this.node !== nodeId) {
+      this.node = nodeId;
+      Object.assign(this, { group: 0, unit: 1, hideBad: false, sel: null });
+    }
+    this.el = el; this.frames = frames;
+    const anyBad = frames.some((f) => f.ok === false);
+    const shown = frames.map((f, i) => ({ ...f, i })).filter((f) => !(this.hideBad && f.ok === false));
+    const groups = cmp.groupByLength(shown);
+    if (this.group >= groups.length) this.group = 0;
+    const g = groups[this.group];
+    if (!g) { el.innerHTML = '<div class="empty">No frames left to compare.</div>'; return; }
+
+    const LIMIT = 128;
+    const members = g.members.map((k) => shown[k]);
+    const rows = members.map((f) => f.bits);
+    const states = cmp.columns(rows, this.unit);
+    const nVary = states.filter((s) => s === cmp.VARIES).length;
+    const sel = this.sel && this.sel.to * this.unit <= g.length ? this.sel : null;
+    const fld = sel ? cmp.field(rows, sel.from * this.unit, sel.to * this.unit) : null;
+    const STATE = ['f', 'v', 'm'];
+
+    const cls = (c) => STATE[states[c]] + (sel && c >= sel.from && c < sel.to ? ' pick' : '') +
+      (this.unit === 1 && c % 8 === 7 ? ' brk' : '');
+    const cell = (r, c) => {
+      if (this.unit === 1) return `<i class="${r[c] === '1' ? 'one' : 'zero'} ${cls(c)}" data-c="${c}"></i>`;
+      const byte = r.slice(c * 8, c * 8 + 8);
+      const txt = byte.length === 8 ? parseInt(byte, 2).toString(16).padStart(2, '0') : '··';
+      return `<b class="${cls(c)}" data-c="${c}">${txt}</b>`;
+    };
+    // The key above the grid: one mark per column, saying what that column does.
+    const strip = Array.from(states, (_, c) =>
+      `<${this.unit === 1 ? 'i' : 'b'} class="st ${cls(c)}" data-c="${c}"></${this.unit === 1 ? 'i' : 'b'}>`).join('');
+    const body = members.slice(0, LIMIT).map((f, k) => {
+      const v = fld ? fld.values[k] : null;
+      return `<tr>
+        <td class="cn">${f.i + 1}</td>
+        <td class="ct">${f.at || ''}</td>
+        <td class="ck ${f.ok === false ? 'bad' : f.ok ? 'ok' : ''}">${f.ok === false ? '✕' : f.ok ? '✓' : ''}</td>
+        <td class="cr"><span class="cmpcells">${Array.from({ length: states.length }, (_, c) => cell(f.bits, c)).join('')}</span></td>
+        ${fld ? `<td class="cv">${v == null ? '' : `${cmp.hexOf(v, fld.width)} <s>${fld.width <= 53 ? v : ''}</s>`}</td>` : ''}
+      </tr>`;
+    }).join('');
+
+    const fieldNote = fld
+      ? `${this.unit === 1 ? 'bits' : 'bytes'} ${sel.from}–${sel.to - 1} · ${fld.width} bits` +
+        (fld.step != null ? ` · <u>counts up by ${fld.step} each frame</u>` : '') +
+        ' <button class="cmpclr" data-act="clear">clear</button>'
+      : 'drag across columns to read a field out of every frame';
+
+    el.innerHTML = `
+      <div class="cmpbar">
+        ${groups.length > 1 ? `<span class="seg">${groups.map((gg, k) =>
+          `<button data-act="group" data-k="${k}" class="${k === this.group ? 'on' : ''}">${gg.members.length} × ${gg.length} b</button>`).join('')}</span>` : ''}
+        <span class="seg"><button data-act="unit" data-k="1" class="${this.unit === 1 ? 'on' : ''}">bits</button><button data-act="unit" data-k="8" class="${this.unit === 8 ? 'on' : ''}">hex</button></span>
+        ${anyBad ? `<label><input type="checkbox" data-act="bad" ${this.hideBad ? 'checked' : ''}> hide failed CRC</label>` : ''}
+        <span class="cmpsum">${members.length} frames · ${g.length} bits · ${nVary} of ${states.length} ${this.unit === 1 ? 'bits' : 'bytes'} change</span>
+      </div>
+      <div class="cmpfield">${fieldNote}</div>
+      <div class="cmpgrid"><table class="cmptable">
+        <thead><tr><th>#</th><th>at</th><th></th><th><span class="cmpcells">${strip}</span></th>${fld ? '<th>field</th>' : ''}</tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>
+      <div class="bits-foot">Bright columns change between frames; dim ones never do
+        ${members.length > LIMIT ? ` · showing the first ${LIMIT} of ${members.length}` : ''}</div>`;
+    this.wire();
+  }
+
+  wire() {
+    const el = this.el;
+    el.querySelectorAll('[data-act]').forEach((b) => b.addEventListener(b.type === 'checkbox' ? 'change' : 'click', () => {
+      const act = b.dataset.act;
+      if (act === 'group') { this.group = +b.dataset.k; this.sel = null; }
+      if (act === 'unit') { const u = +b.dataset.k; if (u !== this.unit) { this.unit = u; this.sel = null; } }
+      if (act === 'bad') { this.hideBad = b.checked; this.group = 0; this.sel = null; }
+      if (act === 'clear') this.sel = null;
+      this.redraw();
+    }));
+    // Pointer events rather than mouse, so a finger drags a field out too.
+    const grid = el.querySelector('.cmptable');
+    if (!grid) return;
+    let from = null;
+    const col = (e) => {
+      const t = document.elementFromPoint(e.clientX, e.clientY);
+      return t && t.dataset && t.dataset.c != null ? +t.dataset.c : null;
+    };
+    grid.addEventListener('pointerdown', (e) => {
+      const c = col(e);
+      if (c == null) return;
+      from = c;
+      grid.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    grid.addEventListener('pointerup', (e) => {
+      if (from == null) return;
+      const c = col(e) ?? from;
+      this.sel = { from: Math.min(from, c), to: Math.max(from, c) + 1 };
+      from = null;
+      this.redraw();
+    });
+  }
+
+  redraw() { this.draw(this.el, this.frames, this.node); }
 }

@@ -7,7 +7,7 @@ import { dragBand } from './band.js';
 import { MockEngine, OPS, LATENCY, demodsFor, cleanName } from './engine.js';
 import { RemoteEngine } from './remote.js';
 import { Waterfall } from './waterfall.js';
-import { SpectrumTrace, TimeSeries, BitRaster } from './views.js';
+import { SpectrumTrace, TimeSeries, BitRaster, FrameCompare } from './views.js';
 import { ContextMenu } from './menu.js';
 import { IdentifyPanel } from './identview.js';
 import { plan as identifyPlan, runPlugins } from './identify.js';
@@ -130,6 +130,8 @@ const defaultViewParams = () => ({
   // `both`, not `time`: on a phone the waveform alone left the spectrum behind a
   // gesture, and on wideband FM the spectrum is the answer (ADR-0036).
   domain: 'both', channel: 'sum',
+  // A framer's records, one per line, or its frames lined up to find what changes.
+  frames: 'list',
   zoomLo: 0, zoomHi: 1,
 });
 
@@ -192,6 +194,7 @@ class App {
     this.trace = new SpectrumTrace($('#sp'));
     this.timeSeries = new TimeSeries($('#ts'));
     this.bitRaster = new BitRaster($('#bits'));
+    this.frameCompare = new FrameCompare();
     this.mixer = new AudioMixer();
     this._rowAcc = 0;
     this._tmax = 0;                       // the furthest the session has played to
@@ -3352,6 +3355,8 @@ class App {
     // The line a streamed decoder is still printing is a record too — for Morse it is the only
     // one for a while — so it is counted, and said to be unfinished.
     const total = r.records.length + (r.partial ? 1 : 0);
+    const canCompare = !!(r.frames && r.frames.length);
+    const comparing = canCompare && this.vp(n.id).frames === 'compare';
     const rows = r.records.map((rec, i) => {
       // `at` is the block a streamed record came out of, and it is a fact about the
       // capture rather than a field the decoder returned — so it is drawn as the
@@ -3362,7 +3367,10 @@ class App {
         ? `<span class="evk">time</span> ${rec.fromS}${rec.toS != null ? `–${rec.toS}` : ''} s` : '';
       const extra = [span, ...Object.entries(rec).filter(([k]) => !['text', 'at', 'fromS', 'toS'].includes(k))
         .map(([k, v]) => `<span class="evk">${k}</span> ${v}`)].filter(Boolean).join(' ');
-      const when = rec.at != null
+      // A framer's `at` is already words — "1.234 s", or "bit 96" in a byte stream with no
+      // clock — and is shown as it came.
+      const when = typeof rec.at === 'string' ? `<span class="evat">${rec.at}</span>`
+        : rec.at != null
         ? `<span class="evat" title="${r.continuous ? 'when it was heard' : `the ${r.block || STREAM_BLOCK_S} s block it came from`}">${
             rec.at.toFixed(r.continuous ? 1 : 0)}s</span>` : '';
       return `<li><i>${i + 1}</i>${when}<span class="evt">${(rec.text ?? JSON.stringify(rec))
@@ -3373,16 +3381,22 @@ class App {
         <div class="evhead">
           <b>${total} record${total === 1 ? '' : 's'}${r.partial ? ', the last still arriving' : ''}</b>
           <span>${r.note || n.label}${r.ms != null ? ` · ${r.ms.toFixed(0)} ms` : ''}</span>
+          ${canCompare ? `<span class="seg evshow"><button data-show="list" class="${comparing ? '' : 'on'}">list</button><button data-show="compare" class="${comparing ? 'on' : ''}">compare</button></span>` : ''}
           <button class="exgo" id="evrun">Run again</button>
         </div>
         ${r.error ? `<div class="everr">${r.error}</div>` : ''}
-        ${r.records.length || r.partial ? `<ol class="evlist">${rows}${r.partial
+        ${comparing ? '<div id="cmpwrap"></div>' : r.records.length || r.partial ? `<ol class="evlist">${rows}${r.partial
             ? `<li class="evpartial" title="still arriving"><i>…</i><span class="evt">${r.partial
               .replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span></li>` : ''}</ol>`
           : streaming || (this.engine.playing && n.adapter)
             ? '<div class="empty">listening — records appear as the playhead crosses them</div>'
             : this.renderNoDecode(r, n)}
       </div>`;
+    if (comparing) this.frameCompare.draw($('#cmpwrap'), r.frames, n.id);
+    el.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', () => {
+      this.vp(n.id).frames = b.dataset.show;
+      this.renderEvents();
+    }));
     const btn = $('#evrun');
     if (btn) btn.addEventListener('click', () => {
       n._records = null; n._blocks = null; n._readTo = 0; this.renderEvents(true);

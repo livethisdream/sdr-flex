@@ -12,6 +12,7 @@ import { plan as identifyPlan, MIN_DECODE_CHARS, textLength, say } from './ident
 import { Graph, inputsOf, LIVE_LAG_S } from './graph.js';
 import { alignment } from './delay.js';
 import * as frames from './frames.js';
+import * as compare from './compare.js';
 import * as spreading from './codes.js';
 
 /**
@@ -1118,7 +1119,7 @@ export class MockEngine extends Graph {
       }
       const msb = true;
       found = bursts.groups.map((g, i) => ({
-        at: i, bit: 0, bytes: dsp.packBits(g.bits, { msbFirst: msb }).bytes, t: g.t,
+        at: i, bit: 0, bytes: dsp.packBits(g.bits, { msbFirst: msb }).bytes, t: g.t, burst: g.bits,
       })).filter((f) => f.bytes.length);
       if (!found.length) {
         return { records: [], ms: performance.now() - t0,
@@ -1177,9 +1178,21 @@ export class MockEngine extends Graph {
       return rec;
     });
 
+    // The same frames as bits, for comparing them. Through the CRC and no further, so the
+    // dead air after a packet is not mistaken for a field; and a slicer's whole burst when
+    // nothing trimmed it, because packing to bytes drops a trailing part-byte that may be
+    // the last bit of a field.
+    const asBits = found.map((f, i) => {
+      const chk = frames.checkFrame(f.bytes, spec, spec && spec.lengths ? spec.lengths[i] : 0);
+      const bits = chk.checked
+        ? compare.bitsOfBytes(f.bytes.subarray(0, chk.bodyEnd + chk.width / 8))
+        : f.burst ? f.burst.join('') : compare.bitsOfBytes(f.bytes);
+      return { bits, ok: chk.checked ? chk.ok : null, at: records[i].at };
+    });
+
     const good = spec ? records.filter((r) => /^ok/.test(r.crc || '')).length : 0;
     return {
-      records, ms: performance.now() - t0,
+      records, frames: asBits, ms: performance.now() - t0,
       note: spec
         ? `${good} of ${records.length} pass ${spec.name}`
         : `${records.length} frames, no CRC identified`,
