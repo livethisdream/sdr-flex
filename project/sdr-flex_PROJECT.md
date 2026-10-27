@@ -897,16 +897,15 @@ house rule.
 ## Both axes at once, as built
 
 `domain: both` on any `real` node draws the waveform and the baseband spectrum together
-— side by side above 900px, stacked below it. ADR-0036 ruled out three ways to give a
+— stacked, the waveform under the waterfall, at every width (2026-10-27: side by side above
+900px was reverted on request). ADR-0036 ruled out three ways to give a
 real stream two readings: a WBFM node, a `Spectrum of` node, and a second tab. Showing
 both at once was not among them, and it contradicts none of them: still one node, one
 tab, one set of samples, drawn against two independent variables instead of one, which
 is what that ADR's own closing line describes.
 
 No third pane. The two existing panes stop being `position:absolute` and share the
-space, so there is no second waterfall or second scope to keep in step. Side by side is
-preferred over stacked because the two are read against different axes and stacking
-halves the waterfall, which is the one that needs the pixels.
+space, so there is no second waterfall or second scope to keep in step.
 
 **Two regressions it caused, found by driving it rather than by looking at it.** Five
 places asked `view() === 'Spectrum'`, and in `both` the view is `Both`:

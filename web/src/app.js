@@ -1070,7 +1070,7 @@ class App {
     const v = this.view();
     // `Both` is the two panes at once rather than a third pane duplicating either, so
     // nothing here has a second copy of a waterfall or a scope to keep in step. The
-    // panes stack or sit side by side — `.panes.split` decides which, on width — and
+    // panes stack, the waveform under the waterfall (`.panes.split`), and
     // everything inside them is what it already was.
     const both = v === 'Both';
     $('#panes').classList.toggle('split', both);
