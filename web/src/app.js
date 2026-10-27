@@ -127,9 +127,8 @@ const defaultViewParams = () => ({
   // default and one of them used to disagree.
   dbMin: -74, dbMax: -18, dbAuto: true, colormap: DEFAULT_COLORMAP, speed: 60,
   trigger: 'auto', spanS: 0.12,
-  // `both`, not `time`: on a phone the waveform alone left the spectrum behind a
-  // gesture, and on wideband FM the spectrum is the answer (ADR-0036).
-  domain: 'both', channel: 'sum',
+  // A demodulator opens on its baseband spectrum; `time` and `both` are a choice away.
+  domain: 'frequency', channel: 'sum',
   // A framer's records, one per line, or its frames lined up to find what changes.
   frames: 'list',
   zoomLo: 0, zoomHi: 1,

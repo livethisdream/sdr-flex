@@ -898,7 +898,7 @@ house rule.
 
 `domain: both` on any `real` node draws the waveform and the baseband spectrum together
 — stacked, the waveform under the waterfall, at every width (2026-10-27: side by side above
-900px was reverted on request). ADR-0036 ruled out three ways to give a
+900px was reverted on request). It is no longer the default: a demodulator opens on `frequency`. ADR-0036 ruled out three ways to give a
 real stream two readings: a WBFM node, a `Spectrum of` node, and a second tab. Showing
 both at once was not among them, and it contradicts none of them: still one node, one
 tab, one set of samples, drawn against two independent variables instead of one, which
