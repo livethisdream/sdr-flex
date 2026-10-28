@@ -127,9 +127,8 @@ const defaultViewParams = () => ({
   // default and one of them used to disagree.
   dbMin: -74, dbMax: -18, dbAuto: true, colormap: DEFAULT_COLORMAP, speed: 60,
   trigger: 'auto', spanS: 0.12,
-  // `both`, not `time`: on a phone the waveform alone left the spectrum behind a
-  // gesture, and on wideband FM the spectrum is the answer (ADR-0036).
-  domain: 'both', channel: 'sum',
+  // A demodulator opens on its baseband spectrum; `time` and `both` are a choice away.
+  domain: 'frequency', channel: 'sum',
   // A framer's records, one per line, or its frames lined up to find what changes.
   frames: 'list',
   zoomLo: 0, zoomHi: 1,
@@ -1070,7 +1069,7 @@ class App {
     const v = this.view();
     // `Both` is the two panes at once rather than a third pane duplicating either, so
     // nothing here has a second copy of a waterfall or a scope to keep in step. The
-    // panes stack or sit side by side — `.panes.split` decides which, on width — and
+    // panes stack, the waveform under the waterfall (`.panes.split`), and
     // everything inside them is what it already was.
     const both = v === 'Both';
     $('#panes').classList.toggle('split', both);
