@@ -105,6 +105,8 @@ export class RemoteEngine extends Graph {
           this.adapters = hello.adapterTable || [];
           // And the recipes on the box (ADR-0043), for the same menu.
           this.recipes = hello.recipes || [];
+          // Present only when the box has an API key (ADR-0022).
+          this.assistant = hello.assistant || null;
           resolve(hello);
         } catch (e) { reject(e); }
       };
@@ -423,6 +425,13 @@ export class RemoteEngine extends Graph {
     if (n && r) n._grid = r.grid;
     return r ? r.grid : null;
   }
+
+  /** A question for the assistant, answered on the box; `onStep` hears each tool it runs. */
+  async ask(question, { nodeId = null, at = null, onStep = null } = {}) {
+    return await this.call('ask', { question, nodeId, at }, onStep);
+  }
+
+  async askReset() { return await this.call('askReset', {}); }
 
   async runRecords(nodeId, at) {
     const n = this.node(nodeId);

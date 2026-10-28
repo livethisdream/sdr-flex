@@ -1,10 +1,9 @@
 # The engine, and the client it serves.
 #
-# There is no build step and no dependency install, because there are no dependencies:
-# the client is ES modules the browser loads as they are, and the server is Node's own
-# http, net and crypto. So the image is a Node base plus this repository, it builds in
-# seconds offline, and there is no third party in the path between a capture on the box
-# and the person looking at it.
+# There is no build step: the client is ES modules the browser loads as they are, and the
+# server is Node's own http, net and crypto. The one dependency is the Anthropic SDK, for
+# the optional assistant (ADR-0022), pinned by server/package-lock.json; the server runs
+# without it and only reaches for it when a box has an API key.
 
 FROM node:22-alpine
 
@@ -13,6 +12,7 @@ WORKDIR /app
 
 COPY web ./web
 COPY server ./server
+RUN cd server && npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY recipes ./recipes
 COPY grc ./grc
 

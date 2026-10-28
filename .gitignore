@@ -6,3 +6,6 @@ __pycache__/
 
 # the hosted copy's examples, copied from fixtures/ at deploy time
 web/examples/
+
+# the server's one dependency, installed by `npm ci` in server/
+node_modules/

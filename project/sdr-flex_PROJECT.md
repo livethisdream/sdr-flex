@@ -10,7 +10,7 @@ it is the first file to read and does not have to be found.
 
 Update it at the end of a session, not the start of the next one.
 
-**Last updated:** 2026-10-22 (frames can be compared, URH-style, on any framer; out to other people: the hosted copy opens real example captures, and the full image is published, public, at `ghcr.io/livethisdream/sdr-flex`; the server finds GNU Radio on its own and uses any installation, checked with radioconda)
+**Last updated:** 2026-10-27 (an assistant on the box answers questions about what is on screen; frames can be compared, URH-style, on any framer; out to other people: the hosted copy opens real example captures, and the full image is published, public, at `ghcr.io/livethisdream/sdr-flex`; the server finds GNU Radio on its own and uses any installation, checked with radioconda)
 
 Previous: 2026-10-18 (the first real radio: a Pluto on a TX1→RX1 loopback. Two driver bugs the mock hid, fixed; the spectrum read 6 dB low under Hann, fixed on its own branch; how to run the whole suite)
 
@@ -1856,6 +1856,35 @@ the reader to know that it builds local files. There is an *Updating* section no
 the two failure shapes side by side and `docker compose ps` as the tell — a container's
 uptime is the one indicator that works on every version, including the ones too old to
 have `/version`.
+
+## The assistant, step one (2026-10-27)
+
+Asked as "a little agent that uses some of my API tokens, for helping with analysis".
+ADR-0022 had designed it and deferred it. Built in three steps by agreement, of which this
+is the first: **questions only**. It reads and changes nothing; building chains for you and
+"do that to the other three bursts" are steps two and three, once questions have earned it.
+
+- **On the box only.** `ANTHROPIC_API_KEY` in the server's environment turns it on, and
+  `hello` says so; the hosted copy never has one, because a key in a page is public. On
+  hermes the key lives in `assistant.env` beside the compose file, mode 600, git-excluded,
+  given to the container by `env_file:` in the local override.
+- **Five tools, all the engine's own reads:** `describe_session` (chain, parameters, the
+  evidence for derived ones), `spectrum_peaks` (averaged over a span, median floor),
+  `read_records`, `compare_frames` (the Compare view as data, counters called out),
+  `identify`. Summaries only; no samples leave the box.
+- **Claude Opus 5.5 at effort medium**, with `fallbacks: "default"` so a cyber-category
+  decline is rerun rather than returned. A question stops after eight rounds of tools or
+  $0.50 (`SDRFLEX_ASSISTANT_MAX_USD`); every answer shows its cost and the panel a total.
+- **The project's first dependency**: `@anthropic-ai/sdk`, pinned to 0.133.0 (the 1.x line
+  was six days old) in `server/package.json` with a lockfile. Loaded on first question,
+  so a clone without `npm ci` runs as before. Both images install it; `Dockerfile.full` in
+  a `deps` stage so npm stays out of the final image.
+- **The panel** floats like Identify's (docs/08 rules out a pinned one): `i`, or **Ask…**
+  under Identify in the menu, which now takes more than one leading row.
+
+Tested without spending: the tools against the Manchester fixture, the loop against a
+scripted model (tool errors, refusals, the spend stop), and the page against the real
+server with the SDK pointed at a local stand-in API.
 
 ## Comparing frames, as built (2026-10-22)
 

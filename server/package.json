@@ -1,0 +1,9 @@
+{
+  "name": "sdr-flex-server",
+  "private": true,
+  "type": "module",
+  "description": "The SDR Flex server's one dependency: the Anthropic SDK, for the optional assistant.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.133.0"
+  }
+}

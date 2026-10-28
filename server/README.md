@@ -16,8 +16,10 @@ It prints the address it bound to and why, how many captures it found, and how m
 decoders. If it says `no tailnet found — loopback only`, that is the safe default doing
 its job, not a failure.
 
-No install step. There are no dependencies — the client is ES modules the browser loads
-as they are, and the server is Node's own `http`, `net` and `crypto`. Node 22 or newer.
+No install step for the tool itself — the client is ES modules the browser loads as they
+are, and the server is Node's own `http`, `net` and `crypto`. Node 22 or newer. The one
+dependency is the Anthropic SDK, for the optional [assistant](#the-assistant); `npm ci` in
+`server/` installs it, and without it the server runs exactly as before.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -30,6 +32,28 @@ as they are, and the server is Node's own `http`, `net` and `crypto`. Node 22 or
 | `SDRFLEX_SESSIONS` | `<captures>/.sessions` | Saved sessions. Inside the capture directory because that is the directory you mounted — one beside the source tree is one a rebuild deletes. No capture directory, no sessions |
 | `SDRFLEX_ENGINE` | found at startup | `gnuradio` requires GNU Radio and stops with the reason if there is none. Any other value, such as `js`, runs the built-in JavaScript engine. Unset, GNU Radio is used when it is found |
 | `SDRFLEX_GR_PYTHON` | `python3`, then radioconda's | The Python that has GNU Radio. Any installation works, because the server starts that Python rather than linking against GNU Radio |
+| `ANTHROPIC_API_KEY` | unset | Turns on the [assistant](#the-assistant). Unset, there is none |
+| `SDRFLEX_ASSISTANT_MODEL` | `claude-opus-5-5` | The model it asks |
+| `SDRFLEX_ASSISTANT_MAX_USD` | `0.5` | One question stops looking once it has cost this much |
+
+## The assistant
+
+With `ANTHROPIC_API_KEY` set, the menu gains **Ask…** (key `i`): a question about what is
+on screen, answered by Claude using the tool's own readings — the chain and its derived
+parameters, spectrum peaks, a decoder's records, frames compared, Identify. It reads and
+does not change anything ([ADR-0022](../docs/adr/0022-conversational-control.md)).
+
+- **The key stays on the box.** The page never sees it, and the hosted copy has no
+  assistant. Keep it in a file only you can read, given to the container with
+  `env_file:`, and out of git.
+- **What leaves the box** is what the tools return: peak frequencies and levels, decoded
+  text, frames as hex, parameter values. Never samples. Do not ask about a capture whose
+  contents should not leave the box.
+- **Anything that can reach the port can spend the key.** So run it only behind a login,
+  or on a tailnet that is only you. Each answer shows what it cost, the panel keeps a
+  running total, and one question stops at `SDRFLEX_ASSISTANT_MAX_USD`.
+- Decoded text came off the air, and the model is told it is data, not instructions. In
+  this read-only step the worst a hostile transmission can do is mislead the answer.
 
 ## In a container, on a tailnet
 
@@ -680,6 +704,8 @@ Two things follow that are worth knowing:
   the capture programs above and writing a ring to disk. The driver list is fixed and
   the arguments are built here rather than passed through, so this is not a way to run
   arbitrary commands — but it is a way to use up a dongle and some disk.
+- **Anything that can reach the port can spend the assistant's API key**, when the box has
+  one. See [The assistant](#the-assistant).
 - **Anything that can reach the port can read, write and delete saved sessions.** This is
   the only thing the server writes on a client's behalf, so it is worth knowing what it
   is bounded by: one `.json` per session in `SDRFLEX_SESSIONS` and nowhere else, ids that

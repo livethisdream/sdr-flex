@@ -20,6 +20,7 @@ import { Radio, list as listDrivers } from './radio.js';
 import * as adapters from './adapters.js';
 import { version } from './version.js';
 import { StreamOut } from './streamout.js';
+import * as assistant from './assistant.js';
 import { GrPool, PRIORITY } from './gr/pool.js';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { GrEngine } from './gr/engine.js';
@@ -206,6 +207,8 @@ export const METHODS = {
     const table = adapters.list();
     return { protocol: PROTOCOL, engine: 'node', captures: !!this.library, radios: true,
              plugins: !!this.pluginDir, sessions: !!this.sessions,
+             // Whether this box has an Anthropic API key, and so an assistant (ADR-0022).
+             assistant: assistant.available() ? { model: assistant.MODEL } : null,
              // Which build answered. The page is served by this same process, so this is
              // the version of the client too — one number, not two that can disagree.
              version: version(),
@@ -428,6 +431,36 @@ export const METHODS = {
       onResult: (row) => this._send({ id, t: 'progress', v: row }),
     });
     return r || null;
+  },
+
+  /**
+   * A question for the assistant. Progress is each tool as it starts, so the panel can say
+   * what it is looking at; the reply is the answer and what it cost.
+   */
+  async ask({ question, nodeId = null, at = null }, id) {
+    if (!assistant.available()) throw new Error('this box has no Anthropic API key, so no assistant');
+    if (!this.assistant) {
+      this.assistant = new assistant.Assistant({
+        engine: this.engine, log: this.log,
+        // The same two steps `frames` takes: GNU Radio fetches the blocks, then the read.
+        read: async (nid, opts) => {
+          if (this.engine.prepare) {
+            await this.engine.prepare(nid, opts.at, this.engine.frameSpan(nid, opts), PRIORITY.read);
+          }
+          return this.engine.frame(nid, opts);
+        },
+      });
+    }
+    return await this.assistant.ask(String(question || '').slice(0, 4000), {
+      focus: { nodeId, at },
+      onStep: (s) => this._send({ id, t: 'progress', v: s }),
+    });
+  },
+
+  /** Start the conversation over. What it has cost so far is kept. */
+  async askReset() {
+    if (this.assistant) this.assistant.reset();
+    return { ok: true };
   },
 
   /** Frames and their CRC. A built-in, so it runs where the bytes are. */

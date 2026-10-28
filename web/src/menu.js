@@ -96,7 +96,7 @@ export class ContextMenu {
   }
 
   _render() {
-    const { lead, top, groups, folded, headed } = arrange(this.ops, { filter: this.filter, expanded: this.expanded });
+    const { leads, top, groups, folded, headed } = arrange(this.ops, { filter: this.filter, expanded: this.expanded });
     // A search box over four self-describing items is a control for a problem the
     // list does not have — and on a phone it is a keyboard covering half the screen
     // on the way to a menu. It appears with the headings, or the moment someone
@@ -116,7 +116,7 @@ export class ContextMenu {
       `${o.key && !o.stub ? `<kbd class="ctx-k" title="press ${o.key} to add this">${o.key}</kbd>` : ''}</button>`;
 
     const body =
-      (lead ? item(lead, 'lead') : '') +
+      leads.map((o) => item(o, 'lead')).join('') +
       top.map((o) => item(o)).join('') +
       (folded ? `<button class="ctx-more" data-more="1">more… <span>${folded}</span></button>` : '') +
       groups.map((g) => (headed ? `<div class="ctx-grp">${g.name}</div>` : '') +
@@ -189,9 +189,9 @@ const byRank = (a, b) => rankOf(a) - rankOf(b) || a.name.localeCompare(b.name);
 /**
  * What the menu draws, as data — so the order is testable without a DOM.
  *
- * - `lead` is the one row that is not an operation on the chain (`Identify`). It sits
- *   above everything under no heading, because it is not a kind of step; it is the way to
- *   find out which step you want.
+ * - `leads` are the rows that are not operations on the chain (`Identify`, and `Ask` on a
+ *   box with an assistant); `lead` is the first. They sit above everything under no
+ *   heading, because they are not kinds of step; they are ways to find out which step you want.
  * - `top` is at most six first-tier operations by rank, with no headings: six
  *   self-describing rows do not need labels.
  * - `folded` counts what `more…` would show. Expanded, or when there is nothing worth
@@ -204,7 +204,9 @@ export function arrange(ops, { filter = '', expanded = false } = {}) {
   // find Speech, "aprs" finds direwolf.
   const hit = (o) => !q || [o.name, o.group, o.blurb, o.hint, o.command]
     .some((f) => f && String(f).toLowerCase().includes(q));
-  const leadOp = ops.find((o) => o.lead && hit(o)) || null;
+  // Identify, and Ask where the box has an assistant: ways to find out, not steps.
+  const leads = ops.filter((o) => o.lead && hit(o));
+  const leadOp = leads[0] || null;
   const rest = ops.filter((o) => !o.lead && hit(o)).sort(byRank);
 
   const grouped = (list) => {
@@ -224,12 +226,12 @@ export function arrange(ops, { filter = '', expanded = false } = {}) {
     // Headings are for finding your way in a list too long to read. A heading above two
     // items is a label on a label.
     const headed = !!q && rest.length > 5 && groups.length > 1;
-    return { lead: leadOp, top: [], groups: headed ? groups : [{ name: '', items: rest }], folded: 0, headed };
+    return { lead: leadOp, leads, top: [], groups: headed ? groups : [{ name: '', items: rest }], folded: 0, headed };
   }
 
   const top = rest.filter((o) => rankOf(o) < FIRST_TIER && !o.stub).slice(0, LEAD_ROWS);
   const below = rest.filter((o) => !top.includes(o));
-  if (!expanded) return { lead: leadOp, top, groups: [], folded: below.length, headed: false };
+  if (!expanded) return { lead: leadOp, leads, top, groups: [], folded: below.length, headed: false };
   const groups = grouped(below);
-  return { lead: leadOp, top, groups, folded: 0, headed: groups.length > 1 || below.length > 5 };
+  return { lead: leadOp, leads, top, groups, folded: 0, headed: groups.length > 1 || below.length > 5 };
 }
