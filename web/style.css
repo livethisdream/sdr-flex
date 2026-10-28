@@ -686,15 +686,32 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .idskr { font-size:.68rem; color:var(--faint); line-height:1.45; margin-top:.18rem; }
 .idskr b { color:var(--dim); font-weight:500; }
 
-/* ── Ask: the assistant on the box (ADR-0022), floating like Identify ── */
-.ask {
-  position:fixed; z-index:40; width:min(420px, calc(100vw - 16px)); max-height:min(72vh,640px);
-  display:flex; flex-direction:column;
-  background:var(--panel); border:1px solid var(--rule); border-radius:4px;
-  box-shadow:0 18px 44px -14px var(--shadow-hard); font-size:.78rem;
+/* ── Ask: the assistant on the box (ADR-0022), a pill at the end of the path ── */
+.askstub { margin:0 .55rem; }
+.askpill {
+  flex:none; align-self:center; display:inline-flex; align-items:center; gap:.4rem;
+  padding:.3rem .75rem; font-size:.76rem; color:var(--body); border:1px solid var(--rule);
+  border-radius:999px; background:var(--panel); font-family:inherit;
 }
+.askpill[hidden] { display:none; }
+.askpill .dot { width:6px; height:6px; border-radius:50%; background:var(--accent); }
+.askpill.busy .dot { animation:askbusy 1s ease-in-out infinite alternate; }
+@keyframes askbusy { to { opacity:.2; } }
+.askpill:hover { color:var(--bright); }
+.askpill.on { color:var(--bright); background:var(--accent-lo); border-color:var(--accent-mid); }
+.askpill kbd { font-family:var(--mono); font-size:.6rem; color:var(--faint); }
+/* Dropped from the bar at its right end; --shift is how far it has been dragged left.
+   40vh measured at 37% of the screen with one answer in it, on a desktop and a phone. */
+.ask {
+  position:fixed; z-index:40; right:calc(.9rem + var(--shift, 0px)); width:min(420px, calc(100vw - 16px));
+  max-height:40vh; display:flex; flex-direction:column;
+  background:var(--panel); border:1px solid var(--rule); border-top:2px solid var(--accent-mid);
+  border-radius:0 0 6px 6px; box-shadow:0 18px 44px -14px var(--shadow-hard); font-size:.78rem;
+}
+@media (max-width: 600px) { .ask { left:0; right:0; width:auto; } }
 .ask[hidden] { display:none; }
-.askhead { display:flex; align-items:baseline; gap:.5rem; padding:.5rem .7rem .45rem; border-bottom:1px solid var(--rule); }
+.askhead { display:flex; align-items:baseline; gap:.5rem; padding:.5rem .7rem .45rem; border-bottom:1px solid var(--rule); cursor:grab; }
+@media (max-width: 600px) { .askhead { cursor:auto; } }
 .askhead b { color:var(--bright); font-size:.86rem; }
 .askhead span { margin-left:auto; font-family:var(--mono); font-size:.64rem; color:var(--dim); }
 .asknew { font-family:var(--mono); font-size:.64rem; color:var(--accent); background:none; }

@@ -38,7 +38,8 @@ dependency is the Anthropic SDK, for the optional [assistant](#the-assistant); `
 
 ## The assistant
 
-With `ANTHROPIC_API_KEY` set, the menu gains **Ask…** (key `i`): a question about what is
+With `ANTHROPIC_API_KEY` set, the top bar gains an **Ask** pill (key `i`, or **Ask…** in the
+menu): a question about what is
 on screen, answered by Claude using the tool's own readings — the chain and its derived
 parameters, spectrum peaks, a decoder's records, frames compared, Identify. It reads and
 does not change anything ([ADR-0022](../docs/adr/0022-conversational-control.md)).

@@ -77,6 +77,28 @@ from radioconda. Windows outside WSL has not been tried yet. The external decode
 separate programs, and [server/README.md](server/README.md#decoders) covers installing
 each one.
 
+### With the Assistant
+
+The server can answer questions about what is on screen, using Claude and your own
+Anthropic API key. The key stays on the server, and you pay for what it uses. An answer
+usually costs a few cents, and each one shows its cost.
+
+1. Get a key at [platform.claude.com](https://platform.claude.com), under API keys.
+2. Put it in a file only you can read, and keep that file out of git:
+
+   ```sh
+   echo 'ANTHROPIC_API_KEY=sk-ant-...' > assistant.env
+   chmod 600 assistant.env
+   ```
+
+3. Start the server with it: add `--env-file assistant.env` to the `docker run` above, or
+   `env_file: assistant.env` to the service in Docker Compose.
+
+An **Ask** pill appears at the right end of the top bar. Click it, or press `i`. Anyone who
+can reach the server can spend the key, so run it only on this machine or behind a login.
+[server/README.md](server/README.md#the-assistant) says what leaves the box and how to cap
+the cost of one question.
+
 ## Why another one
 
 | Tool | What it gets right | What we take, what we fix |
