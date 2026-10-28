@@ -189,7 +189,8 @@ class App {
     this.metrics = new Metrics($('#metrics'));
     this.menu = new ContextMenu(document.body);
     this.ident = new IdentifyPanel(document.body);
-    this.asker = new AskPanel(document.body);
+    this.asker = new AskPanel(document.body, $('.path'), $('#askpill'), $('#asksep'));
+    this.asker.onOpen = () => this.openAsk();
     // What "this" means in a question: the step on screen, at the playhead.
     this.asker.onAsk = (question, onStep) => {
       const n = this.node();
@@ -969,9 +970,9 @@ class App {
   /** The assistant is the box's, and only a box with an API key has one (ADR-0022). */
   canAsk() { return !!(this.engine && this.engine.assistant); }
 
-  openAsk(x, y) {
+  openAsk() {
     if (!this.canAsk()) return;
-    this.asker.open({ x, y }, this.engine.assistant);
+    this.asker.open(this.engine.assistant);
   }
 
   canIdentify() {
@@ -1901,7 +1902,7 @@ class App {
         ? { ...o, recipe: true } : o));
       this.menu.open(x, y, marked.concat(recipes.map((r) => ({ ...r, recipe: true }))), (opId) => {
         if (opId === '__identify') { this.openIdentify(x, y); return; }
-        if (opId === '__ask') { this.openAsk(x, y); return; }
+        if (opId === '__ask') { this.openAsk(); return; }
         if (opId.startsWith('__recipe:')) { this.applyRecipe(opId.slice(9), selection); return; }
         this.applyOp(opId, selection);
       });
@@ -2658,6 +2659,7 @@ class App {
       this.hasLibrary = !!hello.captures;
       this.hasRadios = !!hello.radios;
       this.hasPluginDir = !!hello.plugins;
+      this.asker.available(this.canAsk());
       // Sessions move to the box when the box keeps them, so the work follows you
       // between browsers. Until then they are in this browser, which is also the whole
       // story for a tab with no server (ADR-0042).
@@ -4106,8 +4108,7 @@ class App {
       // the assistant.
       if (e.key === 'i' && this.canAsk() && !this.asker.isOpen) {
         e.preventDefault();
-        const r = $('#stage').getBoundingClientRect();
-        this.openAsk(r.right - 440, r.top + 60);
+        this.openAsk();
       }
       if (e.key === '=' || e.key === '+') { e.preventDefault(); this.zoomKey(1 / 1.4); }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); this.zoomKey(1.4); }

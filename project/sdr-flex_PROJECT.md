@@ -931,6 +931,15 @@ consecutive parallel runs afterwards: 450 passing in 28–33 s each.
 
 ## Wanted later
 
+- **An inspectrum-style whole-signal view (asked 2026-10-27, needs planning).** The whole
+  capture at once as one long spectrogram you pan along, rather than a waterfall scrolling
+  past a playhead; then select a region and take it back to the time domain (inverse FFT,
+  filtered to the selection) to look at the waveform and symbols. docs/07-reuse.md already
+  names inspectrum's cursor and symbol-period tool as the best in the field. Plan before
+  building: how it relates to the waterfall and the playhead (ADR-0020, ADR-0029), whether
+  a selection there is the same selection as a box on the waterfall (ADR-0002), and what the
+  GNU Radio engine computes for a capture longer than memory holds.
+
 - **A default signal that decodes to something real (asked 2026-10-14).** The synthetic scene
   a new session opens on decodes to nothing meaningful, which teaches nobody anything. Replace
   it with one whose decoders return real messages. Later, drop the default altogether and open
@@ -1881,6 +1890,15 @@ is the first: **questions only**. It reads and changes nothing; building chains 
   a `deps` stage so npm stays out of the final image.
 - **The panel** floats like Identify's (docs/08 rules out a pinned one): `i`, or **Ask…**
   under Identify in the menu, which now takes more than one leading row.
+- **Moved to a pill in the top bar (2026-10-28).** On a phone the floating box was the
+  whole screen, so reading an answer and acting on it could not happen together. Asked for
+  "at the top. Like a tuner or something, but in its own space", and mocked up first. The
+  pill sits at the end of the path after a rule, appears only when `hello` has an
+  assistant, and pulses while a question runs. The panel drops from the bar's right end at
+  40vh (measured 37% of the screen with one answer, desktop and phone), full width on a
+  phone, drags sideways by its head on a desktop, and folds back on Escape, the pill, or
+  any touch outside it, keeping the conversation. `i` and the menu row still open it. The
+  README now has "With the Assistant" for anyone running their own.
 
 Tested without spending: the tools against the Manchester fixture, the loop against a
 scripted model (tool errors, refusals, the spend stop), and the page against the real
