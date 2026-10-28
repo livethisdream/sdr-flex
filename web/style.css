@@ -686,6 +686,33 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .idskr { font-size:.68rem; color:var(--faint); line-height:1.45; margin-top:.18rem; }
 .idskr b { color:var(--dim); font-weight:500; }
 
+/* ── Ask: the assistant on the box (ADR-0022), floating like Identify ── */
+.ask {
+  position:fixed; z-index:40; width:min(420px, calc(100vw - 16px)); max-height:min(72vh,640px);
+  display:flex; flex-direction:column;
+  background:var(--panel); border:1px solid var(--rule); border-radius:4px;
+  box-shadow:0 18px 44px -14px var(--shadow-hard); font-size:.78rem;
+}
+.ask[hidden] { display:none; }
+.askhead { display:flex; align-items:baseline; gap:.5rem; padding:.5rem .7rem .45rem; border-bottom:1px solid var(--rule); }
+.askhead b { color:var(--bright); font-size:.86rem; }
+.askhead span { margin-left:auto; font-family:var(--mono); font-size:.64rem; color:var(--dim); }
+.asknew { font-family:var(--mono); font-size:.64rem; color:var(--accent); background:none; }
+.askintro { padding:.6rem .7rem; color:var(--dim); line-height:1.55; }
+.asklist { list-style:none; margin:0; padding:.3rem 0; overflow-y:auto; flex:1 1 auto; min-height:0; }
+.askq { padding:.4rem .7rem .2rem; color:var(--bright); font-weight:500; }
+.aska { padding:.15rem .7rem .55rem; color:var(--body); line-height:1.55; border-bottom:1px solid var(--rule-lo); }
+.aska p { margin:.3rem 0; }
+.aska code { font-family:var(--mono); font-size:.72rem; color:var(--bright); overflow-wrap:anywhere; }
+.askcost { font-family:var(--mono); font-size:.6rem; color:var(--faint); text-align:right; }
+.askwait { font-family:var(--mono); font-size:.68rem; color:var(--dim); }
+.askerr { font-family:var(--mono); font-size:.68rem; color:var(--crit); }
+.askin { padding:.5rem .7rem .3rem; border-top:1px solid var(--rule); }
+.askin textarea { width:100%; box-sizing:border-box; resize:vertical; font:inherit; color:var(--bright);
+  background:var(--raised); border:1px solid var(--rule); border-radius:4px; padding:.4rem .5rem; }
+.askin textarea:focus { outline:none; border-color:var(--view-mid); }
+.askfoot { padding:0 .7rem .5rem; font-size:.62rem; color:var(--faint); line-height:1.4; }
+
 /* ── tooltip: explanation, never identity (law 11) ── */
 .tip { position:fixed; z-index:50; width:250px; padding:.5rem .62rem; background:var(--raised); border:1px solid var(--rule); border-radius:4px; box-shadow:0 14px 34px -12px var(--shadow-hard); font-size:.73rem; color:var(--dim); line-height:1.5; pointer-events:none; }
 .tip[hidden] { display:none; }

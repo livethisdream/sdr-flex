@@ -1,6 +1,6 @@
 # ADR-0022: Language is a peer client, not a replacement for the GUI
 
-**Status:** Accepted (design); build deferred to M6
+**Status:** Accepted. Step one built 2026-10-27: questions only, read-only tools, on a box with an API key (`server/assistant.js`)
 
 ## Decision
 

@@ -10,6 +10,7 @@ import { Waterfall } from './waterfall.js';
 import { SpectrumTrace, TimeSeries, BitRaster, FrameCompare } from './views.js';
 import { ContextMenu } from './menu.js';
 import { IdentifyPanel } from './identview.js';
+import { AskPanel } from './askview.js';
 import { plan as identifyPlan, runPlugins } from './identify.js';
 import { Strip } from './strip.js';
 import { HOTKEYS, KEY_FOR, opForKey, firstOpNamed } from './keys.js';
@@ -188,6 +189,13 @@ class App {
     this.metrics = new Metrics($('#metrics'));
     this.menu = new ContextMenu(document.body);
     this.ident = new IdentifyPanel(document.body);
+    this.asker = new AskPanel(document.body);
+    // What "this" means in a question: the step on screen, at the playhead.
+    this.asker.onAsk = (question, onStep) => {
+      const n = this.node();
+      return this.engine.ask(question, { nodeId: n ? n.id : null, at: n ? this.engine.effectiveTime(n.id) : null, onStep });
+    };
+    this.asker.onReset = () => this.engine.askReset();
     this.strip = new Strip($('#strip'), $('#tip'));
     this.waterfall = new Waterfall($('#wf'), 260);
     this.trace = new SpectrumTrace($('#sp'));
@@ -958,6 +966,14 @@ class App {
    * find it. Now it opens and the panel says "no decoders available", which is a
    * sentence, where absence was not.
    */
+  /** The assistant is the box's, and only a box with an API key has one (ADR-0022). */
+  canAsk() { return !!(this.engine && this.engine.assistant); }
+
+  openAsk(x, y) {
+    if (!this.canAsk()) return;
+    this.asker.open({ x, y }, this.engine.assistant);
+  }
+
   canIdentify() {
     const n = this.node();
     return !!n && IDENTIFIABLE.includes(n.out.kind);
@@ -1864,10 +1880,12 @@ class App {
       // moves the signal toward a result: when you do not yet know what you are looking
       // at, nothing moves you further than this. And under no heading: it is not a kind of
       // step — not narrowing, not decoding — but the way to find out which step you want.
-      const rows = this.canIdentify()
+      const rows = (this.canIdentify()
         ? [{ id: '__identify', name: 'Identify', group: '', lead: true, key: '?',
-             hint: 'try every decoder that could read this stream' }].concat(shown)
-        : shown;
+             hint: 'try every decoder that could read this stream' }] : [])
+        .concat(this.canAsk() ? [{ id: '__ask', name: 'Ask…', group: '', lead: true, key: 'i',
+             hint: 'ask the assistant about what is on screen' }] : [])
+        .concat(shown);
       // Recipes that expand into a chain, where their input fits (ADR-0043). A recipe that
       // folds into one node is already in the list as that node (CW). Ranked just after
       // `Tune here` and ahead of any one demodulator, by the rule the menu ranks by: a recipe
@@ -1883,6 +1901,7 @@ class App {
         ? { ...o, recipe: true } : o));
       this.menu.open(x, y, marked.concat(recipes.map((r) => ({ ...r, recipe: true }))), (opId) => {
         if (opId === '__identify') { this.openIdentify(x, y); return; }
+        if (opId === '__ask') { this.openAsk(x, y); return; }
         if (opId.startsWith('__recipe:')) { this.applyRecipe(opId.slice(9), selection); return; }
         this.applyOp(opId, selection);
       });
@@ -4082,6 +4101,13 @@ class App {
         e.preventDefault();
         const r = $('#stage').getBoundingClientRect();
         this.openIdentify(r.left + r.width / 2 - 120, r.top + 60);
+      }
+      // `i`, for inquire: `?` was taken by Identify, which asks the decoders rather than
+      // the assistant.
+      if (e.key === 'i' && this.canAsk() && !this.asker.isOpen) {
+        e.preventDefault();
+        const r = $('#stage').getBoundingClientRect();
+        this.openAsk(r.right - 440, r.top + 60);
       }
       if (e.key === '=' || e.key === '+') { e.preventDefault(); this.zoomKey(1 / 1.4); }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); this.zoomKey(1.4); }
