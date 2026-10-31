@@ -170,11 +170,24 @@ export class BitRaster {
       return;
     }
 
-    const rows = groups.slice(-8).reverse().map((g) => {
-      const hex = [];
-      for (let k = 0; k + 8 <= g.bits.length; k += 8) {
-        hex.push(g.bits.slice(k, k + 8).reduce((a, b) => (a << 1) | b, 0).toString(16).padStart(2, '0'));
-      }
+    // The bytes after the preamble as text, where they read as text: a word on the row
+    // says the decode worked faster than hex does. Mostly printable or nothing, so a binary
+    // payload is not dressed up as a garbled string.
+    const asText = (bytes) => {
+      const body = bytes.slice(2);
+      const ok = (v) => v >= 32 && v < 127;
+      if (body.length < 2 || body.filter(ok).length < 0.8 * body.length) return '';
+      return body.map((v) => (ok(v) ? String.fromCharCode(v) : '\u00b7')).join('');
+    };
+    const esc = (s) => s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+    const shown = groups.slice(-8).reverse().map((g) => {
+      const bytes = [];
+      for (let k = 0; k + 8 <= g.bits.length; k += 8) bytes.push(g.bits.slice(k, k + 8).reduce((a, b) => (a << 1) | b, 0));
+      return { g, bytes, text: asText(bytes) };
+    });
+    const anyText = shown.some((r) => r.text);
+    const rows = shown.map(({ g, bytes, text }) => {
+      const hex = bytes.map((v) => v.toString(16).padStart(2, '0'));
       const tail = g.bits.length % 8;
       const cells = g.bits.map((b, j) =>
         `<i class="${b ? 'one' : 'zero'}${j === 15 ? ' mark' : ''}"></i>`).join('');
@@ -184,6 +197,7 @@ export class BitRaster {
         <td class="bd">${(g.durationS * 1e3).toFixed(1)}</td>
         <td class="bp"><span class="bits">${cells}</span></td>
         <td class="bh">${hex.join(' ')}${tail ? ` <span class="rem">+${tail}b</span>` : ''}</td>
+        ${anyText ? `<td class="bx">${esc(text)}</td>` : ''}
       </tr>`;
     }).join('');
 
@@ -192,7 +206,7 @@ export class BitRaster {
         <thead><tr>
           <th>time · s</th><th>bits</th><th>ms</th>
           <th>pattern <span class="key"><i class="one"></i>1 <i class="zero"></i>0</span></th>
-          <th>hex</th>
+          <th>hex</th>${anyText ? '<th>text</th>' : ''}
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>

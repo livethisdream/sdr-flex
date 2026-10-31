@@ -3,8 +3,9 @@ options:
     author: SDR Flex
     category: '[SDR Flex]'
     description: 'AM: the envelope, then the post-detection low-pass every receiver has, a
-      40 microsecond moving average centered on its output so edges stay where they were.
-      history is how many inputs come before the first whole output, lead how many after.'
+      moving average of smoothUs microseconds (40 by default, 0 for none) centered on its
+      output so edges stay where they were. history is how many inputs come before the first
+      whole output, lead how many after.'
     generate_options: hb
     hier_block_src_path: '.:'
     id: sdrflex_am
@@ -28,6 +29,18 @@ blocks:
     coordinate: [200, 8]
     rotation: 0
     state: enabled
+- name: smoothUs
+  id: parameter
+  parameters:
+    hide: none
+    label: Smoothing (us, 0 for none)
+    short_id: ''
+    type: eng_float
+    value: '40'
+  states:
+    coordinate: [200, 120]
+    rotation: 0
+    state: enabled
 - name: recipe
   id: sdrflex_recipe
   parameters:
@@ -47,7 +60,7 @@ blocks:
 - name: window_len
   id: variable
   parameters:
-    value: max(2, int(samp_rate * 40e-6 + 0.5))
+    value: 1 if smoothUs <= 0 else max(2, int(samp_rate * smoothUs * 1e-6 + 0.5))
   states:
     coordinate: [344, 8]
     rotation: 0

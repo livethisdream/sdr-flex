@@ -343,6 +343,9 @@ const captureId = (c) => {
   return captureIds.get(c);
 };
 
+/** The AM detector's smoothing, in µs; a node from before it had the setting gets the old 40. */
+export const smoothUs = (params) => (params && params.smoothUs ? Number(params.smoothUs.value) : dsp.ENVELOPE_US);
+
 export function demodulate(op, iq, count, fs, params = null, startIndex = 0) {
   const d = DETECTORS[op];
   if (d) {
@@ -351,8 +354,8 @@ export function demodulate(op, iq, count, fs, params = null, startIndex = 0) {
   }
   // AM: the rectifier, then the post-detection low-pass every real receiver has
   return {
-    data: dsp.smooth(dsp.amEnvelope(iq, count), dsp.envelopeWindow(fs)),
-    params: {},
+    data: dsp.smooth(dsp.amEnvelope(iq, count), dsp.envelopeWindow(fs, smoothUs(params))),
+    params: params || {},
     label: 'AM demod',
   };
 }
@@ -368,7 +371,7 @@ export function demodMargins(op, params, fs) {
   }
   if (op === 'core.ssb') return { history: SSB_TAPS - 1, lead: 0 };
   if (op === 'core.am_envelope') {
-    const w = dsp.envelopeWindow(fs), shift = (w / 2) | 0;
+    const w = dsp.envelopeWindow(fs, smoothUs(params)), shift = (w / 2) | 0;
     return { history: w - 1 - shift, lead: shift };
   }
   return { history: 0, lead: 0 };
@@ -1536,6 +1539,9 @@ export class MockEngine extends Graph {
       node.out = { kind: 'iq', sampleRate: rate, centerHz };
       node.label = 'Tuner';
     } else if (op === 'core.am_envelope') {
+      // A preference rather than a measurement: how much detail to keep is a question
+      // about what you are looking for, which the signal does not answer.
+      node.params = { smoothUs: param(String(dsp.ENVELOPE_US), 'manual') };
       node.out = { kind: 'real', sampleRate: p.out.sampleRate, centerHz: p.out.centerHz };
       node.label = 'AM demod';
     } else if (DETECTORS[op]) {
@@ -1738,7 +1744,22 @@ export class MockEngine extends Graph {
       node.out = { kind: 'real', sampleRate: fs / dsp.stereoDecimation(fs), centerHz: p.out.centerHz, channels: 2 };
       node.label = 'Stereo decode';
     } else if (op === 'core.audio') {
+      // Broadcast FM is pre-emphasized, and straight off the demod it sounds bright. The
+      // demod cannot undo it — the stereo pilot and RDS behind it need the composite as
+      // sent — so it is undone here, at the ear. Whether to is evidence; 75 against 50 µs
+      // is not, so the Americas' constant is the default and the strip offers the other.
+      const dev = p.op === 'core.fm_discriminator' && p.params.deviationHz ? p.params.deviationHz.value : 0;
+      const wide = dev > 15_000;
       node.params = {
+        deemphasisUs: param(wide ? '75' : '0', 'auto', {
+          from: wide
+            ? `wideband FM (${(dev / 1e3).toFixed(0)} kHz deviation) is broadcast, which is pre-emphasized; ` +
+              '75 µs in the Americas, 50 µs in most other places'
+            : p.op === 'core.fm_discriminator'
+              ? `narrowband FM (${(dev / 1e3).toFixed(1)} kHz deviation) — no broadcast pre-emphasis to undo`
+              : 'not straight after an FM demod — nothing here is pre-emphasized',
+          confident: true,
+        }),
         volume: param(0.5),
         // How a pair reaches the ears; only offered when there is a pair.
         mix: param('stereo', 'manual'),

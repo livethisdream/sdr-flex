@@ -940,10 +940,10 @@ consecutive parallel runs afterwards: 450 passing in 28–33 s each.
   a selection there is the same selection as a box on the waterfall (ADR-0002), and what the
   GNU Radio engine computes for a capture longer than memory holds.
 
-- **A default signal that decodes to something real (asked 2026-10-14).** The synthetic scene
-  a new session opens on decodes to nothing meaningful, which teaches nobody anything. Replace
-  it with one whose decoders return real messages. Later, drop the default altogether and open
-  on the last signal the user had open.
+- **A default signal that decodes to something real (asked 2026-10-14).** ~~Replace the
+  scene with one whose decoders return real messages.~~ Built 2026-10-30, see "The default
+  scene says something" below. Still wanted: drop the default altogether and open on the
+  last signal the user had open.
 
 - **Bug: the data stops while the clock keeps going (reported 2026-10-11).** Mid-session the
   spectrum goes blank, or keeps showing a smeared repeat of the last good data, while the
@@ -976,14 +976,9 @@ consecutive parallel runs afterwards: 450 passing in 28–33 s each.
   gr-tempest adapter with its knobs exposed as parameters, which the strip can already
   draw — or a resolution search in the raster node, since it already scores candidate
   periods.
-- **The AM detector's post-detection filter is fixed at 40 µs.** Right for speech, wrong
-  for anything wider — it smears eight pixels of a video leak together. The raster works
-  around it by taking IQ; a bandwidth parameter on the AM node is the real fix.
-- **The FM path has no de-emphasis**, and this is no longer a note in a list: the scene's
-  WBFM signal is pre-emphasized by the standard 75 µs curve, and
-  `web/test/detectors.test.mjs` asserts that 4 kHz comes back **6.25 dB hot**. Add
-  de-emphasis and that assertion fails and says what to change it to. A gap with a
-  failing test attached is a gap somebody eventually closes.
+- ~~**The AM detector's post-detection filter is fixed at 40 µs.**~~ Built 2026-10-30: a
+  `smoothing` setting (400, 100, 40, 10 µs or off), 40 by default, in both engines.
+- ~~**The FM path has no de-emphasis.**~~ Built 2026-10-30, on Listen rather than the demod.
 - ~~**Stereo and RDS are visible, not decoded.**~~ Answered: RDS by the `redsea`
   adapter, stereo by `core.stereo`. What is left of it is smaller and worth naming: the
   **AGC is still one gain across the pair**, which is right, but it is also still one
@@ -1865,6 +1860,35 @@ the reader to know that it builds local files. There is an *Updating* section no
 the two failure shapes side by side and `docker compose ps` as the tell — a container's
 uptime is the one indicator that works on every version, including the ones too old to
 have `/version`.
+
+## The default scene says something (2026-10-30)
+
+Asked 2026-10-14: the scene a new session opens on decoded to nothing meaningful. Built
+with three smaller fixes, all in one PR.
+
+- **The scene's signals carry messages**, all readable with no box. The OOK bursts carry
+  `SDR FLEX` after the `aa aa` preamble, and the PWM view has a **text** column when the
+  bytes after the preamble are at least 80% printable. The NBFM signal sends the DTMF
+  digits `7373539` (SDRFLEX on a keypad), 120 ms on and 50 ms off, repeating after 250 ms,
+  which the shipped DTMF plugin reads. The CW carrier sends `CQ CQ DE SDRFLEX` at about
+  11 wpm. Labels: "CW, Morse call", "NBFM, touch-tones", `OOK, "SDR FLEX"`; the longer CW
+  label ran into the NBFM one and was shortened.
+- **The deviation estimator judged a keyed carrier unmodulated.** Idle carrier between
+  digits put the median near zero, failing `p98 < 4 × median`. It now compares p98 against
+  the upper quartile. Noise across the scene's empty spots still comes back not confident.
+  The tone timing is tight on purpose: tones need to fill most of a 2 s look.
+- **The noise test's window moved** to 0.5–0.85 s: the longer OOK burst at 0.9 s splatters
+  into +2–18 kHz.
+- **De-emphasis is on Listen, not on the FM demod.** The demod's output feeds Stereo decode
+  and RDS, which need the composite as sent. Listen has `deemphasisUs` (auto, 75, 50, off);
+  auto is 75 straight after an FM demod with more than 15 kHz deviation, and says why. The
+  page's mixer applies it, with filter state carried across chunks, so it works on both
+  engines. An exported GNU Radio program ending in Listen gets `analog_fm_deemph`.
+- **AM smoothing is a setting**, `smoothUs` on the AM node and a `smoothUs` parameter on
+  `recipes/am.grc`; GNU Radio and JS agree at 0, 40 and 400 µs.
+- **A rejected API key says so in plain words** (401), as do 403, 429 and 529. A failed
+  question is rolled back out of the conversation, so the next one is not sent after half
+  a turn.
 
 ## The assistant, step one (2026-10-27)
 

@@ -904,6 +904,10 @@ export function estimateDeviation(iq, count, sampleRate) {
   if (!mag.length) return { value: 3000, confident: false };
   const p98 = mag[Math.min(mag.length - 1, Math.floor(mag.length * 0.98))];
   const med = mag[mag.length >> 1];
+  // The tail is measured against the upper quartile, not the median: a keyed signal —
+  // touch-tones, a repeater between overs — is an idle carrier for much of any window,
+  // which puts the median near zero and made it read as unmodulated.
+  const p75 = mag[Math.floor(mag.length * 0.75)];
 
   // What separates a modulated carrier from noise is that its excursion is
   // *bounded*: the instantaneous frequency stays in a narrow band, while noise
@@ -917,7 +921,7 @@ export function estimateDeviation(iq, count, sampleRate) {
   return {
     value: p98,
     medianHz: med,
-    confident: p98 > 200 && p98 < nyquist * 0.4 && p98 < med * 4,
+    confident: p98 > 200 && p98 < nyquist * 0.4 && p98 < p75 * 4,
   };
 }
 
@@ -1011,9 +1015,14 @@ export function smooth(x, win) {
   return out;
 }
 
-/** Default post-detection window: 40 µs, well below any symbol period we care about. */
-export function envelopeWindow(sampleRate) {
-  return Math.max(2, Math.round(sampleRate * 40e-6));
+/**
+ * The post-detection window, in samples. 40 µs by default, well below any symbol period we
+ * care about; wider signals — a video leak — want less, and 0 is no smoothing at all.
+ */
+export const ENVELOPE_US = 40;
+export function envelopeWindow(sampleRate, us = ENVELOPE_US) {
+  if (!(us > 0)) return 1;
+  return Math.max(2, Math.round(sampleRate * us * 1e-6));
 }
 
 /**

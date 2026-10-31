@@ -118,6 +118,17 @@ export class AudioMixer {
         got.data = one;
         nch = 1;
       }
+      // De-emphasis, carried across chunks: a one-pole filter restarted every 120 ms
+      // would click on every chunk.
+      const tau = Number(n.params.deemphasisUs && n.params.deemphasisUs.value) * 1e-6;
+      if (tau > 0) {
+        const a = 1 - Math.exp(-1 / (got.sampleRate * tau));
+        if (!v.de || v.de.length !== nch) v.de = new Float64Array(nch);
+        const x = got.data = Float32Array.from(got.data);
+        for (let i = 0; i < x.length; i += nch) {
+          for (let c = 0; c < nch; c++) { v.de[c] += a * (x[i + c] - v.de[c]); x[i + c] = v.de[c]; }
+        }
+      }
       const frames = Math.floor(got.data.length / nch);
       const buf = this.ctx.createBuffer(nch, frames, rate);
       const chans = [];
