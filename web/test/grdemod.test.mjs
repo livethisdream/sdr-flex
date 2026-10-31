@@ -117,6 +117,13 @@ test('GNU Radio gives the JS AM demod\'s samples, and the tone is there', { skip
   assert.ok(Math.abs(a - 0.05) < 0.01);
 });
 
+test('GNU Radio gives the JS AM demod\'s samples with its smoothing off, and at 400 µs', { skip }, async (t) => {
+  for (const smoothUs of ['0', '400']) {
+    const pair = await engines(t, 'core.am_envelope', AM_HZ, { smoothUs });
+    await agree(t, pair, 'am');
+  }
+});
+
 test('GNU Radio gives the JS SSB demod\'s samples: upper sideband, with a BFO', { skip }, async (t) => {
   const pair = await engines(t, 'core.ssb', SSB_HZ, { sideband: 'usb', bfoHz: 300 });
   const b = await agree(t, pair, 'ssb');

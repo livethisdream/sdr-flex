@@ -9,6 +9,7 @@
 
 import * as scene from '../src/scene.js';
 import * as dsp from '../src/dsp.js';
+import * as dtmf from '../plugins/dtmf.js';
 
 const FS = scene.SOURCE.sampleRate;
 let failed = 0;
@@ -53,27 +54,23 @@ const power = (x, from = 0) => {
   return 10 * Math.log10(s / Math.max(1, x.length - from) + 1e-20);
 };
 
-// ── NBFM ────────────────────────────────────────────────────────────────────
+// ── NBFM: the touch-tones the scene sends, read back by the DTMF decoder ─────
 {
-  const t = tune(-140_000, 16_000, 0.5);
+  // One whole repeat, so every digit is in it whatever the phase.
+  const t = tune(-140_000, 16_000, 2.6, 0);
   const d = dsp.estimateDeviation(t.iq, t.count, t.rate);
-  // The scene's modulation depth warbles between 0.3 and 1.0 of ±3 kHz, so the
-  // honest answer moves. What must hold is that it is in range and confident.
   ok(d.confident, `FM: estimator is confident on a modulated carrier (${d.value.toFixed(0)} Hz)`);
-  ok(d.value > 800 && d.value < 3300, `FM: deviation ${d.value.toFixed(0)} Hz within the warble's 900–3000 Hz range`);
+  ok(d.value > 1500 && d.value < 3300, `FM: deviation ${d.value.toFixed(0)} Hz, near the ±3 kHz the digits use`);
   const f = dsp.fmDiscriminate(t.iq, t.count, t.rate);
-  ok(near(tone(f, t.rate), 600, 25), `FM: recovers the ${tone(f, t.rate).toFixed(0)} Hz modulating tone (want 600)`);
+  const read = dtmf.decode(f, {}, { sampleRate: t.rate, count: t.count }).map((r) => r.text).join('');
+  ok(read.includes(scene.DIGITS), `FM: the DTMF decoder reads ${scene.DIGITS} (got "${read}")`);
 }
 
-// ── WBFM, and the de-emphasis the tool does not do ─────────────────────────
+// ── WBFM, and the de-emphasis Listen does ──────────────────────────────────
 //
 // The scene's two audio tones were equal at the microphone and are unequal on the air,
-// because a broadcast transmitter pre-emphasizes. A receiver that de-emphasizes recovers
-// them equal; this one does not, so it recovers 4 kHz about 6.2 dB hot.
-//
-// That number is asserted rather than tolerated. It is the shape of a known gap, and the
-// day somebody adds de-emphasis to the FM path this line fails and says so — which is
-// the only way a gap recorded in a list ever actually gets closed.
+// because a broadcast transmitter pre-emphasizes. The demod hands on what was sent, 4 kHz
+// about 6.2 dB hot, and Listen's de-emphasis brings the two back equal.
 {
   const t = tune(scene.WFM_INFO.offsetHz, 200_000, 0.4);
   const d = dsp.estimateDeviation(t.iq, t.count, t.rate);
@@ -93,11 +90,15 @@ const power = (x, from = 0) => {
   const pilot = amplitudeAt(audio, t.rate, scene.WFM_INFO.pilotHz);
   ok(a1 > 0 && a2 > 0, `WBFM: recovers both tones (${f1} Hz and ${f2} Hz)`);
   ok(pilot > 0.1 * a1, `WBFM: the ${scene.WFM_INFO.pilotHz / 1000} kHz pilot is there`);
+  // Off the demod the composite is still pre-emphasized, as it must be for the stereo
+  // decoder and RDS behind it; Listen undoes it at the ear.
   const gotDb = 20 * Math.log10(a2 / a1);
   ok(near(gotDb, scene.WFM_PREEMPH_DB, 0.4),
-     `WBFM: ${f2} Hz comes back ${gotDb.toFixed(2)} dB hot — no de-emphasis ` +
-     `(the scene pre-emphasized it by ${scene.WFM_PREEMPH_DB.toFixed(2)} dB). ` +
-     'Add de-emphasis and this should become 0 dB, and this line should change with it.');
+     `WBFM: off the demod, ${f2} Hz is ${gotDb.toFixed(2)} dB hot, as sent ` +
+     `(the scene pre-emphasized it by ${scene.WFM_PREEMPH_DB.toFixed(2)} dB)`);
+  const heard = dsp.deemphasis(audio, t.rate, 75e-6);
+  const flatDb = 20 * Math.log10(amplitudeAt(heard, t.rate, f2) / amplitudeAt(heard, t.rate, f1));
+  ok(near(flatDb, 0, 0.5), `WBFM: de-emphasized at 75 µs, the two tones come back equal (${flatDb.toFixed(2)} dB)`);
 }
 
 // ── SSB ─────────────────────────────────────────────────────────────────────
@@ -124,7 +125,9 @@ const power = (x, from = 0) => {
 
 // ── the estimators must decline, not guess, on empty spectrum ───────────────
 {
-  const t = tune(10_000, 16_000, 0.5);               // nothing is transmitting here
+  // Nothing transmits here, and the window stops before the OOK burst at 0.9 s, whose
+  // splatter reaches this far now that it carries a word.
+  const t = tune(10_000, 16_000, 0.35);
   ok(!dsp.estimateDeviation(t.iq, t.count, t.rate).confident, 'noise: FM deviation is not claimed as confident');
   ok(!dsp.estimateSideband(t.iq, t.count).confident, 'noise: sideband is not claimed as confident');
   ok(!dsp.estimateCarrierOffset(t.iq, t.count, t.rate).confident, 'noise: carrier offset is not claimed as confident');

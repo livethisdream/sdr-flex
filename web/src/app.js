@@ -1586,6 +1586,10 @@ class App {
                            fmt: (v) => (Number(v) === 0 ? 'standard' : `${Number(v) > 0 ? '+' : '−'}90°`) },
           deemphasisUs: { label: 'de-emphasis', unit: 'µs', type: 'enum', values: ['75', '50', '0'],
                           fmt: (v) => (Number(v) > 0 ? String(v) : 'off') },
+          // The AM detector's post-detection smoothing: 40 µs suits speech and keying; a
+          // video leak wants it short or off, or neighboring pixels run together.
+          smoothUs: { label: 'smoothing', unit: 'µs', type: 'enum', values: ['400', '100', '40', '10', '0'],
+                      fmt: (v) => (Number(v) > 0 ? String(v) : 'off') },
           bfoHz: { label: 'bfo', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 1.5, min: -3000, max: 3000, integer: true, type: 'num' },
           offsetHz: { label: 'offset', unit: 'Hz', fmt: (v) => String(Math.round(v)), step: 2.5, integer: true, type: 'num' },
           // A list rather than a slider: these are the widths a CW receiver offers, and 0 is

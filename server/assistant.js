@@ -155,8 +155,18 @@ export class Assistant {
       focus.nodeId ? `On screen: step ${focus.nodeId}${this.engine.node(focus.nodeId) ? ` (${label(this.engine.node(focus.nodeId))})` : ''}.` : '',
       focus.at != null ? `Playhead: ${Number(focus.at).toFixed(2)} s.` : '',
     ].filter(Boolean).join(' ');
+    // A question that fails leaves no trace, so the next one is not asked after half a turn.
+    const mark = this.messages.length;
     this.messages.push({ role: 'user', content: where ? `${where}\n\n${question}` : question });
+    try {
+      return await this._loop(focus, onStep, client);
+    } catch (e) {
+      this.messages.length = mark;
+      throw new Error(plainError(e));
+    }
+  }
 
+  async _loop(focus, onStep, client) {
     const start = this.spent.usd;
     let text = '';
     for (let round = 0; round <= MAX_ROUNDS; round++) {
@@ -332,6 +342,22 @@ export class Assistant {
 }
 
 const label = (n) => n.label || (OPS[n.op] && OPS[n.op].name) || n.op;
+
+/**
+ * What went wrong, in words the person paying can act on. The API's own message is a JSON
+ * body; the common failures are the key and the load, and both have a next step.
+ */
+export function plainError(e) {
+  const status = e && e.status;
+  if (status === 401) {
+    return 'The API key was rejected. It may have expired: put a new one in the server\'s key file ' +
+           '(ANTHROPIC_API_KEY) and restart the server.';
+  }
+  if (status === 403) return 'The API key is not allowed to use this model. Check its workspace in the Claude Console.';
+  if (status === 429) return 'Too many requests for this API key just now. Wait a minute and ask again.';
+  if (status === 529 || status === 503) return 'The API is overloaded just now. Ask again in a minute.';
+  return (e && e.message) || String(e);
+}
 
 /**
  * Regions standing above the floor of a spectrum, in dB, bins in frequency order.

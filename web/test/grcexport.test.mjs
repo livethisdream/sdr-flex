@@ -215,3 +215,21 @@ test('a chain exported as a program compiles as a GRC flowgraph that reads the c
   assert.match(py, /wfm_rcv_pll/);
   assert.match(py, /audio\.sink/);
 });
+
+test("a program ending in Listen keeps Listen's de-emphasis, and compiles", { skip }, async (t) => {
+  const dir = work(t);
+  const e = await station(t, dir);
+  const tu = await e.addNode({ parent: e.root.id, op: 'core.tuner', selection: { f0: 100e6 - 120e3, f1: 100e6 + 120e3 }, at: 0.05 });
+  const fm = await e.addNode({ parent: tu.id, op: 'core.fm_discriminator', at: 0.05 });
+  const ls = await e.addNode({ parent: fm.id, op: 'core.audio', at: 0.05 });
+  await e.setParam(ls.id, 'deemphasisUs', '75');
+  const r = programGrc(e, ls.id, 'station mono');
+  const file = path.join(dir, `${r.name}.grc`);
+  fs.writeFileSync(file, r.text);
+  const c = compile(file, dir);
+  assert.ok(c.ok, c.log);
+  const py = fs.readFileSync(path.join(dir, `${r.name}.py`), 'utf8');
+  assert.match(py, /fm_deemph\(fs=samp_rate, tau=\(?75e-6\)?\)/);
+  await e.setParam(ls.id, 'deemphasisUs', '0');
+  assert.doesNotMatch(programGrc(e, ls.id, 'station flat').text, /analog_fm_deemph/);
+});

@@ -85,7 +85,12 @@ function scripted(...turns) {
   const sent = [];
   return {
     sent,
-    beta: { messages: { create: async (req) => { sent.push(structuredClone(req)); return turns.shift(); } } },
+    beta: { messages: { create: async (req) => {
+      sent.push(structuredClone(req));
+      const t = turns.shift();
+      if (t instanceof Error) throw t;
+      return t;
+    } } },
   };
 }
 const usage = { input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
@@ -150,4 +155,14 @@ test('a question that runs past the spend limit stops, and leaves the history va
   assert.match(r.text, /passed the \$0\.50 limit/);
   const last = a.messages.at(-1);
   assert.equal(last.content[0].tool_use_id, 't1', 'every tool call has an answer');
+});
+
+test('a rejected key is said in plain words, and the question leaves no trace', async () => {
+  const { e } = await manchester();
+  const bad = Object.assign(new Error('401 {"type":"error","error":{"type":"authentication_error"}}'), { status: 401 });
+  const client = scripted(bad, { stop_reason: 'end_turn', usage, content: [{ type: 'text', text: 'fine now' }] });
+  const a = new Assistant({ engine: e, read: async () => null, client });
+  await assert.rejects(a.ask('one'), /API key was rejected\. It may have expired/);
+  assert.equal((await a.ask('two')).text, 'fine now');
+  assert.equal(client.sent[1].messages.length, 1, 'the failed question is not resent');
 });

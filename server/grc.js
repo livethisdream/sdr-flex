@@ -40,8 +40,8 @@ const EXPORT = {
                                            filterHz: 'filterHz', gain: 'gain', start_index: '0' } }],
     rate: 'samp_rate', output: 'real', needs: 'sdrflex_cw' }),
   // The AM and SSB recipes, as the hier blocks they are (recipes/am.grc, recipes/ssb.grc).
-  'core.am_envelope': () => ({
-    fuses: 1, params: [], blocks: [{ id: 'sdrflex_am', params: { samp_rate: 'samp_rate' } }],
+  'core.am_envelope': (n) => ({
+    fuses: 1, params: [[n, 'smoothUs']], blocks: [{ id: 'sdrflex_am', params: { samp_rate: 'samp_rate', smoothUs: 'smoothUs' } }],
     rate: 'samp_rate', output: 'real', needs: 'sdrflex_am' }),
   'core.ssb': (n) => ({
     fuses: 1, params: [[n, 'sideband'], [n, 'bfoHz'], [n, 'gain']],
@@ -277,10 +277,19 @@ export function programGrc(engine, nodeId, title) {
   }
   // A sound card takes 48 kHz; the chain's own rate goes through a resampler to get there.
   if (pl.output !== 'bits') blocks.push(block('audio_rate', 'variable', { value: '48000' }, 840, 120));
+  // Listen's de-emphasis, where it has one: the same filter the page applies at the ear.
+  const ear = pl.nodes.find((n) => n.op === 'core.audio');
+  const tauUs = ear && ear.params.deemphasisUs ? num(ear.params.deemphasisUs.value) : null;
   for (let c = 0; c < (pl.output === 'bits' ? 0 : outs); c++) {
     const rs = `resample_${c}`;
     blocks.push(block(rs, 'rational_resampler_xxx', { type: 'fff', interp: 'audio_rate', decim: `int(${pl.rate})`, taps: '[]', fbw: '0.4' }, 640 + pl.steps.length * 200, 380 + c * 80));
-    conns.push([prev, String(c), rs, '0'], [rs, '0', 'speaker', String(c)]);
+    if (Number(tauUs) > 0) {
+      const de = `deemph_${c}`;
+      blocks.push(block(de, 'analog_fm_deemph', { samp_rate: pl.rate, tau: `${tauUs}e-6` }, 520 + pl.steps.length * 200, 380 + c * 80));
+      conns.push([prev, String(c), de, '0'], [de, '0', rs, '0'], [rs, '0', 'speaker', String(c)]);
+    } else {
+      conns.push([prev, String(c), rs, '0'], [rs, '0', 'speaker', String(c)]);
+    }
   }
   if (pl.output !== 'bits') {
     blocks.push(block('speaker', 'audio_sink', { samp_rate: 'audio_rate', device_name: '', ok_to_block: 'True', num_inputs: String(outs) }, 900 + pl.steps.length * 200, 400));

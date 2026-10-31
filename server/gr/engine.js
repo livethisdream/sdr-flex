@@ -24,7 +24,7 @@ import { PRIORITY } from './pool.js';
 
 /** The nodes that are a recipe run as one GNU Radio block, and the recipe's arguments. */
 const RECIPE_NODES = {
-  'core.am_envelope': { recipe: 'am', args: () => ({}) },
+  'core.am_envelope': { recipe: 'am', args: (p) => ({ smoothUs: p.smoothUs ? Number(p.smoothUs.value) : dsp.ENVELOPE_US }) },
   'core.ssb': { recipe: 'ssb', args: (p) => ({ sideband: p.sideband.value === 'lsb' ? 'lsb' : 'usb',
                                                bfoHz: p.bfoHz.value, gain: p.gain.value || 1 }) },
   'core.cw': { recipe: 'cw', args: (p) => ({ offsetHz: p.offsetHz.value, pitchHz: p.pitchHz.value, gain: p.gain.value || 1,

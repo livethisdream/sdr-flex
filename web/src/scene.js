@@ -10,8 +10,10 @@ export const SOURCE = {
   name: 'synthetic · 433.92 MHz',
 };
 
-// The burst payload the PWM slicer should recover: 0xAAAA preamble + payload.
-export const PAYLOAD = [0xaa, 0xaa, 0x3c, 0x69];
+// The burst payload the PWM slicer should recover: 0xAAAA preamble, then text. Two bytes
+// of nothing in particular taught nobody anything; a word says the decode worked.
+export const MESSAGE = 'SDR FLEX';
+export const PAYLOAD = [0xaa, 0xaa, ...Array.from(MESSAGE, (c) => c.charCodeAt(0))];
 export const SYMBOL_US = 417;
 export const BURST_PERIOD_S = 0.9;
 
@@ -21,20 +23,46 @@ export const BURST_PERIOD_S = 0.9;
  * demonstrate one detector.
  */
 export const SIGNALS = [
-  { offsetHz: -180_000, widthHz:   2_000, kind: 'cw',   label: 'keyed carrier' },
-  { offsetHz: -140_000, widthHz:  16_000, kind: 'nbfm', label: 'NBFM, ±3 kHz' },
+  { offsetHz: -180_000, widthHz:   2_000, kind: 'cw',   label: 'CW, Morse call' },
+  { offsetHz: -140_000, widthHz:  16_000, kind: 'nbfm', label: 'NBFM, touch-tones' },
   // A sideband is all on one side of its carrier, so its mark starts at the carrier.
   { offsetHz:  -90_000, widthHz:   3_000, kind: 'ssb',  label: 'USB, two tones', side: 'upper' },
-  { offsetHz:  -25_000, widthHz:  50_000, kind: 'ook',  label: 'OOK burst train' },
+  { offsetHz:  -25_000, widthHz:  50_000, kind: 'ook',  label: 'OOK, "SDR FLEX"' },
   { offsetHz:  130_000, widthHz: 180_000, kind: 'wbfm', label: 'WBFM, \u00b165 kHz + pilot' },
 ];
 
-// NBFM: a 600 Hz tone at ±3 kHz deviation, with a slow warble so it is obviously
-// modulation rather than a stuck tone.
-const FM_OFF = -140_000, FM_TONE = 600, FM_DEV = 3_000, FM_WARBLE = 0.35;
+// NBFM: touch-tone digits at ±3 kHz deviation, which the DTMF decoder that ships with
+// the client reads back. 7373539 is SDRFLEX on a phone keypad. Each digit is two tones
+// for 120 ms, then 50 ms of carrier, and the number repeats after 250 ms: dialer speed,
+// and tones more than half the time, so a 2 s look at it reads as modulated.
+const FM_OFF = -140_000, FM_DEV = 3_000;
+export const DIGITS = '7373539';
+const DTMF_ROWS = { 1: 697, 2: 697, 3: 697, 4: 770, 5: 770, 6: 770, 7: 852, 8: 852, 9: 852, 0: 941 };
+const DTMF_COLS = { 1: 1209, 4: 1209, 7: 1209, 2: 1336, 5: 1336, 8: 1336, 0: 1336, 3: 1477, 6: 1477, 9: 1477 };
+const TONE_S = 0.12, DIGIT_S = 0.17, DTMF_GAP_S = 0.25;
+const DTMF_PERIOD_S = DIGITS.length * DIGIT_S + DTMF_GAP_S;
+const DTMF = Array.from(DIGITS, (d) => [DTMF_ROWS[d], DTMF_COLS[d]]);
+// Each tone deviates the carrier by half the total, so the pair peaks at ±3 kHz. Its phase
+// is (dev/f) sin(2πf(t - start)) while it sounds and holds where it stopped afterwards, so
+// the carrier never jumps; the held phase after each digit is summed here once.
+const DTMF_HOLD = DTMF.map((fs) => fs.reduce((a, f) => a + (FM_DEV / 2 / f) * Math.sin(2 * Math.PI * f * TONE_S), 0));
+const DTMF_PERIOD_HOLD = DTMF_HOLD.reduce((a, b) => a + b, 0);
 
-// WBFM: the wideband half of the FM pair, and the only signal here with a question in
-// it that the tool currently gets wrong.
+/** The NBFM carrier's phase offset from its message at time t, in radians. */
+export function dtmfPhase(t) {
+  const k = Math.floor(t / DTMF_PERIOD_S);
+  const phase = t - k * DTMF_PERIOD_S;
+  let held = k * DTMF_PERIOD_HOLD;
+  const d = Math.floor(phase / DIGIT_S);
+  for (let i = 0; i < Math.min(d, DTMF.length); i++) held += DTMF_HOLD[i];
+  if (d >= DTMF.length) return held;
+  const on = phase - d * DIGIT_S;
+  if (on >= TONE_S) return held + DTMF_HOLD[d];
+  const [f1, f2] = DTMF[d];
+  return held + (FM_DEV / 2 / f1) * Math.sin(2 * Math.PI * f1 * on) + (FM_DEV / 2 / f2) * Math.sin(2 * Math.PI * f2 * on);
+}
+
+// WBFM: the wideband half of the FM pair, and the signal that checks de-emphasis.
 //
 // What used to sit at this end of the band was a comb of sixteen static phasors called
 // a "wideband hump". It was wide, and it was nothing — no modulation, no answer to
@@ -45,9 +73,8 @@ const FM_OFF = -140_000, FM_TONE = 600, FM_DEV = 3_000, FM_WARBLE = 0.35;
 // because a broadcast FM transmitter pre-emphasizes: it boosts treble by 1 + j2πfτ with
 // τ = 75 µs, and the receiver is supposed to undo it. So an FM demodulator with no
 // de-emphasis recovers 4 kHz about 6.2 dB hot, and one with it recovers the two tones
-// equal. That is a gap this tool has, now made visible in a signal rather than recorded
-// in a list — and `web/test/detectors.test.mjs` asserts the number, so adding
-// de-emphasis will fail that test loudly instead of silently changing what you hear.
+// equal. The demod hands the composite on as sent and Listen undoes it, and
+// `web/test/detectors.test.mjs` asserts both numbers.
 //
 // **Broadcast-shaped rather than broadcast.** A real ±75 kHz stereo signal is a quarter
 // of a megahertz of composite baseband, which is most of this 480 kHz band and would
@@ -76,29 +103,39 @@ const WFM_PILOT_BETA = (WFM_DEV * WFM_PILOT_SHARE) / WFM_PILOT;
  * How far off a correct de-emphasis the recovered audio is, in dB, at each tone.
  *
  * Exported so the test asserts the scene's own arithmetic rather than a number somebody
- * typed twice. Zero once the FM path de-emphasizes.
+ * typed twice.
  */
 export const WFM_PREEMPH_DB = 20 * Math.log10(preemph(WFM_TONES[1]) / preemph(WFM_TONES[0]));
 export const WFM_INFO = { offsetHz: WFM_OFF, devHz: WFM_DEV, pilotHz: WFM_PILOT, tones: WFM_TONES };
 // USB: two audio tones above a suppressed carrier. Two, because one tone is
 // indistinguishable from a carrier and would prove nothing about sideband choice.
 const SSB_OFF = -90_000, SSB_TONES = [700, 1_150];
-// CW: the steady carrier, keyed on and off so there is something to listen to.
+// CW: a real call in Morse at about 11 words a minute, which a Morse decoder can read
+// and a person can copy by ear.
 const CW_OFF = -180_000, CW_DIT_S = 0.11;
-
-/** The CW carrier's on/off state at time t — a repeating "· — ·" so it sounds keyed. */
-export function cwKey(t) {
-  // dit dah dit, then a gap. A 0 is one dit of silence, so the period is counted
-  // the same way the loop below consumes it — not by summing the entries.
-  const pattern = [1, 0, 3, 0, 1, 0, 0, 0];
-  const total = pattern.reduce((a, b) => a + (b === 0 ? 1 : b), 0) * CW_DIT_S;
-  let phase = t - Math.floor(t / total) * total;
-  for (const p of pattern) {
-    const len = p === 0 ? CW_DIT_S : p * CW_DIT_S;
-    if (phase < len) return p === 0 ? 0 : 1;
-    phase -= len;
+export const CALL = 'CQ CQ DE SDRFLEX';
+const MORSE = {
+  C: '-.-.', Q: '--.-', D: '-..', E: '.', S: '...', R: '.-.', F: '..-.', L: '.-..', X: '-..-',
+};
+// One entry per dit of time: a dah is three on, a gap inside a letter one off, between
+// letters three, between words seven — and seven more after the call before it repeats.
+const KEYING = (() => {
+  const units = [];
+  for (const word of CALL.split(' ')) {
+    for (const ch of word) {
+      for (const el of MORSE[ch]) units.push(...(el === '-' ? [1, 1, 1] : [1]), 0);
+      units.push(0, 0);
+    }
+    units.push(0, 0, 0, 0);
   }
-  return 0;
+  units.push(0, 0, 0, 0, 0, 0, 0);
+  return Uint8Array.from(units);
+})();
+
+/** The CW carrier's on/off state at time t. */
+export function cwKey(t) {
+  const u = Math.floor(t / CW_DIT_S);
+  return KEYING[((u % KEYING.length) + KEYING.length) % KEYING.length];
 }
 
 function bitsOf(bytes) {
@@ -165,12 +202,8 @@ function fill(start, count) {
   const sP = SSB_TONES.map((f, i) => at(SSB_OFF + f, hash(4400 + i) * Math.PI * 2));
 
   // FM is the one signal a fixed-rate phasor cannot make: its rotation rate is the
-  // message. The modulating tone and the warble are still phasors — only the carrier
-  // pays for a cos and a sin per sample, which is two, not the thirty-six that were
-  // the problem before.
-  const mR = rot(FM_TONE), m = at(FM_TONE, 0);
-  const wR = rot(FM_WARBLE), w = at(FM_WARBLE, 0);
-  const fmBeta = FM_DEV / FM_TONE;              // modulation index
+  // message. The carrier pays for a cos and a sin per sample, and a digit for two
+  // sines while it sounds.
   const fmW = (2 * Math.PI * FM_OFF) / fs;
 
   // WBFM, the same way: the baseband is three phasors — two audio tones and the pilot —
@@ -194,9 +227,7 @@ function fill(start, count) {
       im += 0.11 * sP[k].s;
     }
 
-    // e^{j(w_c n + beta (0.65 + 0.35 warble) sin(w_m n))}
-    const depth = 0.65 + 0.35 * w.c;
-    const phi = fmW * n + fmBeta * depth * m.s;
+    const phi = fmW * n + dtmfPhase(n / fs);
     re += 0.20 * Math.cos(phi);
     im += 0.20 * Math.sin(phi);
 
@@ -216,14 +247,14 @@ function fill(start, count) {
     cw.s = cw.c * cwR.rs + cw.s * cwR.rc; cw.c = nc;
     nc = ook.c * ookR.rc - ook.s * ookR.rs;
     ook.s = ook.c * ookR.rs + ook.s * ookR.rc; ook.c = nc;
-    for (const [ph, r] of [[m, mR], [w, wR], [sP[0], sR[0]], [sP[1], sR[1]],
+    for (const [ph, r] of [[sP[0], sR[0]], [sP[1], sR[1]],
                            [pP, pR], [aP[0], aR[0]], [aP[1], aR[1]]]) {
       const c2 = ph.c * r.rc - ph.s * r.rs;
       ph.s = ph.c * r.rs + ph.s * r.rc; ph.c = c2;
     }
     if ((i & 4095) === 4095) {
       const norm = (v) => { const g = Math.hypot(v.c, v.s) || 1; v.c /= g; v.s /= g; };
-      norm(cw); norm(ook); norm(m); norm(w); norm(sP[0]); norm(sP[1]);
+      norm(cw); norm(ook); norm(sP[0]); norm(sP[1]);
       norm(pP); norm(aP[0]); norm(aP[1]);
     }
   }

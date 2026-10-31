@@ -750,12 +750,14 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 }
 .bits-table td { padding:.4rem 1rem .4rem 0; border-bottom:1px solid var(--rule-lo); vertical-align:middle; }
 .bits-table tr:last-child td { border-bottom:0; }
+.bits-table th:last-child, .bits-table td:last-child { padding-right:0; }
 .bits-table .key { margin-left:.6rem; color:var(--dim); letter-spacing:0; text-transform:none; }
 .bits-table .key i { width:8px; height:8px; display:inline-block; border-radius:1px; vertical-align:baseline; margin-right:.15rem; }
 .bt, .bc, .bd { color:var(--dim); font-variant-numeric:tabular-nums; text-align:right; }
 .bt { color:var(--body); }
 .bh { color:var(--bright); white-space:nowrap; }
 .bh .rem { color:var(--dim); }
+.bx { color:var(--bright); white-space:pre; }
 .bits { display:inline-flex; gap:2px; }
 .bits i { width:8px; height:16px; border-radius:1px; background:var(--rule); }
 .bits i.one { background:var(--ok); }
