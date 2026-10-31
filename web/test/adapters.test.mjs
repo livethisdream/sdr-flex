@@ -38,6 +38,8 @@ import { fileURLToPath } from 'node:url';
 import { ADAPTERS, available, resolve, list, run, convert, multimonDemods, morseJunk, wants as adapterWants } from '../../server/adapters.js';
 import * as mod from './support/modulate.mjs';
 import { demodulate } from '../src/engine.js';
+import * as scene from '../src/scene.js';
+import * as dsp from '../src/dsp.js';
 
 const AUDIO_RATE = 48_000;                    // what the modulators produce; convert() resamples
 
@@ -124,6 +126,22 @@ test('redsea reads a station off the composite', async (t) => {
   assert.ok(out.records.every((r) => /^0x[0-9A-F]{4}$/.test(r.pi || '')),
             `every record carries the station it came from: ${JSON.stringify(out.records[0])}`);
   assert.equal(out.records[0].pi, '0x2AF1', 'and it is the PI the modulator sent');
+});
+
+test("redsea reads the synthetic scene's broadcast station", async (t) => {
+  if (skip(t, 'ext.redsea')) return;
+  // Tuned and demodulated the way the app does it, over most of one turn of the loop.
+  const FS = scene.SOURCE.sampleRate, decim = 2, rate = FS / decim, seconds = 5;
+  const taps = dsp.lowPassTaps(65, 110_000, FS);
+  const count = Math.floor(rate * seconds);
+  const src = scene.read(0, count * decim + taps.length);
+  const iq = dsp.xlateFilterDecimate(src, taps, scene.WFM_INFO.offsetHz, FS, decim, count).samples;
+  // Through the app's FM demod, which scales to the deviation; the bare discriminator is in
+  // hertz, and redsea is handed integers with no levelling.
+  const out = await decode('ext.redsea', demodulate('core.fm_discriminator', iq, count, rate).data, 'real', { sampleRate: rate });
+  assert.equal(out.error, undefined, out.error);
+  assert.ok(out.records.some((r) => r.ps === scene.STATION.ps), `the station name: ${texts(out)}`);
+  assert.ok(out.records.some((r) => r.radiotext === scene.STATION.radiotext), `and the radiotext: ${texts(out)}`);
 });
 
 test('the checkword is the standard one, not one that only agrees with itself', () => {

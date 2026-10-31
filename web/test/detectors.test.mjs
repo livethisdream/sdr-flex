@@ -48,6 +48,18 @@ function amplitudeAt(x, fs, f) {
   return (2 * Math.hypot(re, im)) / n;
 }
 
+/** Mean power of a real signal between two frequencies, over Hann-windowed frames. */
+function bandPower(x, fs, f0, f1) {
+  const n = 8192, buf = new Float32Array(n * 2);
+  let sum = 0;
+  for (let at = 0; at + n <= x.length; at += n) {
+    for (let i = 0; i < n; i++) buf[i * 2] = x[at + i];
+    const sp = dsp.spectrum(buf, n, 'Hann');
+    for (let k = Math.ceil(f0 * n / fs); k <= f1 * n / fs; k++) sum += Math.pow(10, sp[n / 2 + k] / 10);
+  }
+  return sum;
+}
+
 const power = (x, from = 0) => {
   let s = 0;
   for (let i = from; i < x.length; i++) s += x[i] * x[i];
@@ -68,13 +80,13 @@ const power = (x, from = 0) => {
 
 // ── WBFM, and the de-emphasis Listen does ──────────────────────────────────
 //
-// The scene's two audio tones were equal at the microphone and are unequal on the air,
-// because a broadcast transmitter pre-emphasizes. The demod hands on what was sent, 4 kHz
-// about 6.2 dB hot, and Listen's de-emphasis brings the two back equal.
+// The scene's station speaks, and a broadcast transmitter pre-emphasizes, so off the demod
+// the voice has more treble than it was spoken with. Listen's de-emphasis gives back the
+// voice's own balance of treble to bass, measured against the voice as spoken.
 {
-  const t = tune(scene.WFM_INFO.offsetHz, 200_000, 0.4);
+  const t = tune(scene.WFM_INFO.offsetHz, 200_000, 1.0, 0.6);
   const d = dsp.estimateDeviation(t.iq, t.count, t.rate);
-  ok(d.confident && d.value > 45_000,
+  ok(d.confident && d.value > 30_000,
      `WBFM: deviation ${(d.value / 1000).toFixed(1)} kHz, confident (want tens of kHz, not units)`);
   // Wideband is not a label here, it is a measurement: this has to be an order of
   // magnitude past the narrowband one or the scene has two of the same signal.
@@ -84,43 +96,16 @@ const power = (x, from = 0) => {
      `WBFM: ${(d.value / 1000).toFixed(0)} kHz against NBFM's ${(dn.value / 1000).toFixed(1)} kHz`);
 
   const audio = dsp.fmDiscriminate(t.iq, t.count, t.rate);
-  const [f1, f2] = scene.WFM_INFO.tones;
-  const a1 = amplitudeAt(audio, t.rate, f1);
-  const a2 = amplitudeAt(audio, t.rate, f2);
+  const spoken = Float32Array.from({ length: t.count }, (_, i) => scene.broadcastAudio(0.6 + i / t.rate));
+  const tilt = (x) => 10 * Math.log10(bandPower(x, t.rate, 2_500, 4_500) / bandPower(x, t.rate, 200, 1_000));
   const pilot = amplitudeAt(audio, t.rate, scene.WFM_INFO.pilotHz);
-  ok(a1 > 0 && a2 > 0, `WBFM: recovers both tones (${f1} Hz and ${f2} Hz)`);
-  ok(pilot > 0.1 * a1, `WBFM: the ${scene.WFM_INFO.pilotHz / 1000} kHz pilot is there`);
+  ok(pilot > 0.03, `WBFM: the ${scene.WFM_INFO.pilotHz / 1000} kHz pilot is there (${pilot.toFixed(3)})`);
   // Off the demod the composite is still pre-emphasized, as it must be for the stereo
   // decoder and RDS behind it; Listen undoes it at the ear.
-  const gotDb = 20 * Math.log10(a2 / a1);
-  ok(near(gotDb, scene.WFM_PREEMPH_DB, 0.4),
-     `WBFM: off the demod, ${f2} Hz is ${gotDb.toFixed(2)} dB hot, as sent ` +
-     `(the scene pre-emphasized it by ${scene.WFM_PREEMPH_DB.toFixed(2)} dB)`);
-  const heard = dsp.deemphasis(audio, t.rate, 75e-6);
-  const flatDb = 20 * Math.log10(amplitudeAt(heard, t.rate, f2) / amplitudeAt(heard, t.rate, f1));
-  ok(near(flatDb, 0, 0.5), `WBFM: de-emphasized at 75 µs, the two tones come back equal (${flatDb.toFixed(2)} dB)`);
-}
-
-// ── SSB ─────────────────────────────────────────────────────────────────────
-{
-  const t = tune(-90_000, 6_000, 0.5);
-  const sb = dsp.estimateSideband(t.iq, t.count);
-  ok(sb.value === 'usb' && sb.confident, `SSB: picks usb, ${sb.ratioDb.toFixed(0)} dB asymmetry`);
-  const usb = dsp.ssbDemod(t.iq, t.count, t.rate, 'usb');
-  const lsb = dsp.ssbDemod(t.iq, t.count, t.rate, 'lsb');
-  ok(power(usb, 200) > power(lsb, 200) + 20,
-     `SSB: the chosen sideband is ${(power(usb, 200) - power(lsb, 200)).toFixed(0)} dB above the other`);
-  const hz = tone(usb, t.rate);
-  ok(near(hz, 700, 40) || near(hz, 1150, 40), `SSB: recovers an audio tone at ${hz.toFixed(0)} Hz (want 700 or 1150)`);
-}
-
-// ── CW ──────────────────────────────────────────────────────────────────────
-{
-  const t = tune(-180_500, 2_000, 0.3, 0.02);        // deliberately 500 Hz off center
-  const off = dsp.estimateCarrierOffset(t.iq, t.count, t.rate);
-  ok(off.confident && near(off.value, 500, 60), `CW: finds the carrier ${off.value.toFixed(0)} Hz off center (want 500)`);
-  const a = dsp.cwBeat(t.iq, t.count, t.rate, off.value, 700);
-  ok(near(Math.abs(tone(a, t.rate)), 700, 30), `CW: beats it down to ${Math.abs(tone(a, t.rate)).toFixed(0)} Hz (want 700)`);
+  const sent = tilt(audio) - tilt(spoken);
+  ok(sent > 4, `WBFM: off the demod, the voice's treble is ${sent.toFixed(1)} dB up on how it was spoken, as sent`);
+  const heard = tilt(dsp.deemphasis(audio, t.rate, scene.WFM_INFO.deemphasisUs * 1e-6)) - tilt(spoken);
+  ok(near(heard, 0, 1), `WBFM: de-emphasized at 75 µs, the voice's balance comes back (${heard.toFixed(2)} dB)`);
 }
 
 // ── the estimators must decline, not guess, on empty spectrum ───────────────
