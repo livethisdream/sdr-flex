@@ -1861,6 +1861,37 @@ the two failure shapes side by side and `docker compose ps` as the tell — a co
 uptime is the one indicator that works on every version, including the ones too old to
 have `/version`.
 
+## The WBFM station speaks and names itself (2026-10-31)
+
+Asked for after the scene got its messages: "TTS would be better and real rds wouldn't
+hurt". Stacked on the default-scene PR.
+
+- **Voice:** "This is SDR Flex. You are listening to a synthetic FM broadcast." Made once
+  with Piper 1.8.0 and the en_US-ljspeech-high voice (LJ Speech, public domain), run in a
+  throwaway `python:3.12-slim` container because this host has no venv. Stored inline in
+  `web/src/voice.js` as 16 kHz μ-law base64, 105 kB, with its provenance. Piper itself is
+  GPL-3; it is not a dependency and its output is not covered.
+- **Decoded by hand, not with Buffer or atob.** Measured: decoding with Node's Buffer left
+  the scene's generator about 40% slower for the rest of the process, though the loop never
+  touched it. With the hand decoder the scene runs at main's speed (about 570 ms of CPU per
+  second of scene in the timing script).
+- **A broadcast chain, because raw speech read as narrowband.** Speech leveled by its
+  single highest spike deviated the carrier by 14 kHz, under Listen's 15 kHz wideband
+  cutoff. Now: a 4:1 compressor, exact 75 µs pre-emphasis in the frequency domain (a
+  neighbor-difference at 16 kHz under-lifted 4 kHz by about 2 dB), leveled at the 99.5th
+  percentile and soft-limited above 80%. Measured deviation is about 30 kHz.
+- **RDS from the real encoder**, moved from `web/test/support/modulate.mjs` into
+  `web/src/rds.js` (fixtures rebuild byte-identical). PS `SDR FLEX`, radiotext "Synthetic
+  broadcast from SDR Flex", 76 groups per 6.656 s loop. redsea reads both within 5 s, on the
+  box only; the hosted copy has no RDS decoder.
+- **Still a pure function of time.** The voice is a Catmull-Rom curve with a closed-form
+  integral; RDS half-bits start on zeros of sin(2π·57 kHz·t); the loop is a whole number of
+  pilot, subcarrier and voice periods.
+- **Spill** measured against the two-tone version: at the noise floor everywhere outside the
+  signal, slightly lower near +50 kHz.
+- Test lesson: feed redsea through the app's FM demod. The bare discriminator is in hertz,
+  and redsea's input has no levelling, so it arrives clipped flat and nothing decodes.
+
 ## The default scene says something (2026-10-30)
 
 Asked 2026-10-14: the scene a new session opens on decoded to nothing meaningful. Built
