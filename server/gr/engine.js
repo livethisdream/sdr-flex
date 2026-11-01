@@ -18,7 +18,8 @@
 // finds a block missing is answered by the JS engine, which gives the same samples more
 // slowly, and is counted — a miss is a prepare that asked for the wrong span, and the count is
 // how that shows up in a measurement rather than in a wrong answer.
-import { MockEngine, SYMBOL_SPAN, SYMBOL_FIT_SECONDS } from '../../web/src/engine.js';
+import fs from 'node:fs';
+import { MockEngine, SYMBOL_SPAN, SYMBOL_FIT_SECONDS, HOLD_FFTS } from '../../web/src/engine.js';
 import * as dsp from '../../web/src/dsp.js';
 import { PRIORITY } from './pool.js';
 
@@ -434,6 +435,33 @@ export class GrEngine extends MockEngine {
       if (process.env.SDRFLEX_GR_DEBUG) console.error(`gr bits ${recipe}: ${e.message}`);
       return null;
     }
+  }
+
+  /**
+   * A whole-capture row reads 32 short windows spread over its slice. Fetched from GNU Radio,
+   * each would cost a 0.25 s block, so a map of a minute would compute the minute several times
+   * over; the JS tuner reads just the windows, and agrees with GNU Radio sample for sample.
+   */
+  _overviewRead(node, tEnd, count) { return MockEngine.prototype._readIQ.call(this, node, tEnd, count); }
+
+  close() { if (this._sceneFd != null) { fs.closeSync(this._sceneFd); this._sceneFd = null; } }
+
+  /** The scene is on disk here, so a map row reads it as fast as any capture (see `_sourceRead`). */
+  _holdCap() { return !this.capture && this.scene && this.scene.ready ? HOLD_FFTS : super._holdCap(); }
+
+  /**
+   * The map's sparse reads of the scene come from its recording rather than being computed:
+   * the same samples, since the recording is the scene written down, at a file read each.
+   */
+  _sourceRead(a, n) {
+    const sc = this.scene;
+    if (this._sparse && !this.capture && sc && sc.ready && a >= 0 && a + n <= Math.floor(sc.durationS * this.node(this.root.id).out.sampleRate)) {
+      if (this._sceneFd == null) this._sceneFd = fs.openSync(sc.path, 'r');
+      const buf = Buffer.alloc(n * 8);
+      fs.readSync(this._sceneFd, buf, 0, n * 8, a * 8);
+      return new Float32Array(buf.buffer, buf.byteOffset, n * 2);
+    }
+    return super._sourceRead(a, n);
   }
 
   _readIQ(node, tEnd, count) {

@@ -331,6 +331,9 @@ export const OPS = {
  */
 // The detector block cache (`_detectCached`).
 const BLOCK_S = 0.25;
+// FFTs per row of the whole-capture map, at most (`_holdSpectrum`).
+export const HOLD_FFTS = 64;
+const SCENE_HOLD_FFTS = 8;
 // Enough for the longest filter edge in a chain: a 65-tap Hilbert transformer at a 5 kS/s
 // SSB channel is 13 ms, a stereo decoder's 127 taps at 250 kS/s half a millisecond.
 const BLOCK_MARGIN_S = 0.03;
@@ -2032,7 +2035,7 @@ export class MockEngine extends Graph {
   _readIQ(node, tEnd, count) {
     if (node.op === 'core.source') {
       const start = Math.floor(tEnd * node.out.sampleRate) - count;
-      const read = (a, n) => (this.capture ? this.capture.read(a, n) : scene.read(a, n));
+      const read = (a, n) => this._sourceRead(a, n);
       if (start >= 0) return read(start, count);
       // before the beginning is silence, which is what past the end already is
       const have = count + start;
@@ -2673,6 +2676,49 @@ export class MockEngine extends Graph {
   }
 
   /**
+   * One row of the whole-capture map: the strongest each bin got over `holdS` seconds
+   * ending at `tEnd`.
+   *
+   * A row of a ten-minute file stands for a couple of seconds, and one FFT from it would
+   * show whatever happened to be on the air at that instant: a 5 ms burst falls between
+   * rows and is simply not there. So a row is a peak hold over FFTs spread evenly across
+   * its slice, capped at HOLD_FFTS so a long file costs the same per row as a short one.
+   * `coverage` is the fraction of the slice those FFTs read, which is the evidence for
+   * how far a blank row can be trusted (ADR-0017).
+   */
+  _holdSpectrum(n, tEnd, bins, window, holdS) {
+    const fs = n.out.sampleRate;
+    const k = Math.max(1, Math.min(this._holdCap(), Math.ceil((holdS * fs) / bins)));
+    const data = new Float32Array(bins).fill(-200);
+    const row = new Float32Array(bins);
+    this._sparse = true;
+    try {
+      for (let i = 0; i < k; i++) {
+        const t = tEnd - holdS + ((i + 1) * holdS) / k;
+        dsp.spectrum(this._overviewRead(n, t, bins), bins, window, row);
+        for (let j = 0; j < bins; j++) if (row[j] > data[j]) data[j] = row[j];
+      }
+    } finally {
+      this._sparse = false;
+    }
+    return { kind: 'spectrum', data, sampleRate: fs, centerHz: n.out.centerHz,
+             hold: { ffts: k, coverage: Math.min(1, (k * bins) / Math.max(1, holdS * fs)) } };
+  }
+
+  /** The samples a whole-capture row reads. The GNU Radio engine reads them in JS: see there. */
+  _overviewRead(n, tEnd, count) { return this._readIQ(n, tEnd, count); }
+
+  /**
+   * FFTs per row, at most. The synthetic scene is computed sample by sample, at about a
+   * microsecond each, so in the tab a row of it reads eight windows rather than sixty-four:
+   * the map of a minute in a few seconds rather than twenty.
+   */
+  _holdCap() { return this.capture ? HOLD_FFTS : SCENE_HOLD_FFTS; }
+
+  /** Source samples `[a, a + n)`, from the capture or the synthetic scene. */
+  _sourceRead(a, n) { return this.capture ? this.capture.read(a, n) : scene.read(a, n, !this._sparse); }
+
+  /**
    * A display frame. `bins`, `window` and `avg` change what is computed, so they
    * are engine-side; dB range, colormap and scroll speed only change how it is
    * painted, so they stay in the client (ADR-0012).
@@ -2691,6 +2737,7 @@ export class MockEngine extends Graph {
 
     if (n.out.kind === 'iq') {
       const bins = opts.bins || 1024;
+      if (opts.holdS > 0) return this._holdSpectrum(n, now, bins, opts.window || 'Hann', opts.holdS);
       const iq = this._readIQ(n, now, bins);
       return { kind: 'spectrum', data: dsp.spectrum(iq, bins, opts.window || 'Hann'), sampleRate: n.out.sampleRate, centerHz: n.out.centerHz };
     }

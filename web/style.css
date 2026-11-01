@@ -869,6 +869,17 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   pointer-events:none;
 }
 .stagebadge[hidden] { display:none; }
+/* The playhead on the whole-capture map, and the switch to it. */
+.wholehead { position:absolute; left:0; right:0; height:0; border-top:1px solid var(--accent); pointer-events:none; z-index:2; }
+.wholehead[hidden] { display:none; }
+.wholebtn {
+  position:absolute; top:8px; right:10px; z-index:3;
+  font-family:var(--mono); font-size:.62rem; color:var(--on-stage-dim, var(--dim));
+  background:var(--stage-veil); border:1px solid var(--edge); border-radius:2px;
+  padding:.12rem .45rem; cursor:pointer;
+}
+.wholebtn.on { color:var(--accent); border-color:var(--accent); }
+.wholebtn[hidden] { display:none; }
 .stagebadge.pin { color:var(--accent); }
 .stagehint {
   position:absolute; left:50%; top:62%; transform:translate(-50%,-50%); z-index:3;

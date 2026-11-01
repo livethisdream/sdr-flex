@@ -101,6 +101,9 @@ const fmtRate = (r) => (r >= 1e6 ? (r / 1e6).toFixed(3) + ' MS/s' : (r / 1e3).to
 // freshly computed spectrum every time: 25 a second reads as continuous and
 // costs a third of what 60 does. Waterfall rows keep their own clock on top.
 const SPEC_PERIOD = 1 / 25;
+// How much of the synthetic scene the whole-capture map covers: the minute the GNU Radio
+// engine records of it (server/gr/scene.js).
+const SCENE_WHOLE_S = 60;
 
 // How often what is on screen is written down for a reload to find. Three seconds is
 // under the time it takes to turn one parameter and look at the result, and the write is
@@ -133,6 +136,9 @@ const defaultViewParams = () => ({
   // A framer's records, one per line, or its frames lined up to find what changes.
   frames: 'list',
   zoomLo: 0, zoomHi: 1,
+  // The waterfall follows the playhead, or holds the whole capture still as a map, and
+  // which stretch of it the map shows, as fractions of `wholeSpan()`.
+  waterfall: 'follow', wholeLo: 0, wholeHi: 1,
 });
 
 /** What a long free-text value looks like on a bar that has room for about twenty. */
@@ -153,6 +159,8 @@ function fmtSet(v) {
   if (!on.length) return 'none';
   return on.length === 1 ? shorten(on[0], 16) : `${shorten(on[0], 12)} +${on.length - 1}`;
 }
+
+const fmtSeconds = (s) => (s < 1 ? `${(s * 1e3).toFixed(s < 0.01 ? 1 : 0)} ms` : `${s.toFixed(2)} s`);
 
 
 // The frequency cues a demod draws on a spectrum (cueMarks): what each is called, and what
@@ -1118,6 +1126,9 @@ class App {
       this.waterfall.setViewRange(p.zoomLo, p.zoomHi);
       this.trace.setViewRange(p.zoomLo, p.zoomHi);
       this.trace.avgN = p.avg;
+      const wb = $('#wholebtn');
+      wb.hidden = this.engine.node(this.current)?.out.kind !== 'iq';
+      wb.classList.toggle('on', this.isWhole());
       this.renderAxis();
       this.renderCbarLabels();
     }
@@ -1743,6 +1754,8 @@ class App {
         cells: viewCells.concat(onTime ? timeCells : []).concat([
           { key: 'bins', label: 'fft', unit: 'bins', type: 'enum', value: String(p.bins), values: ['256', '512', '1024', '2048', '4096'] },
           { key: 'colormap', label: 'colormap', unit: '', type: 'enum', value: p.colormap, values: COLORMAPS },
+          ...(n.out.kind === 'iq' ? [{ key: 'waterfall', label: 'waterfall', unit: '', type: 'enum', value: p.waterfall, values: ['follow', 'whole'],
+            hint: 'scroll past the playhead, or hold the whole capture still as a map (w)' }] : []),
           { key: 'speed', label: 'speed', unit: 'rows/s', type: 'num', value: p.speed, fmt: (v) => String(Math.round(v)), step: 0.35, min: 2, max: 120, integer: true },
           { key: 'dbMin', label: 'min', unit: 'dBFS', type: 'num', value: p.dbMin, fmt: (v) => String(Math.round(v)), step: 0.35, min: -160, max: -10,
             canAuto: true, mode: p.dbAuto ? 'auto' : 'manual', autoNote: 'the tenth percentile of what is on screen' },
@@ -1789,6 +1802,7 @@ class App {
       // Same node, same axis, different signal — so the trace and the rows on the
       // waterfall are of something else now, exactly as they are on a domain change.
       else if (key === 'channel') { p.channel = value; this.resetSpectrum(); this._tsCache = null; }
+      else if (key === 'waterfall') { this.setWhole(value === 'whole'); return; }
       else if (key === 'window') p.window = value;
       else if (key === 'trigger') { p.trigger = value; this._tsCache = null; }
       else if (key === 'spanS') { p.spanS = value; this._tsCache = null; }
@@ -2074,9 +2088,13 @@ class App {
    * (ADR-0005), so the engine can be asked for any past moment. The rows are
    * recomputed a few per frame so the switch stays responsive.
    */
-  resetSpectrum() {
+  resetSpectrum({ seek = false } = {}) {
+    // The map is of the capture, not of the moment, so moving the playhead leaves it be.
+    if (seek && this._whole && this.isWhole()) { this.trace.reset(); return; }
     this.trace.reset();
     this.waterfall.clear();
+    this.waterfall.setRowView();
+    this._whole = null;
     this._rowAcc = 0;
     this._specAcc = 0;
     this._specData = null;
@@ -2092,6 +2110,7 @@ class App {
     this._autoSnap = true;
     this._autoAcc = 0;
     const p = this.vp(this.current);
+    if (this.isWhole()) { this._prefill = null; this.startWhole(); return; }
     const span = this.waterfall.rows / Math.max(1, p.speed);
     const pf = {
       row: 0,
@@ -3591,6 +3610,17 @@ class App {
     $('#track i').style.left = (frac * 100).toFixed(2) + '%';
   }
 
+  /** Put the playhead at a moment, as dragging the scrubber there would. */
+  seekTo(t) {
+    if (!this.engine.isPinned(this.channel)) this._tmax = Math.max(this._tmax || 0, t);
+    const { t0, t1 } = this.scrubSpan();
+    this.scrubTo(Math.max(0, Math.min(1, (t - t0) / Math.max(1e-9, t1 - t0))));
+    this.resetSpectrum({ seek: true });
+    this._tsCache = null;
+    this._bitsSeen = false;
+    this.metrics.interaction();
+  }
+
   /** Keyboard zoom works about the center, since there is no pointer to anchor to. */
   zoomKey(factor) {
     if (!this.hasSpectrum()) return;
@@ -3613,6 +3643,112 @@ class App {
    * clearly vertical in absolute terms, and a real fraction of the box's width.
    */
   /**
+   * Whether the waterfall here is the whole-capture map. Only IQ: a row of the map is a
+   * peak hold over FFTs of the channel (`_holdSpectrum`), and a demodulator's baseband
+   * spectrum has no such row yet.
+   */
+  isWhole() {
+    const n = this.engine.node(this.current);
+    return !!n && n.out.kind === 'iq' && this.vp(this.current).waterfall === 'whole';
+  }
+
+  /** Switch the waterfall between following the playhead and the whole-capture map. */
+  setWhole(on) {
+    const p = this.vp(this.current);
+    p.waterfall = on ? 'whole' : 'follow';
+    this.resetSpectrum();
+    const b = $('#wholebtn');
+    if (b) b.classList.toggle('on', this.isWhole());
+    this.renderStrip();
+    this.metrics.interaction();
+  }
+
+  /**
+   * What "the whole capture" is. A file has two ends; a clip is the box it was cut from; a
+   * radio is the history it holds; and the synthetic scene, which never ends, is the minute
+   * the GNU Radio engine records of it, or further if the clock has gone further.
+   */
+  wholeSpan() {
+    const pin = this.engine.isPinned(this.channel);
+    if (pin) return { t0: pin.params.t0.value, t1: pin.params.t1.value };
+    if (this.engine.isLive && this.engine.isLive()) { const [a, b] = this.engine.span(); return { t0: a, t1: Math.max(a + 0.01, b) }; }
+    const d = this.engine.duration();
+    return { t0: 0, t1: isFinite(d) ? d : Math.max(SCENE_WHOLE_S, this._tmax) };
+  }
+
+  /** The stretch of the capture on the map now, in seconds. */
+  wholeWindow() {
+    const { t0, t1 } = this.wholeSpan();
+    const p = this.vp(this.current);
+    return { t0: t0 + p.wholeLo * (t1 - t0), t1: t0 + p.wholeHi * (t1 - t0) };
+  }
+
+  /**
+   * Fill the map: one row per pixel row of the texture, top to bottom, newest at the top as
+   * on the waterfall that follows the playhead, so a burst does not turn over when you
+   * switch. Each row is the strongest each bin got across its slice of time.
+   */
+  startWhole() {
+    const p = this.vp(this.current);
+    const { t0, t1 } = this.wholeWindow();
+    const rows = this.waterfall.rows;
+    const holdS = (t1 - t0) / rows;
+    const times = [];
+    for (let k = 0; k < rows; k++) times.push(t1 - k * holdS);
+    this.waterfall.clear();
+    this.waterfall.setRowView();
+    this._whole = { row: 0, rows, times, holdS, t0, t1, ffts: 0, coverage: 1, snapped: false };
+    if (this.engine.prefetch) this.engine.prefetch(this.current, { ...this.frameOpts(p), holdS }, times);
+  }
+
+  /**
+   * Show a new stretch of the capture. The rows already there are stretched to where the new
+   * window puts them straight away, and recomputed once the gesture settles: a wheel turn is
+   * a dozen events, and a refill per event would be a dozen blank maps.
+   */
+  setWholeWindow(lo, hi) {
+    const p = this.vp(this.current);
+    const { t0, t1 } = this.wholeSpan();
+    const n = this.engine.node(this.current);
+    // Narrower than a row per FFT and the rows would overlap: the map is a waterfall by then.
+    const min = Math.min(1, (this.waterfall.rows * p.bins) / n.out.sampleRate / Math.max(1e-6, t1 - t0));
+    let w = Math.min(1, Math.max(min, hi - lo));
+    lo = Math.max(0, Math.min(1 - w, lo));
+    if (lo === p.wholeLo && lo + w === p.wholeHi) return;
+    p.wholeLo = lo;
+    p.wholeHi = lo + w;
+    const r = this._whole;
+    if (r) {
+      // Rows drawn for [r.t0, r.t1] sit where [N0, N1] puts them, time running up the screen.
+      const N = this.wholeWindow(), d = N.t1 - N.t0;
+      this.waterfall.setRowView((r.t1 - r.t0) / d, (N.t1 - r.t1) / d);
+    }
+    clearTimeout(this._wholeTimer);
+    this._wholeTimer = setTimeout(() => { if (this.isWhole()) this.startWhole(); }, 220);
+  }
+
+  /** The playhead as a line across the map, or nothing when it is off the map or there is no map. */
+  placeWholeHead() {
+    const el = $('#wholehead');
+    if (!el) return;
+    const show = this.hasSpectrum() && this.isWhole();
+    const { t0, t1 } = show ? this.wholeWindow() : { t0: 0, t1: 0 };
+    const pin = show && this.engine.isPinned(this.channel);
+    const t = pin ? this.engine.clipPos(pin) : this.engine.t;
+    const frac = (t1 - t) / Math.max(1e-9, t1 - t0);
+    el.hidden = !show || frac < 0 || frac > 1;
+    if (el.hidden) return;
+    const st = $('#stage').getBoundingClientRect(), wf = $('#wf').getBoundingClientRect();
+    el.style.top = `${wf.top - st.top + frac * wf.height}px`;
+  }
+
+  /** A y on the waterfall as a fraction of its height, as a moment in the capture. */
+  wholeTimeAt(frac) {
+    const { t0, t1 } = this.wholeWindow();
+    return t1 - Math.max(0, Math.min(1, frac)) * (t1 - t0);
+  }
+
+  /**
    * The y below which the waterfall holds no samples yet. A time box must stop
    * there: dragging into blank rows would ask to pin a window that never existed,
    * and silently dropping the request is worse than not letting it be made.
@@ -3634,6 +3770,7 @@ class App {
    * Only the filled rows correspond to real samples; the rest is the colormap floor.
    */
   timeAtY(yPx, wfRect) {
+    if (this.isWhole()) return this.wholeTimeAt((yPx - wfRect.top) / wfRect.height);
     const p = this.vp(this.current);
     const rows = this.waterfall.rows;
     const filled = Math.max(1, this.waterfall.filled);
@@ -3726,7 +3863,7 @@ class App {
 
     stage.addEventListener('pointerdown', (e) => {
       if (!this.hasSpectrum()) return;
-      if (e.target.closest('#cbar-wrap') || e.target.closest('#markers')) return;
+      if (e.target.closest('#cbar-wrap') || e.target.closest('#markers') || e.target.closest('#wholebtn')) return;
       const r = stage.getBoundingClientRect();
       const wf = $('#wf').getBoundingClientRect();
       try { stage.setPointerCapture(e.pointerId); } catch (err) { /* not an active pointer */ }
@@ -3753,7 +3890,7 @@ class App {
         // rows move under the pointer while you drag, so the box lands on samples
         // that were never inside it. The moment a drag acquires a time extent, the
         // display freezes — no mode to learn, and the burst stops running away.
-        if (this.engine.playing) { this.setPlaying(false); this._frozeForDrag = true; }
+        if (this.engine.playing && !this.isWhole()) { this.setPlaying(false); this._frozeForDrag = true; }
         const edge = this.historyEdgeY(d.wf);
         const top = Math.max(d.wf.top, Math.min(d.y0, d.y1));
         const bot = Math.min(edge, Math.max(d.y0, d.y1));
@@ -3770,7 +3907,12 @@ class App {
       if (!this.drag || this.pinch) { this.drag = null; return; }
       const d = this.drag;
       this.drag = null;
-      if (Math.abs(d.x1 - d.x0) < 6) { this.clearSelection(); return; }
+      if (Math.abs(d.x1 - d.x0) < 6) {
+        this.clearSelection();
+        // A click on the map is a place in the capture, so the playhead goes there.
+        if (this.isWhole() && d.inWf && Math.abs(d.y1 - d.y0) < 6) this.seekTo(this.timeAtY(d.y1, d.wf));
+        return;
+      }
 
       const { lo, hi } = this.viewHz();
       const toHz = (px) => lo + (px / d.r.width) * (hi - lo);
@@ -3839,6 +3981,23 @@ class App {
       e.preventDefault();
       const r = stage.getBoundingClientRect();
       const at = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+      // On the map the wheel moves through time, as on any long picture, and a trackpad
+      // pinch (which arrives as ctrl+wheel) zooms it. The spectrum above keeps the wheel
+      // for frequency, and so does the axis.
+      const wf = $('#wf').getBoundingClientRect();
+      if (this.isWhole() && e.clientY >= wf.top) {
+        const p = this.vp(this.current), w = p.wholeHi - p.wholeLo;
+        if (e.ctrlKey) {
+          const y = Math.max(0, Math.min(1, (e.clientY - wf.top) / wf.height));
+          const under = p.wholeHi - y * w;               // time runs up the screen
+          const nw = w * Math.exp(e.deltaY * 0.01);
+          this.setWholeWindow(under - (1 - y) * nw, under - (1 - y) * nw + nw);
+        } else {
+          const dy = (e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY) / wf.height;
+          this.setWholeWindow(p.wholeLo - dy * w, p.wholeHi - dy * w);
+        }
+        return;
+      }
       if (e.shiftKey) panBy(e.deltaY * 0.0015);
       else applyZoom(e.deltaY > 0 ? 1.18 : 1 / 1.18, at);
     }, { passive: false });
@@ -3873,7 +4032,16 @@ class App {
     this.wireSummon(stage, openView);
     this.wireSummon($('#pane-time .tstage'), openView);
 
-    stage.addEventListener('dblclick', () => { if (this.hasSpectrum()) resetZoom(); });
+    const wb = $('#wholebtn');
+    wb.addEventListener('pointerdown', (e) => e.stopPropagation());
+    wb.addEventListener('click', (e) => { e.stopPropagation(); this.setWhole(!this.isWhole()); });
+    wb.addEventListener('dblclick', (e) => e.stopPropagation());
+
+    stage.addEventListener('dblclick', () => {
+      if (!this.hasSpectrum()) return;
+      resetZoom();
+      if (this.isWhole()) this.setWholeWindow(0, 1);
+    });
 
     // pinch: two pointers set both the scale and where it is anchored
     const pts = new Map();
@@ -3883,9 +4051,13 @@ class App {
     const pinchState = () => {
       const [a, b] = [...pts.values()];
       const r = stage.getBoundingClientRect();
+      const wf = $('#wf').getBoundingClientRect();
       return {
         dist: Math.max(MIN_PINCH_PX, Math.abs(a.x - b.x)),
         mid: Math.max(0, Math.min(1, ((a.x + b.x) / 2 - r.left) / r.width)),
+        // and, on the map, the same again up the screen for time
+        distY: Math.max(MIN_PINCH_PX, Math.abs(a.y - b.y)),
+        midY: Math.max(0, Math.min(1, ((a.y + b.y) / 2 - wf.top) / wf.height)),
       };
     };
     stage.addEventListener('pointerdown', (e) => {
@@ -3918,6 +4090,13 @@ class App {
         const lo = Math.max(0, Math.min(1 - w, under - now.mid * w));
         p.zoomLo = lo;
         p.zoomHi = lo + w;
+        if (this.isWhole()) {
+          const tw = p.wholeHi - p.wholeLo;
+          const tUnder = p.wholeHi - this.pinch.midY * tw;
+          const nw = tw * (this.pinch.distY / now.distY);
+          const hi = tUnder + now.midY * nw;
+          this.setWholeWindow(hi - nw, hi);
+        }
         this.renderStage();
         this.pinch = now;
       }
@@ -4017,7 +4196,7 @@ class App {
         track.removeEventListener('pointermove', at);
         track.removeEventListener('pointerup', up);
         // one refill at the end, not one per pixel
-        this.resetSpectrum();
+        this.resetSpectrum({ seek: true });
         this._tsCache = null;
         this._bitsSeen = false;
         this.metrics.interaction();
@@ -4049,7 +4228,7 @@ class App {
     const step = (dt) => {
       this.engine.ended = false;
       this.engine.t = Math.max(0, Math.min(this.engine.duration(), this.engine.t + dt));
-      this.resetSpectrum();
+      this.resetSpectrum({ seek: true });
       this._tsCache = null;
       this._bitsSeen = false;
       this.metrics.interaction();
@@ -4077,7 +4256,7 @@ class App {
       // pressing play at the end of a file means "again", not "stay stopped"
       if (this.engine.ended && !this.engine.playing) {
         this.engine.t = 0; this.engine.ended = false;
-        this._tmax = 0; this.resetSpectrum();
+        this._tmax = 0; this.resetSpectrum({ seek: true });
       }
       this.setPlaying(!this.engine.playing);
       this.metrics.interaction();
@@ -4114,6 +4293,7 @@ class App {
         e.preventDefault();
         this.openAsk();
       }
+      if (e.key === 'w' && this.hasSpectrum() && this.engine.node(this.current)?.out.kind === 'iq') { e.preventDefault(); this.setWhole(!this.isWhole()); }
       if (e.key === '=' || e.key === '+') { e.preventDefault(); this.zoomKey(1 / 1.4); }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); this.zoomKey(1.4); }
       if (e.key === '0') { e.preventDefault(); this.resetZoom && this.resetZoom(); }
@@ -4159,7 +4339,19 @@ class App {
     if (v === 'Spectrum' || v === 'Both') {
       const pin = this.engine.isPinned(this.channel);
 
-      if (pin) {
+      const whole = this.isWhole() && this._whole;
+      this.placeWholeHead();
+      if (whole) {
+        const w = this._whole;
+        this.setStageBadge(
+          // Short, because it sits over the spectrum's labels; the FFT count is in the title.
+          `▤ ${w.t0.toFixed(w.t1 - w.t0 < 10 ? 2 : 1)}–${w.t1.toFixed(w.t1 - w.t0 < 10 ? 2 : 1)} s` +
+          ` · ${fmtSeconds(w.holdS)} rows` +
+          (w.ffts && w.coverage < 0.995 ? `, ${Math.round(w.coverage * 100)}% read` : '') +
+          (w.row < w.rows ? ` · filling ${Math.round((w.row / w.rows) * 100)}%` : ''));
+        $('#wholebtn').title = `each row is the peak of ${w.ffts} FFT${w.ffts === 1 ? '' : 's'} spread across its ` +
+          `${fmtSeconds(w.holdS)}, reading ${Math.round(w.coverage * 100)}% of the samples; zoom in to read more (w to leave)`;
+      } else if (pin) {
         const r = this.engine.clipRate(pin);
         this.setStageBadge(
           `⊓ clip ${pin.params.t0.value.toFixed(3)}–${pin.params.t1.value.toFixed(3)} s` +
@@ -4185,7 +4377,28 @@ class App {
       }
 
       const pf = this._prefill;
-      if (pf) {
+      if (whole) {
+        const w = this._whole;
+        // Top down, as many rows as fit in a slice of the frame, as the prefill below does.
+        const deadline = performance.now() + 6;
+        const opts = { ...this.frameOpts(p), holdS: w.holdS };
+        for (let k = 0; w.row < w.rows; k++) {
+          if (k > 0 && performance.now() > deadline) break;
+          const f = this.engine.frame(this.current, { ...opts, at: w.times[w.row] });
+          if (f.kind === 'pending') break;
+          if (f.kind === 'spectrum') {
+            // A peak hold reads several dB above a single FFT, so the map sets its own range
+            // rather than taking the live trace's: from its first row with something in it,
+            // then from a row now and then as the rest arrive.
+            if (!w.snapped && spectrumHasSignal(f.data)) { w.snapped = true; this._autoSnap = false; this.applyAutoRange(f.data, true); }
+            else if (w.snapped && w.row % 24 === 0) this.applyAutoRange(f.data, false);
+            this.waterfall.put(w.row, f.data);
+            if (f.hold) { w.ffts = f.hold.ffts; w.coverage = f.hold.coverage; }
+          }
+          w.row++;
+        }
+      }
+      if (pf && !whole) {
         // Oldest first, as many rows as fit in a slice of the frame. Timing the work
         // beats predicting it: the cost per row varies with decimation, cache state
         // and machine, and a formula tuned to one of those is wrong for the others.
@@ -4232,7 +4445,9 @@ class App {
           if (f.kind === 'spectrum') this._specData = f.data;
         }
         if (this._specData) {
-          if (this._autoSnap && spectrumHasSignal(this._specData)) {
+          if (whole) {
+            // The live trace still runs over the map; only the map's rows set the range.
+          } else if (this._autoSnap && spectrumHasSignal(this._specData)) {
             // First spectrum since the context changed: take the range, do not approach
             // it. Cleared here rather than in the prefill loop because a remote engine's
             // first rows come back `pending`, and a snap that only happens on a row that
@@ -4245,7 +4460,7 @@ class App {
             if (this._autoAcc > 20) { this._autoAcc = 0; this.applyAutoRange(this._specData, false); }
           }
           this.trace.push(this._specData);
-          if (rowDue) { this._rowAcc = 0; this.waterfall.push(this._specData); }
+          if (rowDue) { this._rowAcc = 0; if (!whole) this.waterfall.push(this._specData); }
           this.trace.draw();
           this.waterfall.draw();
         }

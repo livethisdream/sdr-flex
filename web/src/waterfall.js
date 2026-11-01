@@ -13,10 +13,13 @@ precision highp float;
 in vec2 uv; out vec4 frag;
 uniform sampler2D data;     // R32F, dB
 uniform sampler2D cmap;     // 256x1 RGB
-uniform float rows, writeRow, dbMin, dbMax, viewLo, viewHi;
+uniform float rows, writeRow, dbMin, dbMax, viewLo, viewHi, rowA, rowB;
 void main(){
-  // uv.y == 1 at top of screen == newest row
-  float back = (1.0 - uv.y) * rows;
+  // uv.y == 1 at top of screen == newest row. rowA and rowB stretch and shift the rows
+  // down the screen: a time zoom on the whole-capture map shown before its rows arrive.
+  float s = (1.0 - uv.y - rowB) / rowA;
+  if (s < 0.0 || s > 1.0) { frag = vec4(texture(cmap, vec2(0.0, 0.5)).rgb, 1.0); return; }
+  float back = s * rows;
   float r = mod(writeRow - back, rows);
   // zoom is a view transform: the same rows, a narrower slice of them
   float x = viewLo + uv.x * (viewHi - viewLo);
@@ -44,6 +47,8 @@ export class Waterfall {
     this.dbMax = -18;
     this.viewLo = 0;
     this.viewHi = 1;
+    this.rowA = 1;            // see setRowView
+    this.rowB = 0;
     this.gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
     if (this.gl) { try { this._initGL(); } catch (e) { this.gl = null; } }
     if (!this.gl) this._initFallback();
@@ -74,6 +79,8 @@ export class Waterfall {
       dbMax: gl.getUniformLocation(prog, 'dbMax'),
       viewLo: gl.getUniformLocation(prog, 'viewLo'),
       viewHi: gl.getUniformLocation(prog, 'viewHi'),
+      rowA: gl.getUniformLocation(prog, 'rowA'),
+      rowB: gl.getUniformLocation(prog, 'rowB'),
     };
     gl.uniform1i(gl.getUniformLocation(prog, 'data'), 0);
     gl.uniform1i(gl.getUniformLocation(prog, 'cmap'), 1);
@@ -146,6 +153,12 @@ export class Waterfall {
   /** Visible slice of the span, as fractions. Zooming re-reads stored rows. */
   setViewRange(lo, hi) { this.viewLo = lo; this.viewHi = hi; }
 
+  /**
+   * Draw the rows `a` times their height, starting `b` of the way down: the rows already
+   * there, placed where a new time window will put them until its own rows replace them.
+   */
+  setRowView(a = 1, b = 0) { this.rowA = Math.max(1e-3, a); this.rowB = b; }
+
   /** Forget the history. Another channel's rows are not this channel's past. */
   clear() {
     this.writeRow = 0;
@@ -184,6 +197,32 @@ export class Waterfall {
     }
   }
 
+  /**
+   * Put a row at a fixed place, `k` rows down from the top, for a picture that does not
+   * scroll: the whole-capture map. It shares the ring's layout, so the shader is the same
+   * one — with `writeRow` at zero, screen row `k` is texture row `rows - 1 - k`.
+   */
+  put(k, row) {
+    this._ensure(row.length);
+    this.writeRow = 0;
+    this.filled = Math.min(this.rows, Math.max(this.filled, k + 1));
+    if (this.gl) {
+      const gl = this.gl;
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.dataTex);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, this.rows - 1 - k, row.length, 1, gl.RED, gl.FLOAT, row);
+    } else {
+      const d = this.img.data, W = this.bins;
+      const span = Math.max(this.dbMax - this.dbMin, 0.001);
+      for (let x = 0; x < W; x++) {
+        let t = (row[x] - this.dbMin) / span;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const c = (t * 255) | 0, o = (k * W + x) * 4, s = c * 3;
+        d[o] = this.cmapLut[s]; d[o+1] = this.cmapLut[s+1]; d[o+2] = this.cmapLut[s+2];
+      }
+    }
+  }
+
   /** Re-paint. Cheap on GL (range/colormap are shader uniforms). */
   draw() {
     if (!this.bins) return;
@@ -201,6 +240,8 @@ export class Waterfall {
       gl.uniform1f(this.uni.dbMax, this.dbMax);
       gl.uniform1f(this.uni.viewLo, this.viewLo);
       gl.uniform1f(this.uni.viewHi, this.viewHi);
+      gl.uniform1f(this.uni.rowA, this.rowA);
+      gl.uniform1f(this.uni.rowB, this.rowB);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     } else {
       const w = Math.max(1, this.canvas.clientWidth), h = Math.max(1, this.canvas.clientHeight);
@@ -211,7 +252,12 @@ export class Waterfall {
       const sx = this.viewLo * this.bins;
       const sw = Math.max(1, (this.viewHi - this.viewLo) * this.bins);
       this.ctx.imageSmoothingEnabled = false;
-      this.ctx.drawImage(this.off, sx, 0, sw, this.rows, 0, 0, w, h);
+      if (this.rowA !== 1 || this.rowB !== 0) {
+        const c = this.cmapLut;
+        this.ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        this.ctx.fillRect(0, 0, w, h);
+      }
+      this.ctx.drawImage(this.off, sx, 0, sw, this.rows, 0, this.rowB * h, w, this.rowA * h);
     }
   }
 }

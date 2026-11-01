@@ -121,6 +121,7 @@ export class Session {
         ` (${st.blocks ? (st.ms / st.blocks).toFixed(1) : '-'} ms each), ${st.hits} reads from them, ${st.misses} fell back to JS,` +
         ` ${st.waits} frame or audio calls waited for a block, ${st.outside} outside the capture`);
       this.gr.stop(); this.gr = null;
+      if (this.engine.close) this.engine.close();
     }
     for (const sink of this.sinks.values()) sink.close();
     this.sinks.clear();
@@ -350,6 +351,7 @@ export const METHODS = {
     if (this.engine.prepare) {
       for (const { nodeId, opts, live } of reqs) {
         if (stale()) return { frames: [] };
+        if (opts && opts.holdS) continue;     // read in JS, not from blocks (GrEngine._overviewRead)
         const at = opts && opts.at != null ? opts.at : this.engine.effectiveTime(nodeId);
         await this.engine.prepare(nodeId, at, this.engine.frameSpan(nodeId, opts || {}),
                                   live ? PRIORITY.frame : PRIORITY.read);

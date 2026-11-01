@@ -931,7 +931,9 @@ consecutive parallel runs afterwards: 450 passing in 28–33 s each.
 
 ## Wanted later
 
-- **An inspectrum-style whole-signal view (asked 2026-10-27, needs planning).** The whole
+- **An inspectrum-style whole-signal view (asked 2026-10-27).** Part 1, the map, built
+  2026-11-01 (see "The whole capture as a map"). Part 2, the symbol cursors, still to do.
+  Original ask: The whole
   capture at once as one long spectrogram you pan along, rather than a waterfall scrolling
   past a playhead; then select a region and take it back to the time domain (inverse FFT,
   filtered to the selection) to look at the waveform and symbols. docs/07-reuse.md already
@@ -1860,6 +1862,31 @@ the reader to know that it builds local files. There is an *Updating* section no
 the two failure shapes side by side and `docker compose ps` as the tell — a container's
 uptime is the one indicator that works on every version, including the ones too old to
 have `/version`.
+
+## The whole capture as a map (2026-11-01)
+
+Part 1 of the inspectrum-style view (ADR-0045). The plan was approved with time down the
+screen rather than across, and in two PRs: this map, then a Time tab on a channel with symbol
+cursors.
+
+- **A mode of the waterfall, not a tab:** `whole` button on the stage, `w`, or the
+  `waterfall` cell in the view group. IQ channels only. Newest at the top, as when it follows.
+- **A row is a peak hold** over at most 64 FFTs spread across its slice (`HOLD_FFTS`), and the
+  badge says what fraction that read when it is under 100%. A 20 ms burst between two rows'
+  moments shows 30 dB up (`web/test/whole.test.mjs`).
+- **A box on it is the ordinary selection**, times included; a click moves the playhead; wheel
+  pans time, ctrl+wheel or a pinch zooms it, with the old rows stretched until the new ones
+  arrive (`Waterfall.setRowView`).
+- **Measured:** a full map of a minute at 480 kS/s in about 1.6 s in the tab, 1.9 s for a
+  tuner. The in-tab scene reads 8 windows per row, since it is computed per sample; a tuner on
+  it takes about 13 s. On the server the scene's rows read its recording.
+- **The exception to ADR-0044, on purpose:** the server computes a tuner's map rows with the
+  JS tuner, because GNU Radio blocks are 0.25 s and a row wants 64 short windows. Display
+  only. The fix is a worker call over a list of windows; ADR-0045 says so.
+- **Next (Part 2):** the person asked for this one by name, mid-build: "The best part of
+  Inspectrum was doing the symbol alignment by hand." So the cursors are the point of Part 2,
+  not a measuring aid: a grid you stretch and slide over the waveform until it sits on the
+  transitions, then hand the period to the decoder with that as its evidence.
 
 ## The WBFM station speaks and names itself (2026-10-31)
 
