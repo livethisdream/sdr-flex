@@ -165,6 +165,25 @@ test('and the same detector output read on the frequency axis', async (t) => {
   assert.equal(worst, 0);
 });
 
+test('and the same row of the whole-capture map, never mistaken for a plain frame', async (t) => {
+  const f = await fixture(t);
+  const m = await script(f.mock, f.inMemory());
+  const r = await script(f.remote, f.id);
+
+  const opts = { bins: 512, window: 'Hann', holdS: 0.3 };
+  const want = f.mock.frame(m.tuner.id, { ...opts, at: 0.6 });
+  // the plain frame at the same moment goes first, so a key without `holdS` would serve it
+  f.remote.prefetch(r.tuner.id, { bins: 512, window: 'Hann' }, [0.6]);
+  await settle(f.remote, r.tuner.id, { bins: 512, window: 'Hann', at: 0.6 });
+  f.remote.prefetch(r.tuner.id, opts, [0.6]);
+  const got = await settle(f.remote, r.tuner.id, { ...opts, at: 0.6 });
+
+  assert.deepEqual(got.hold, want.hold);
+  let worst = 0;
+  for (let i = 0; i < want.data.length; i++) worst = Math.max(worst, Math.abs(got.data[i] - want.data[i]));
+  assert.equal(worst, 0);
+});
+
 test('the two axes of one node are not served each other\'s frames', async (t) => {
   // The client asks the same node for a waveform and for a spectrum, a few times a
   // second, on alternate view switches. If the cache key does not carry the domain,

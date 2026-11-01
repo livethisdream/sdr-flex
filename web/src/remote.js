@@ -631,7 +631,7 @@ function frameKey(nodeId, o) {
   // frames to the same node and the same bin count — two axes and, since ADR-0037, up to
   // three channels. Leaving `domain` out served the waveform to the spectrum view, from
   // the cache, forever; leaving `channel` out would serve the left to the right.
-  return `${nodeId}|${o.bins || ''}|${o.window || ''}|${o.spanS || ''}|${o.trigger || ''}|${o.avg || ''}|${o.domain || ''}|${o.channel || ''}`;
+  return `${nodeId}|${o.bins || ''}|${o.window || ''}|${o.spanS || ''}|${o.trigger || ''}|${o.avg || ''}|${o.domain || ''}|${o.channel || ''}|${o.holdS || ''}`;
 }
 
 function defaultUrl() {

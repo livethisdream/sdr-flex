@@ -49,3 +49,4 @@ why, what it costs, and what would make us change our minds.
 | [0042](0042-a-session-is-a-recipe-somewhere-durable.md) | A saved session is the recipe, written somewhere durable — not a live engine held open | Accepted |
 | [0043](0043-a-recipe-is-a-hier-block.md) | A recipe is a hier block; a plugin adds a block | Accepted |
 | [0044](0044-gnu-radio-is-the-engine.md) | GNU Radio is the engine; SDR Flex makes it visible | Accepted |
+| [0045](0045-the-whole-capture-is-a-waterfall-mode.md) | The whole capture is a mode of the waterfall, and a row of it is a peak hold | Accepted |

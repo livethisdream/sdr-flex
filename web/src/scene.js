@@ -376,12 +376,15 @@ function fill(start, count) {
  * 56 ms to generate one waterfall row of a narrow channel and locked the page during
  * prefill. Two trig calls per tone per *call* now, then multiplies.
  */
-export function read(start, count) {
+export function read(start, count, ahead = true) {
   if (start < 0) start = 0;
   if (cache.data && start >= cache.start && start + count <= cache.start + cache.len) {
     const off = (start - cache.start) * 2;
     return cache.data.subarray(off, off + count * 2);   // a view, not a copy
   }
+  // A read that jumps about, like a row of the whole-capture map, would pay for the headroom
+  // every time and use none of it.
+  if (!ahead) return fill(start, count);
   // generate with headroom ahead, since reads slide forward
   const pad = Math.max(count, 1 << 17);
   const len = count + pad;
