@@ -812,6 +812,23 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   color:var(--dim); background:var(--plot-veil); padding:.12rem .38rem; border-radius:2px;
 }
 .trig.on { color:var(--ok); }
+.tstage .ts.gridding { cursor:crosshair; touch-action:none; }
+.gridbar {
+  position:absolute; left:10px; right:10px; top:32px; z-index:3;
+  display:flex; flex-wrap:wrap; align-items:center; gap:.3rem .6rem;
+  font-family:var(--mono); font-size:.66rem; color:var(--on-stage-dim, var(--dim));
+  background:var(--stage); border:1px solid var(--edge); padding:.3rem .5rem; border-radius:3px;
+}
+.gridbar[hidden] { display:none; }
+.gridbar .gm { color:var(--accent); }
+.gridbar .gm.hand { color:var(--warn, var(--accent)); }
+.gridbar .gv { color:var(--on-stage, var(--body)); }
+.gridbar .gw { flex-basis:100%; font-size:.6rem; opacity:.85; }
+.gridbar button {
+  font:inherit; color:inherit; background:none; border:1px solid var(--edge); border-radius:2px;
+  padding:.08rem .4rem; cursor:pointer;
+}
+.gridbar button.use { color:var(--accent); border-color:var(--accent); }
 
 .flowwrap { display:flex; flex-direction:column; gap:2px; }
 .flowhead { color:var(--dim); font-size:.76rem; margin-bottom:.7rem; }

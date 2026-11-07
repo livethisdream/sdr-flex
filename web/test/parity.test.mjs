@@ -184,6 +184,27 @@ test('and the same row of the whole-capture map, never mistaken for a plain fram
   assert.equal(worst, 0);
 });
 
+test('an IQ channel against time matches over the wire, amplitude and frequency apart', async (t) => {
+  const f = await fixture(t);
+  const m = await script(f.mock, f.inMemory());
+  const r = await script(f.remote, f.id);
+
+  for (const quantity of ['amplitude', 'frequency']) {
+    const opts = { spanS: 0.02, trigger: 'free', quantity };
+    const want = f.mock.frame(m.tuner.id, { ...opts, at: 0.6 });
+    f.remote.prefetch(r.tuner.id, opts, [0.6]);
+    const got = await settle(f.remote, r.tuner.id, { ...opts, at: 0.6 });
+    assert.equal(got.kind, 'timeseries');
+    assert.equal(got.data.length, want.data.length);
+    let worst = 0;
+    for (let i = 0; i < want.data.length; i++) {
+      assert.equal(Number.isNaN(got.data[i]), Number.isNaN(want.data[i]), `${quantity} sample ${i} gated the same`);
+      if (!Number.isNaN(want.data[i])) worst = Math.max(worst, Math.abs(got.data[i] - want.data[i]));
+    }
+    assert.equal(worst, 0, quantity);
+  }
+});
+
 test('the two axes of one node are not served each other\'s frames', async (t) => {
   // The client asks the same node for a waveform and for a spectrum, a few times a
   // second, on alternate view switches. If the cache key does not carry the domain,

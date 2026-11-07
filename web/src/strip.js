@@ -223,7 +223,7 @@ export class Strip {
     const ab = this.pop.querySelector('[data-act=auto]');
     if (ab && spec) ab.classList.toggle('on', this._mode(spec) === 'auto');
     const note = this.pop.querySelector('.popnote');
-    if (note && spec && spec.autoNote) note.hidden = this._mode(spec) === 'manual';
+    if (note && spec && spec.autoNote && !(spec.note && this._mode(spec) === 'manual')) note.hidden = this._mode(spec) === 'manual';
     this._place(anchor);
   }
 
@@ -299,7 +299,8 @@ export class Strip {
 
     this.pop.innerHTML =
       `<div class="pophead"><span>${spec.label}</span>${auto}</div>${body}` +
-      (mode === 'auto' && spec.autoNote ? `<div class="popnote">from ${spec.autoNote}</div>` : '');
+      (mode === 'auto' && spec.autoNote ? `<div class="popnote">from ${spec.autoNote}</div>`
+        : mode === 'manual' && spec.note ? `<div class="popnote">${spec.note}</div>` : '');
     this.pop.hidden = false;
 
     const commit = (v) => {

@@ -193,11 +193,11 @@ export class GrEngine extends MockEngine {
     const n = this.node(nodeId);
     if (!n) return 0;
     const fs = n.out.sampleRate, bins = opts.bins || 1024;
-    if (n.out.kind === 'iq') return bins / fs;
-    if (n.out.kind !== 'real') return 0;
-    if (opts.domain === 'frequency') return (bins * 2) / fs;
     const span = opts.spanS || 0.12;
     const search = opts.trigger === 'free' ? span : Math.max(1.05, span);
+    if (n.out.kind === 'iq') return opts.quantity ? Math.min(search, 131072 / fs) + 2 / fs : bins / fs;
+    if (n.out.kind !== 'real') return 0;
+    if (opts.domain === 'frequency') return (bins * 2) / fs;
     return Math.min(search, Math.floor(131072 / this._upstreamRatio(n)) / fs);
   }
 

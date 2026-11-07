@@ -1,0 +1,143 @@
+// The symbol grid (ADR-0046): measured first, then moved by hand, then handed to a slicer.
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as G from '../src/symgrid.js';
+import { MockEngine } from '../src/engine.js';
+import { Capture } from '../src/capture.js';
+
+const FS = 100_000, SYM_S = 417e-6, OFFSET_S = 0.0031;
+
+/** NRZ at 417 µs a symbol, starting 3.1 ms in, with a little noise. */
+function nrz(bits = '1010101011001110001011010011101001', seconds = 0.03) {
+  const n = Math.round(FS * seconds), x = new Float32Array(n);
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32 - 0.5) * 0.1;
+  for (let i = 0; i < n; i++) {
+    const k = Math.floor((i / FS - OFFSET_S) / SYM_S);
+    x[i] = (k >= 0 && k < bits.length && bits[k] === '1' ? 1 : 0) + rnd();
+  }
+  return x;
+}
+
+test('an auto grid finds the period and puts its lines on the transitions', () => {
+  const x = nrz(), t0 = 10;
+  const g = G.fitGrid(x, FS, t0, 0, x.length);
+  assert.equal(g.mode, 'auto');
+  assert.ok(Math.abs(g.period - SYM_S) < 2e-6, `period ${g.period * 1e6} µs`);
+  // every line is a whole number of symbols from where the data starts
+  const k = (g.start - t0 - OFFSET_S) / SYM_S;
+  assert.ok(Math.abs(k - Math.round(k)) < 0.05, `first line ${k.toFixed(3)} symbols off the grid`);
+  assert.ok(g.start >= t0 && g.start + g.count * g.period <= t0 + x.length / FS + 1e-9, 'inside the box');
+  assert.match(g.from, /edges in the box agree on 417\.\d µs \(\d+%\), within ±\d/);
+});
+
+test('a Manchester grid is one line a symbol, though its edges come every half', () => {
+  const bits = '1010101011001110001011010011101001', n = Math.round(FS * 0.03), x = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const u = (i / FS - OFFSET_S) / SYM_S, k = Math.floor(u);
+    const firstHalf = u - k < 0.5;
+    x[i] = k >= 0 && k < bits.length ? ((bits[k] === '1') === firstHalf ? 1 : 0) : 0;
+  }
+  const g = G.fitGrid(x, FS, 0, 0, x.length, 'manchester');
+  assert.ok(Math.abs(g.period - SYM_S) < 2e-6, `period ${g.period * 1e6} µs`);
+});
+
+test('moving, stretching or recounting a grid makes it a hand grid', () => {
+  const g = { start: 1, period: 0.001, count: 10, mode: 'auto' };
+  const m = G.move(g, 0.0002);
+  assert.equal(m.mode, 'hand');
+  assert.equal(m.start, 1.0002);
+  const s = G.stretch(g, 1.012);
+  assert.ok(Math.abs(s.period - 0.0012) < 1e-12);
+  assert.equal(s.start, 1);
+  const c = G.setCount(g, 20);
+  assert.equal(c.count, 20);
+  assert.ok(Math.abs(c.count * c.period - 0.01) < 1e-12, 'same width');
+  assert.equal(G.lines(g).length, 11);
+  assert.equal(G.describe(g), '10 symbols · 1.00 ms · 1000 Bd');
+});
+
+test('too few edges is said plainly, and a hand grid is still there to place', () => {
+  const flat = new Float32Array(2000).fill(0.5);
+  const g = G.fitGrid(flat, FS, 0, 0, flat.length);
+  assert.match(g.error, /too few to measure/);
+  const h = G.handGrid(0, 0.008, 8);
+  assert.equal(h.mode, 'hand');
+  assert.ok(Math.abs(h.period - 0.001) < 1e-12);
+});
+
+test('a frequency trace with gaps (NaN) still fits', () => {
+  const x = nrz();
+  for (let i = 0; i < 200; i++) x[i] = NaN;
+  const g = G.fitGrid(x, FS, 0, 0, x.length);
+  assert.ok(Math.abs(g.period - SYM_S) < 2e-6, `period ${g.period * 1e6} µs`);
+});
+
+test('the residual says how well the lines sit on the edges', () => {
+  const g = { start: 0, period: 1e-3, count: 10, mode: 'hand' };
+  assert.equal(G.residual(g, [0.001, 0.002, 0.005]), 0);
+  assert.ok(Math.abs(G.residual(g, [0.0011, 0.0019]) - 1e-4) < 1e-12);
+});
+
+test('"use this": a hand grid pins the slicer, with where the number came from', () => {
+  const h = G.handoff({ start: 2, period: 416e-6, count: 24, mode: 'hand' });
+  assert.deepEqual(h, { value: 416, mode: 'manual', extra: { from: 'set by hand: 24 symbols over 9.98 ms' } });
+  const a = G.handoff({ start: 2, period: 416e-6, count: 24, mode: 'auto', from: 'x' });
+  assert.equal(a.mode, 'auto');
+  assert.ok(Math.abs(a.extra.span.t1 - (2 + 24 * 416e-6)) < 1e-12);
+});
+
+/** An OOK capture of NRZ bytes: the carrier on for a one. */
+async function nrzEngine() {
+  const seconds = 1, n = FS * seconds, buf = new Uint8Array(n * 2);
+  const bits = '10101010'.repeat(4) + '1100111000101101001110100110001011100101'.repeat(6);
+  const at = 0.2;
+  for (let i = 0; i < n; i++) {
+    const k = Math.floor((i / FS - at) / SYM_S);
+    const on = k >= 0 && k < bits.length && bits[k] === '1';
+    buf[i * 2] = on ? 230 : 128; buf[i * 2 + 1] = 128;
+  }
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  await e.openCapture(new Capture({ buffer: buf.buffer, format: 'cu8', sampleRate: FS, centerHz: 433.92e6, label: 'nrz' }));
+  const am = await e.addNode({ parent: e.root.id, op: 'core.am_envelope' });
+  const sl = await e.addNode({ parent: am.id, op: 'core.nrz_slicer' });
+  return { e, sl: e.node(sl.id) };
+}
+
+test('a hand value lands on the slicer as manual, with its note, and a typed one clears it', async () => {
+  const { e, sl } = await nrzEngine();
+  const h = G.handoff({ start: 0.2, period: 417e-6, count: 24, mode: 'hand' });
+  await e.setParam(sl.id, 'symbolUs', h.value, h.mode, h.extra);
+  assert.equal(e.node(sl.id).params.symbolUs.mode, 'manual');
+  assert.equal(e.node(sl.id).params.symbolUs.note, 'set by hand: 24 symbols over 10.01 ms');
+  await e.setParam(sl.id, 'symbolUs', 400);
+  assert.equal(e.node(sl.id).params.symbolUs.note, undefined);
+});
+
+test('an auto value keeps the slicer auto, and it measures over the box', async () => {
+  const { e, sl } = await nrzEngine();
+  await e.setParam(sl.id, 'symbolUs', 410, 'auto', { from: 'the symbol grid', span: { t0: 0.2, t1: 0.25 } });
+  const out = await e.sliceBytes(sl.id);
+  const p = e.node(sl.id).params.symbolUs;
+  assert.ok(out);
+  assert.equal(p.mode, 'auto');
+  assert.ok(Math.abs(p.value - 417) < 3, `measured ${p.value} µs`);
+  assert.match(p.auto.from, /^the box 0\.200–0\.250 s: \d+% of the edges agree on 41\d\.\d µs/);
+  // and switching it back to plain auto measures the whole capture again
+  await e.setMode(sl.id, 'symbolUs', 'auto');
+  assert.equal(e.node(sl.id).params.symbolUs.span, undefined);
+});
+
+test('an IQ channel reads against time as amplitude or frequency', async () => {
+  const { e } = await nrzEngine();
+  const amp = e.frame(e.root.id, { spanS: 0.05, trigger: 'auto', quantity: 'amplitude', at: 0.28 });
+  assert.equal(amp.kind, 'timeseries');
+  assert.ok(amp.triggered);
+  assert.ok(Math.abs(amp.spanS - 0.05) < 1e-3);
+  const fr = e.frame(e.root.id, { spanS: 0.05, trigger: 'free', quantity: 'frequency', at: 0.28 });
+  let gaps = 0, on = 0;
+  for (const v of fr.data) { if (Number.isNaN(v)) gaps++; else { on++; assert.ok(Math.abs(v) < 1, 'an unmodulated carrier sits at 0 Hz'); } }
+  assert.ok(gaps > 0 && on > 0, 'the off symbols are left out');
+});

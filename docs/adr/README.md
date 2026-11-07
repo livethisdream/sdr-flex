@@ -50,3 +50,4 @@ why, what it costs, and what would make us change our minds.
 | [0043](0043-a-recipe-is-a-hier-block.md) | A recipe is a hier block; a plugin adds a block | Accepted |
 | [0044](0044-gnu-radio-is-the-engine.md) | GNU Radio is the engine; SDR Flex makes it visible | Accepted |
 | [0045](0045-the-whole-capture-is-a-waterfall-mode.md) | The whole capture is a mode of the waterfall, and a row of it is a peak hold | Accepted |
+| [0046](0046-symbol-timing-is-measured-and-can-be-set-by-hand.md) | Symbol timing is measured, and can be set by hand on the waveform | Accepted |
