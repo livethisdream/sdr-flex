@@ -772,7 +772,8 @@ export class MockEngine extends Graph {
     const keys = n.op === 'core.manchester'
       ? ['threshold', 'symbolUs', 'polarity', 'syncHex', 'bitOrder']
       : ['threshold', 'symbolUs', 'syncHex', 'bitOrder'];
-    const keyOf = () => keys.map((k) => n.params[k].value).join('|');
+    const keyOf = () => keys.map((k) => n.params[k].value).join('|') +
+      (n.params.symbolUs.span ? `|${n.params.symbolUs.span.t0}-${n.params.symbolUs.span.t1}` : '');
     if (n._sliced && n._sliced.key === keyOf()) return n._sliced;
 
     const fs = p.out.sampleRate;
@@ -793,13 +794,27 @@ export class MockEngine extends Graph {
     }
     const manchester = n.op === 'core.manchester';
     if (n.params.symbolUs.mode === 'auto') {
+      // The symbol grid can point auto at a box of the waveform it was measured on (ADR-0046):
+      // still derived, still auto, but from those samples.
+      const box = n.params.symbolUs.span;
+      const a = box ? Math.max(0, Math.floor((box.t0 - t0) * fs)) : 0;
+      const b = box ? Math.min(got.data.length, Math.ceil((box.t1 - t0) * fs)) : got.data.length;
+      const over = box && b - a > 16 ? got.data.subarray(a, b) : got.data;
+      const where = over !== got.data ? `the box ${box.t0.toFixed(3)}\u2013${box.t1.toFixed(3)} s: ` : '';
       const sym = manchester
-        ? dsp.estimateManchesterSymbol(got.data, n.params.threshold.value, fs)
-        : dsp.estimateNrzSymbol(got.data, n.params.threshold.value, fs);
+        ? dsp.estimateManchesterSymbol(over, n.params.threshold.value, fs)
+        : dsp.estimateNrzSymbol(over, n.params.threshold.value, fs);
+      // Over a box, the same refinement the grid makes, so the two give the same number.
+      const fine = where && sym.value > 0
+        ? dsp.refineSymbol(dsp.edgesOf(over, n.params.threshold.value), fs, sym.value, { half: manchester }) : null;
+      if (fine && fine.agreement > 0.6) {
+        sym.value = fine.value;
+        sym.refined = fine.agreement;
+      }
       n.params.symbolUs = { ...n.params.symbolUs,
         value: sym.value > 0 ? +sym.value.toFixed(2) : n.params.symbolUs.value,
         auto: {
-          from: manchester
+          from: where + (sym.refined ? `${Math.round(sym.refined * 100)}% of the edges agree on ${sym.value.toFixed(1)} \u00b5s, from ` : '') + (manchester
             ? (sym.confident
                 // The signature of a line code with a transition every symbol: runs
                 // come in exactly two lengths and never a third.
@@ -809,7 +824,7 @@ export class MockEngine extends Graph {
                   'this may not be Manchester')
             : (sym.confident
                 ? `every run is a multiple of ${sym.value.toFixed(1)} \u00b5s (${(sym.agreement * 100).toFixed(0)}% of ${sym.runs} runs)`
-                : `shortest run over ${sym.runs} runs — they do not agree, so this is a guess`),
+                : `shortest run over ${sym.runs} runs — they do not agree, so this is a guess`)),
           confident: sym.confident,
         } };
     }
@@ -1955,11 +1970,21 @@ export class MockEngine extends Graph {
     live._dehopSpanS = st.count / st.sampleRate;
   }
 
-  async setParam(nodeId, key, value, mode = 'manual') {
+  /**
+   * `from` is where a value set from somewhere other than a typed number came from: the
+   * symbol grid's "set by hand: 24 symbols over 9.98 ms", shown beside the value (ADR-0046).
+   * `span` keeps an auto value auto but measured over that `{ t0, t1 }` box rather than the
+   * whole capture. A plain set clears both, because neither describes a typed value.
+   */
+  async setParam(nodeId, key, value, mode = 'manual', { from = null, span = null } = {}) {
     const n = this.node(nodeId);
     const cold = key === 'decim' || key === 'taps';
     await this._sleep(cold ? LATENCY.structuralMs : LATENCY.paramMs);
-    n.params[key] = { ...n.params[key], value, mode };
+    const { note: _n, span: _s, ...was } = n.params[key];
+    n.params[key] = { ...was, value, mode };
+    if (from && mode === 'manual') n.params[key].note = from;
+    if (from && mode === 'auto') n.params[key].auto = { ...(was.auto || {}), from, confident: true };
+    if (span && mode === 'auto') n.params[key].span = span;
     if (key === 't0' || key === 't1' || key === 'timeMode') n._t = null;
     // Choosing the second input is not a setting, it is an edge. It is set from the
     // parameter strip because that is where a node's own controls live, but what it
@@ -1986,7 +2011,8 @@ export class MockEngine extends Graph {
   async setMode(nodeId, key, mode) {
     const n = this.node(nodeId);
     await this._sleep(LATENCY.paramMs);
-    n.params[key] = { ...n.params[key], mode };
+    const { note: _n, span: _s, ...was } = n.params[key];
+    n.params[key] = { ...was, mode };
     return n;
   }
 
@@ -2705,6 +2731,59 @@ export class MockEngine extends Graph {
              hold: { ffts: k, coverage: Math.min(1, (k * bins) / Math.max(1, holdS * fs)) } };
   }
 
+  /**
+   * The `span` of `show` that a triggered scope latches onto: the last burst found in `env`,
+   * with a little room before its edge, or the most recent `span` when there is none.
+   */
+  _latch(env, show, fs, span, windowEnd) {
+    const count = env.length;
+    const win = Math.max(64, Math.min(count, Math.round(fs * span)));
+    const b = dsp.findLastBurst(env, fs);
+    const pre = b ? Math.round(win * 0.12) : 0;
+    const e = b ? Math.min(count, Math.max(win, b.start - pre + win)) : count;
+    const s = Math.max(0, e - win);
+    return {
+      kind: 'timeseries', data: show.subarray(s, e), sampleRate: fs,
+      spanS: (e - s) / fs, t0: windowEnd - (count - s) / fs, triggered: !!b,
+    };
+  }
+
+  /**
+   * An IQ stream against time, as its amplitude or its instantaneous frequency (ADR-0046).
+   *
+   * Frequency is the phase step between neighboring samples, in Hz from the stream's center.
+   * Where either sample is 20 dB under the window's peak it is noise, and noise has a phase
+   * step of anything, so those samples are left out (NaN) rather than drawn as a smear over
+   * the whole height. The trigger reads the amplitude either way: a burst starts there.
+   */
+  _iqTime(n, now, opts, maxSpan) {
+    const fs = n.out.sampleRate;
+    const span = opts.spanS || 0.12;
+    const searchS = Math.min(maxSpan, opts.trigger === 'free' ? span : Math.max(1.05, span));
+    const count = Math.min(131072, Math.max(256, Math.floor(fs * searchS)));
+    const iq = this._readIQ(n, now, count + 1);
+    const amp = new Float32Array(count);
+    let peak = 0;
+    for (let i = 0; i < count; i++) {
+      const a = Math.hypot(iq[2 * i + 2], iq[2 * i + 3]);
+      amp[i] = a;
+      if (a > peak) peak = a;
+    }
+    let show = amp;
+    if (opts.quantity === 'frequency') {
+      show = new Float32Array(count);
+      const gate = peak * 0.1, k = fs / (2 * Math.PI);
+      for (let i = 0; i < count; i++) {
+        const ar = iq[2 * i], ai = iq[2 * i + 1], br = iq[2 * i + 2], bi = iq[2 * i + 3];
+        show[i] = amp[i] < gate || Math.hypot(ar, ai) < gate ? NaN : Math.atan2(bi * ar - br * ai, ar * br + ai * bi) * k;
+      }
+    }
+    if (opts.trigger === 'free') {
+      return { kind: 'timeseries', data: show, sampleRate: fs, spanS: count / fs, t0: now - count / fs, triggered: false };
+    }
+    return this._latch(amp, show, fs, span, now);
+  }
+
   /** The samples a whole-capture row reads. The GNU Radio engine reads them in JS: see there. */
   _overviewRead(n, tEnd, count) { return this._readIQ(n, tEnd, count); }
 
@@ -2738,6 +2817,7 @@ export class MockEngine extends Graph {
     if (n.out.kind === 'iq') {
       const bins = opts.bins || 1024;
       if (opts.holdS > 0) return this._holdSpectrum(n, now, bins, opts.window || 'Hann', opts.holdS);
+      if (opts.quantity) return this._iqTime(n, now, opts, maxSpan);
       const iq = this._readIQ(n, now, bins);
       return { kind: 'spectrum', data: dsp.spectrum(iq, bins, opts.window || 'Hann'), sampleRate: n.out.sampleRate, centerHz: n.out.centerHz };
     }
@@ -2782,16 +2862,7 @@ export class MockEngine extends Graph {
                  spanS: count / fs, t0: windowEnd - count / fs, triggered: false };
       }
 
-      const win = Math.max(64, Math.min(env.length, Math.round(fs * span)));
-      const b = dsp.findLastBurst(env, fs);
-      // nothing to latch onto: show the most recent `span`, not the whole search
-      const pre = b ? Math.round(win * 0.12) : 0;  // a little room before the edge
-      const e = b ? Math.min(env.length, Math.max(win, b.start - pre + win)) : env.length;
-      const s = Math.max(0, e - win);
-      return {
-        kind: 'timeseries', data: env.subarray(s, e), sampleRate: fs,
-        spanS: (e - s) / fs, t0: windowEnd - (count - s) / fs, triggered: !!b,
-      };
+      return this._latch(env, env, fs, span, windowEnd);
     }
 
     if (n.out.kind === 'bytes') {

@@ -1821,6 +1821,48 @@ export function estimateSymbolPeriod(env, threshold, sampleRate) {
   };
 }
 
+/** Threshold crossings in `x`, as fractional sample indices. */
+export function edgesOf(x, threshold) {
+  const out = [];
+  for (let i = 1; i < x.length; i++) {
+    const a = x[i - 1] - threshold, b = x[i] - threshold;
+    if ((a > 0) !== (b > 0)) out.push(i - 1 + a / (a - b));
+  }
+  return out;
+}
+
+/**
+ * A symbol period, refined from where the edges fall (ADR-0046).
+ *
+ * The run-length estimators read a run where the threshold crosses a sloped edge, so a
+ * smoothed envelope's pulses read short: 389 µs for a 417 µs PWM symbol. The edges still
+ * fall a whole number of periods apart, so `guessUs` is only where to start: the period kept
+ * is the one within a quarter of it that the edges agree on best, and `agreement` (0 to 1)
+ * is how well, which is the evidence. `phase` is where the first line falls, in samples.
+ */
+export function refineSymbol(edges, sampleRate, guessUs, { half = false } = {}) {
+  // Manchester has an edge in the middle of every symbol, so its edges agree on half of it.
+  if (half) {
+    const r = refineSymbol(edges, sampleRate, guessUs / 2);
+    return r && { ...r, value: r.value * 2 };
+  }
+  const guess = guessUs * 1e-6 * sampleRate;
+  if (!(guess > 0) || edges.length < 3) return null;
+  const coherence = (T) => {
+    let c = 0, s = 0;
+    for (const e of edges) { const ph = (2 * Math.PI * e) / T; c += Math.cos(ph); s += Math.sin(ph); }
+    return { v: Math.hypot(c, s) / edges.length, c, s, T };
+  };
+  let best = coherence(guess);
+  for (let T = guess * 0.75; T <= guess * 1.25; T += guess * 0.0005) {
+    const k = coherence(T);
+    if (k.v > best.v) best = k;
+  }
+  const P = best.T;
+  return { value: (P / sampleRate) * 1e6, agreement: best.v,
+           phase: ((Math.atan2(best.s, best.c) / (2 * Math.PI)) * P + P) % P };
+}
+
 /** PWM/OOK slicer: one symbol period per bit, long pulse = 1. */
 /**
  * Slice an envelope into bursts of bits, each located in the sample stream so the

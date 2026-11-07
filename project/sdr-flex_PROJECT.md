@@ -932,7 +932,8 @@ consecutive parallel runs afterwards: 450 passing in 28–33 s each.
 ## Wanted later
 
 - **An inspectrum-style whole-signal view (asked 2026-10-27).** Part 1, the map, built
-  2026-11-01 (see "The whole capture as a map"). Part 2, the symbol cursors, still to do.
+  2026-11-01 (see "The whole capture as a map"). Part 2, the symbol grid, built 2026-11-07
+  (see "The symbol grid").
   Original ask: The whole
   capture at once as one long spectrogram you pan along, rather than a waterfall scrolling
   past a playhead; then select a region and take it back to the time domain (inverse FFT,
@@ -1863,6 +1864,25 @@ the two failure shapes side by side and `docker compose ps` as the tell — a co
 uptime is the one indicator that works on every version, including the ones too old to
 have `/version`.
 
+## The symbol grid (2026-11-07)
+
+Part 2 of the inspectrum-style view (ADR-0046). The plan was approved with a separate Time tab
+and one PR. Mid-plan the person changed one thing: "I don't always want it set by hand. I
+want both options." So the grid measures itself first and can then be taken over by hand.
+
+- **A Time tab on every channel** plots its IQ as amplitude or frequency (`plot` in the view
+  group). It is a view, not a block. Frames go over the wire with `quantity` in the key.
+- **`g` or the `grid` button**, then a box. The auto period starts from the downstream
+  slicer's estimator and is refined from the edges (`dsp.refineSymbol`). On the scene's OOK
+  it reads 417.0 µs with the lines ±5.7 µs from the edges. The estimator alone read 389 µs.
+- **By hand:** slide, stretch, wheel or pinch for the count, arrows to nudge. The readout keeps
+  the edges' RMS distance from the lines.
+- **Use for …:** a hand grid pins `symbolUs` with a note; an auto grid keeps it auto and points
+  it at the box (`symbolUs.span`), where NRZ and Manchester measure with the same refinement.
+  `setParam` gained a fifth argument, `{ from, span }`, carried over the socket.
+- **Checked** in a headless browser at 1280 and 390 wide (`web/test/symgrid.test.mjs`, plus a
+  parity test for the IQ time frame).
+
 ## The whole capture as a map (2026-11-01)
 
 Part 1 of the inspectrum-style view (ADR-0045). The plan was approved with time down the
@@ -1883,10 +1903,8 @@ cursors.
 - **The exception to ADR-0044, on purpose:** the server computes a tuner's map rows with the
   JS tuner, because GNU Radio blocks are 0.25 s and a row wants 64 short windows. Display
   only. The fix is a worker call over a list of windows; ADR-0045 says so.
-- **Next (Part 2):** the person asked for this one by name, mid-build: "The best part of
-  Inspectrum was doing the symbol alignment by hand." So the cursors are the point of Part 2,
-  not a measuring aid: a grid you stretch and slide over the waveform until it sits on the
-  transitions, then hand the period to the decoder with that as its evidence.
+- **Part 2** came from the person's words, mid-build: "The best part of Inspectrum was doing
+  the symbol alignment by hand." Built as the symbol grid, above.
 
 ## The WBFM station speaks and names itself (2026-10-31)
 

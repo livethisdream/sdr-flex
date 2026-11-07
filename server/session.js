@@ -304,7 +304,7 @@ export const METHODS = {
     return {};
   },
 
-  async setParam({ nodeId, key, value, mode }) {
+  async setParam({ nodeId, key, value, mode, extra }) {
     // Retuning a radio is not setting a parameter on a node, it is starting a new
     // recording: none of these programs can be retuned in flight, so the process
     // restarts and the ring starts over. Saying so is better than a knob that looks
@@ -315,7 +315,7 @@ export const METHODS = {
       await this.engine.openRadio(this.radio);
       return { rebuilt: true, retuned: true };
     }
-    const r = await this.engine.setParam(nodeId, key, value, mode);
+    const r = await this.engine.setParam(nodeId, key, value, mode, extra || {});
     if (process.env.SDRFLEX_GR_DEBUG) this._lastSet = { nodeId, t: performance.now() };
     return { rebuilt: r.rebuilt };
   },

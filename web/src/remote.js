@@ -338,14 +338,14 @@ export class RemoteEngine extends Graph {
     this._forget();
   }
 
-  async setParam(nodeId, key, value, mode = 'manual') {
+  async setParam(nodeId, key, value, mode = 'manual', extra = {}) {
     const n = this.node(nodeId);
     if (n && n.local) {
       n.params[key] = { ...n.params[key], value, mode };
       n._records = null;
       return { node: n, rebuilt: false };
     }
-    const r = await this.call('setParam', { nodeId, key, value, mode });
+    const r = await this.call('setParam', { nodeId, key, value, mode, extra });
     this._forget();
     return { node: this.node(nodeId), rebuilt: r.rebuilt };
   }
@@ -631,7 +631,7 @@ function frameKey(nodeId, o) {
   // frames to the same node and the same bin count — two axes and, since ADR-0037, up to
   // three channels. Leaving `domain` out served the waveform to the spectrum view, from
   // the cache, forever; leaving `channel` out would serve the left to the right.
-  return `${nodeId}|${o.bins || ''}|${o.window || ''}|${o.spanS || ''}|${o.trigger || ''}|${o.avg || ''}|${o.domain || ''}|${o.channel || ''}|${o.holdS || ''}`;
+  return `${nodeId}|${o.bins || ''}|${o.window || ''}|${o.spanS || ''}|${o.trigger || ''}|${o.avg || ''}|${o.domain || ''}|${o.channel || ''}|${o.holdS || ''}|${o.quantity || ''}`;
 }
 
 function defaultUrl() {

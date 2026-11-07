@@ -7,7 +7,8 @@ import { dragBand } from './band.js';
 import { MockEngine, OPS, LATENCY, demodsFor, cleanName } from './engine.js';
 import { RemoteEngine } from './remote.js';
 import { Waterfall } from './waterfall.js';
-import { SpectrumTrace, TimeSeries, BitRaster, FrameCompare } from './views.js';
+import { SpectrumTrace, TimeSeries, BitRaster, FrameCompare, drawSymbolGrid } from './views.js';
+import * as symgrid from './symgrid.js';
 import { ContextMenu } from './menu.js';
 import { IdentifyPanel } from './identview.js';
 import { AskPanel } from './askview.js';
@@ -22,7 +23,7 @@ import * as out from './export.js';
 import * as plugins from './plugins.js';
 import { AudioMixer, meterLevel } from './audio.js';
 import { COLORMAPS, cssGradient, floorColor, lut, DEFAULT_COLORMAP } from './colormap.js';
-import { WINDOWS, spectrumHasSignal } from './dsp.js';
+import { WINDOWS, spectrumHasSignal, otsuThreshold } from './dsp.js';
 // Only for its SIGNALS table: the synthetic scene is the one source whose contents are
 // known in advance, so it is the one source that can just say what is in it.
 import * as scene from './scene.js';
@@ -139,6 +140,8 @@ const defaultViewParams = () => ({
   // The waterfall follows the playhead, or holds the whole capture still as a map, and
   // which stretch of it the map shows, as fractions of `wholeSpan()`.
   waterfall: 'follow', wholeLo: 0, wholeHi: 1,
+  // What an IQ channel's Time tab plots: its amplitude or its instantaneous frequency.
+  quantity: 'amplitude',
 });
 
 /** What a long free-text value looks like on a bar that has room for about twenty. */
@@ -187,7 +190,7 @@ class App {
   constructor() {
     this.engine = new MockEngine();
     this.viewParams = new Map();   // nodeId -> params
-    this.tabs = new Map();         // channelId -> 'spectrum' | 'flow' | blockNodeId
+    this.tabs = new Map();         // channelId -> 'spectrum' | 'time' | 'flow' | blockNodeId
     // The node whose name is being edited, and the draft so far. Held here rather than
     // in the DOM because the rows it lives in are rebuilt from state, and a live source
     // rebuilds them without being asked.
@@ -491,12 +494,14 @@ class App {
 
   setTab(key) {
     this.tabs.set(this.channel, key);
-    this.current = (key === 'spectrum' || key === 'flow') ? this.channel : key;
+    this.current = (key === 'spectrum' || key === 'time' || key === 'flow') ? this.channel : key;
+    this.closeGrid();
   }
 
   view() {
     const k = this.tabKey();
     if (k === 'spectrum') return 'Spectrum';
+    if (k === 'time') return 'Time';
     if (k === 'flow') return 'Flow';
     const n = this.engine.node(k);
     if (!n) return 'Spectrum';
@@ -875,7 +880,7 @@ class App {
   renderTabs() {
     const blocks = this.blocksOf(this.channel);
     const key = this.tabKey();
-    if (key !== 'spectrum' && key !== 'flow' && !blocks.some((b) => b.id === key)) this.setTab('spectrum');
+    if (key !== 'spectrum' && key !== 'time' && key !== 'flow' && !blocks.some((b) => b.id === key)) this.setTab('spectrum');
 
     // A recipe's steps fold into one tab with the recipe's name (ADR-0043): the recipe as one
     // thing, the "a few knobs" step. Tapping it shows what it makes; tapping it again while
@@ -888,7 +893,8 @@ class App {
       if (g && !this._unfolded.has(g) && last && last.group === g) last.nodes.push(b);
       else folded.push(g && !this._unfolded.has(g) ? { group: g, title: b.recipe.title, nodes: [b] } : { node: b });
     }
-    const items = [{ k: 'spectrum', label: 'Spectrum' }]
+    // The channel's samples against time (ADR-0046): a view of the channel, not a block.
+    const items = [{ k: 'spectrum', label: 'Spectrum' }, { k: 'time', label: 'Time' }]
       .concat(folded.map((f) => {
         if (!f.group || f.nodes.length < 2) return this.tabItem(f.node || f.nodes[0]);
         // What the recipe makes: its last step that is not a speaker.
@@ -1666,7 +1672,7 @@ class App {
           : { label: key, unit: '', fmt: String, type: 'num', step: 1 });
         nodeCells.push({
           key, ...meta, value: pr.value, mode: pr.mode, canAuto: !!pr.auto,
-          autoNote: pr.auto ? pr.auto.from : null,
+          autoNote: pr.auto ? pr.auto.from : null, note: pr.note || null,
           autoValue: pr.auto ? pr.auto.suggested ?? pr.auto.initial : null,
         });
       }
@@ -1727,7 +1733,12 @@ class App {
       ? [{ key: 'channel', label: 'channel', unit: '', type: 'enum', value: p.channel,
            values: ['sum', 'left', 'right', 'difference'] }]
       : [];
-    const viewCells = domainCells.concat(channelCells);
+    const quantityCells = n.out.kind === 'iq'
+      ? [{ key: 'quantity', label: 'plot', unit: '', type: 'enum', value: p.quantity,
+           values: ['amplitude', 'frequency'],
+           hint: 'how strong the signal is, or how far off center it is, sample by sample' }]
+      : [];
+    const viewCells = domainCells.concat(channelCells, quantityCells);
 
     // The scope's controls and the spectrum's, kept apart so `both` can have the two
     // sets in one group. It folds the overflow behind its `more` chip, which is what
@@ -1804,8 +1815,10 @@ class App {
       else if (key === 'channel') { p.channel = value; this.resetSpectrum(); this._tsCache = null; }
       else if (key === 'waterfall') { this.setWhole(value === 'whole'); return; }
       else if (key === 'window') p.window = value;
-      else if (key === 'trigger') { p.trigger = value; this._tsCache = null; }
-      else if (key === 'spanS') { p.spanS = value; this._tsCache = null; }
+      // A grid is placed on the waveform it was drawn over, so a different one puts it away.
+      else if (key === 'trigger') { p.trigger = value; this._tsCache = null; this.closeGrid(); }
+      else if (key === 'spanS') { p.spanS = value; this._tsCache = null; this.closeGrid(); }
+      else if (key === 'quantity') { p.quantity = value; this._tsCache = null; this.closeGrid(); }
       else if (key === 'colormap') { p.colormap = value; this.applyStageColors(value); this.waterfall.setColormap(value); $('#cbar').style.background = cssGradient(value); }
       else p[key] = value;
       if (key === 'dbMin' || key === 'dbMax') p.dbAuto = false;
@@ -3647,6 +3660,228 @@ class App {
    * peak hold over FFTs of the channel (`_holdSpectrum`), and a demodulator's baseband
    * spectrum has no such row yet.
    */
+  // ── the symbol grid (ADR-0046) ───────────────────────────────────────────
+  // Lines one symbol apart over the Time pane's waveform: measured from a box first, then
+  // moved by hand if the measurement is not what you see. `_grid` is null when it is off;
+  // `g` is null until a box has been dragged.
+
+  /** The slicers this view's samples feed, which is where "use this" can send a period. */
+  gridTargets() {
+    const out = [];
+    const walk = (id) => {
+      for (const c of this.engine.children(id)) {
+        if (this.isChannel(c)) continue;
+        if (c.params && c.params.symbolUs && ['core.nrz_slicer', 'core.manchester', 'core.pwm_slicer'].includes(c.op)) out.push(c);
+        walk(c.id);
+      }
+    };
+    walk(this.current);
+    return out;
+  }
+
+  gridOn() { return !!this._grid; }
+
+  openGrid() {
+    if (this.view() !== 'Time' && this.view() !== 'Both') return;
+    this._grid = { g: null, box: null, drag: null, note: null };
+    this.renderGrid();
+  }
+
+  closeGrid() {
+    if (!this._grid) return;
+    this._grid = null;
+    this.renderGrid();
+  }
+
+  /** Seconds at a client x on the Time pane, against the waveform it is holding. */
+  gridTimeAt(clientX) {
+    const f = this._tsCache, r = $('#ts').getBoundingClientRect();
+    return f.t0 + ((clientX - r.left) / Math.max(1, r.width)) * f.spanS;
+  }
+
+  gridX(t) {
+    const f = this._tsCache;
+    return (t - f.t0) / f.spanS;
+  }
+
+  /** Measure a grid over `[t0, t1]`, or lay a hand one there when there is nothing to measure. */
+  fitGridIn(t0, t1) {
+    const f = this._tsCache;
+    if (!f || !this._grid) return;
+    const fs = f.sampleRate;
+    const kind = symgrid.estimatorFor((this.gridTargets()[0] || {}).op);
+    const g = symgrid.fitGrid(f.data, fs, f.t0, (t0 - f.t0) * fs, (t1 - f.t0) * fs, kind);
+    this._grid.box = { t0, t1 };
+    if (g.error) {
+      this._grid.g = symgrid.handGrid(t0, t1, 8);
+      this._grid.note = `could not measure: ${g.error}. Place it by hand.`;
+    } else {
+      this._grid.g = g;
+      this._grid.note = null;
+    }
+    this._grid.edges = this.gridEdges(g.threshold);
+    this.renderGrid();
+  }
+
+  /** Edge times in the held waveform, for the readout of how well the lines sit on them. */
+  gridEdges(threshold) {
+    const f = this._tsCache;
+    if (!f) return [];
+    let thr = threshold;
+    if (thr == null) {
+      const box = this._grid && this._grid.box;
+      const a = box ? Math.max(0, Math.floor((box.t0 - f.t0) * f.sampleRate)) : 0;
+      const b = box ? Math.min(f.data.length, Math.ceil((box.t1 - f.t0) * f.sampleRate)) : f.data.length;
+      const x = Array.from(f.data.subarray(a, b)).filter(Number.isFinite);
+      if (x.length < 16) return [];
+      thr = otsuThreshold(Float32Array.from(x)).value;
+    }
+    return symgrid.edgesOf(f.data, thr).map((e) => f.t0 + e / f.sampleRate);
+  }
+
+  setGrid(g) {
+    if (!this._grid) return;
+    this._grid.g = g;
+    this._grid.note = null;
+    this.renderGrid();
+  }
+
+  async useGrid(nodeId) {
+    const g = this._grid && this._grid.g, n = this.engine.node(nodeId);
+    if (!g || !n) return;
+    const h = symgrid.handoff(g);
+    try {
+      await this.engine.setParam(nodeId, 'symbolUs', h.value, h.mode, h.extra);
+      this.notify(h.mode === 'manual'
+        ? `${this.tag(n)}: symbol period ${symgrid.fmtUs(g.period)}, ${h.extra.from}`
+        : `${this.tag(n)}: symbol period measured over the box, ${symgrid.fmtUs(g.period)} from the grid`, 6000);
+    } catch (err) { this.notify(`could not set the symbol period: ${err.message}`, 9000); }
+    this.renderStrip();
+  }
+
+  /** The button, the readout and the pane's cursor, from `_grid`. */
+  renderGrid() {
+    const btn = $('#gridbtn'), bar = $('#gridbar'), ts = $('#ts');
+    if (!btn) return;
+    const st = this._grid;
+    btn.classList.toggle('on', !!st);
+    ts.classList.toggle('gridding', !!st);
+    bar.hidden = !st;
+    if (!st) { bar.innerHTML = ''; return; }
+    const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+    if (!st.g) {
+      bar.innerHTML = `<span>drag across a few symbols</span><button data-g="close" title="put the grid away (g)">✕</button>`;
+    } else {
+      const g = st.g;
+      const r = st.edges && st.edges.length ? symgrid.residual(g, st.edges) : null;
+      const targets = this.gridTargets();
+      const why = st.note || (g.mode === 'auto' ? `auto: ${g.from}` : 'by hand — drag the ends, scroll for more or fewer symbols, arrows to nudge');
+      bar.innerHTML =
+        `<span class="gm${g.mode === 'hand' ? ' hand' : ''}">${g.mode === 'auto' ? 'auto' : 'by hand'}</span>` +
+        `<span class="gv">${esc(symgrid.describe(g))}</span>` +
+        (r != null ? `<span title="RMS distance from each edge to its nearest line">edges ±${esc(symgrid.fmtUs(r))}</span>` : '') +
+        (g.mode === 'hand' && st.box ? `<button data-g="fit" title="measure it again over the box">fit</button>` : '') +
+        targets.map((t) => `<button class="use" data-g="use" data-id="${t.id}" title="${g.mode === 'auto'
+          ? 'keep it auto, measured over this box' : 'pin it to this period'}">use for ${esc(this.tag(t))}</button>`).join('') +
+        `<button data-g="close" title="put the grid away (g)">✕</button>` +
+        `<span class="gw">${esc(why)}</span>`;
+    }
+    for (const b of bar.querySelectorAll('button')) {
+      b.addEventListener('pointerdown', (e) => e.stopPropagation());
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (b.dataset.g === 'close') this.closeGrid();
+        else if (b.dataset.g === 'fit' && st.box) this.fitGridIn(st.box.t0, st.box.t1);
+        else if (b.dataset.g === 'use') this.useGrid(+b.dataset.id || b.dataset.id);
+      });
+    }
+  }
+
+  drawGrid() {
+    const st = this._grid, f = this._tsCache;
+    if (!st || !f) return;
+    const box = st.drag && st.drag.kind === 'box' ? [this.gridX(st.drag.t0), this.gridX(st.drag.t1)] : null;
+    const xs = st.g ? symgrid.lines(st.g).map((t) => this.gridX(t)) : [];
+    drawSymbolGrid(this.timeSeries, { xs, box, hand: st.g && st.g.mode === 'hand' });
+  }
+
+  /** Pointer, wheel and pinch on the Time pane while the grid is out. */
+  wireGrid() {
+    const ts = $('#ts'), btn = $('#gridbtn');
+    btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    btn.addEventListener('click', (e) => { e.stopPropagation(); this.gridOn() ? this.closeGrid() : this.openGrid(); });
+    const touches = new Map();
+    const near = 12;
+    ts.addEventListener('pointerdown', (e) => {
+      const st = this._grid;
+      if (!st || !this._tsCache || e.button > 0) return;
+      e.preventDefault();
+      ts.setPointerCapture(e.pointerId);
+      touches.set(e.pointerId, e.clientX);
+      const t = this.gridTimeAt(e.clientX);
+      if (touches.size === 2 && st.g) {
+        const [x1, x2] = [...touches.values()];
+        st.drag = { kind: 'pinch', d0: Math.max(8, Math.abs(x1 - x2)), g0: st.g };
+        return;
+      }
+      if (touches.size > 1) return;
+      const r = ts.getBoundingClientRect();
+      if (st.g) {
+        const ls = symgrid.lines(st.g);
+        const px = (tt) => r.left + this.gridX(tt) * r.width;
+        const first = px(ls[0]), last = px(ls[ls.length - 1]);
+        if (Math.abs(e.clientX - last) < near && Math.abs(e.clientX - last) <= Math.abs(e.clientX - first)) {
+          st.drag = { kind: 'stretch', g0: st.g }; return;
+        }
+        if (e.clientX > first - near && e.clientX < last + near) {
+          st.drag = { kind: 'move', t: t, g0: st.g }; return;
+        }
+      }
+      st.drag = { kind: 'box', t0: t, t1: t, x0: e.clientX };
+    });
+    ts.addEventListener('pointermove', (e) => {
+      const st = this._grid;
+      if (!st || !st.drag || !touches.has(e.pointerId)) return;
+      touches.set(e.pointerId, e.clientX);
+      const t = this.gridTimeAt(e.clientX), d = st.drag;
+      if (d.kind === 'pinch') {
+        const [x1, x2] = [...touches.values()];
+        // Fingers apart, symbols wider: fewer of them over the same stretch.
+        this.setGrid(symgrid.setCount(d.g0, d.g0.count * d.d0 / Math.max(8, Math.abs(x1 - x2))));
+      } else if (d.kind === 'move') this.setGrid(symgrid.move(d.g0, t - d.t));
+      else if (d.kind === 'stretch') this.setGrid(symgrid.stretch(d.g0, t));
+      else if (d.kind === 'box') d.t1 = t;
+    });
+    const up = (e) => {
+      const st = this._grid;
+      touches.delete(e.pointerId);
+      if (!st || !st.drag) return;
+      const d = st.drag;
+      if (d.kind === 'pinch' && touches.size) return;
+      st.drag = null;
+      if (d.kind === 'box' && Math.abs(e.clientX - d.x0) > 6) this.fitGridIn(Math.min(d.t0, d.t1), Math.max(d.t0, d.t1));
+    };
+    ts.addEventListener('pointerup', up);
+    ts.addEventListener('pointercancel', up);
+    ts.addEventListener('wheel', (e) => {
+      const st = this._grid;
+      if (!st || !st.g) return;
+      e.preventDefault();
+      this.setGrid(symgrid.setCount(st.g, st.g.count + (e.deltaY < 0 ? 1 : -1)));
+    }, { passive: false });
+  }
+
+  /** Arrow keys: one pixel of a nudge, or of a stretch with shift. True when it took the key. */
+  gridKey(e) {
+    const st = this._grid;
+    if (!st || !st.g || !this._tsCache || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return false;
+    const px = this._tsCache.spanS / Math.max(1, $('#ts').getBoundingClientRect().width);
+    const dt = e.key === 'ArrowLeft' ? -px : px;
+    const g = st.g;
+    this.setGrid(e.shiftKey ? symgrid.stretch(g, g.start + g.count * g.period + dt) : symgrid.move(g, dt));
+    return true;
+  }
+
   isWhole() {
     const n = this.engine.node(this.current);
     return !!n && n.out.kind === 'iq' && this.vp(this.current).waterfall === 'whole';
@@ -4031,6 +4266,7 @@ class App {
     };
     this.wireSummon(stage, openView);
     this.wireSummon($('#pane-time .tstage'), openView);
+    this.wireGrid();
 
     const wb = $('#wholebtn');
     wb.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -4266,8 +4502,10 @@ class App {
       // Escape means "never mind" wherever it is pressed. Behind the input guard it
       // did not, so dismissing the menu from its own search box left the selection
       // box armed on the stage with nothing behind it.
-      if (e.key === 'Escape') { this.clearSelection(); this.menu.close(); return; }
+      if (e.key === 'Escape') { this.clearSelection(); this.menu.close(); this.closeGrid(); return; }
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      if (this.gridKey(e)) { e.preventDefault(); return; }
+      if (e.key === 'g' && (this.view() === 'Time' || this.view() === 'Both')) { e.preventDefault(); this.gridOn() ? this.closeGrid() : this.openGrid(); }
       if (e.key === ' ') { e.preventDefault(); $('#play').click(); }
       if (e.key === 'ArrowLeft') { e.preventDefault(); $('#back').click(); }
       if (e.key === 'ArrowRight') { e.preventDefault(); $('#fwd').click(); }
@@ -4474,10 +4712,14 @@ class App {
       // and simply redrawn in between — free-run still needs every frame
       this._tsAcc = (this._tsAcc || 0) + dt;
       const live = p.trigger === 'free';
-      if (live || this._tsAcc > 220 || !this._tsCache) {
+      // The symbol grid holds the waveform still: its lines are placed on these samples.
+      const held = this._grid && this._tsCache;
+      if (!held && (live || this._tsAcc > 220 || !this._tsCache)) {
         this._tsAcc = 0;
+        const iq = this.node().out.kind === 'iq';
         const f = this.engine.frame(this.current, {
           spanS: p.spanS, trigger: p.trigger,
+          ...(iq ? { quantity: p.quantity } : {}),
           ...(this.channels() > 1 ? { channel: p.channel } : {}),
         });
         if (f.kind === 'timeseries') {
@@ -4492,6 +4734,7 @@ class App {
       }
       if (this._tsCache) {
         this.timeSeries.draw(this._tsCache.data, this._tsCache.spanS);
+        this.drawGrid();
         this.renderTimeAxis(this._tsCache);
       }
     } else if (v === 'Stream') {

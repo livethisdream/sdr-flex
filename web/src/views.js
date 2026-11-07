@@ -158,6 +158,44 @@ export class TimeSeries {
   }
 }
 
+/**
+ * The symbol grid over a TimeSeries (ADR-0046): `xs` are its lines in canvas fractions,
+ * `box` the stretch being dragged. The end lines are drawn heavier, because they are the
+ * two you take hold of.
+ */
+export function drawSymbolGrid(ts, { xs = [], box = null, hand = false } = {}) {
+  const c = ts.ctx, W = ts.canvas.width, H = ts.canvas.height;
+  const dpr = W / Math.max(1, ts.canvas.clientWidth || W);
+  const accent = css('--accent', '#FF7A5C');
+  if (box) {
+    c.fillStyle = css('--accent-veil', 'rgba(255,122,92,.12)');
+    c.fillRect(Math.min(box[0], box[1]) * W, 0, Math.abs(box[1] - box[0]) * W, H);
+  }
+  if (!xs.length) return;
+  c.fillStyle = css('--accent-veil', 'rgba(255,122,92,.12)');
+  c.globalAlpha = 0.5;
+  c.fillRect(xs[0] * W, 0, (xs[xs.length - 1] - xs[0]) * W, H);
+  c.globalAlpha = 1;
+  c.strokeStyle = accent;
+  c.setLineDash(hand ? [] : [3 * dpr, 3 * dpr]);
+  // Past a few pixels apart the lines are a texture, not a grid; the ends still show.
+  const dense = xs.length > 2 && (xs[1] - xs[0]) * W < 3 * dpr;
+  for (let k = 0; k < xs.length; k++) {
+    const end = k === 0 || k === xs.length - 1;
+    if (dense && !end) continue;
+    c.lineWidth = (end ? 2 : 1) * dpr;
+    const x = Math.round(xs[k] * W) + 0.5;
+    c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke();
+  }
+  c.setLineDash([]);
+  // handles on the two ends
+  for (const x of [xs[0], xs[xs.length - 1]]) {
+    c.fillStyle = accent;
+    c.fillRect(x * W - 4 * dpr, 0, 8 * dpr, 6 * dpr);
+    c.fillRect(x * W - 4 * dpr, H - 6 * dpr, 8 * dpr, 6 * dpr);
+  }
+}
+
 export class BitRaster {
   constructor(el) { this.el = el; }
 
