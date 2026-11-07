@@ -27,10 +27,19 @@ number, and each says where that number came from.
   circular mean of the edges' phase. The readout gives the evidence, for example "36 edges
   in the box agree on 417.0 µs (100%), within ±5.69 µs of the lines."
 - **By hand.** Drag the first line or the body to slide the grid. Drag the last line to
-  stretch it. The wheel, or a pinch, gives more or fewer symbols over the same width.
-  Arrows nudge it by a pixel, and shift with an arrow stretches it. Any of these makes it
+  stretch it. `−` and `+` in the readout (held, they repeat) or the wheel give more or
+  fewer symbols over the same width. Arrows nudge it by a pixel, and shift with an arrow
+  stretches it; zoomed in, a pixel is a finer step. Any of these makes it
   a hand grid. `fit` measures the box again. The readout keeps showing how far the edges
   sit from the lines, which is the measure of a good hand alignment.
+- **Zoom, to judge the alignment.** Two fingers, or ctrl+wheel (a trackpad pinch), zoom the
+  Time pane in time around the fingers or the cursor; a sideways scroll, or one finger with
+  no grid out, pans; a double tap or `0` shows the whole frame again. It zooms into the
+  frame already held, so what you see up close are its real samples, drawn as dots once
+  they are far enough apart. The vertical scale stays the whole frame's. The pinch first
+  set the symbol count; it moved to `−`/`+` because zoom is what a pinch means everywhere
+  else in the app (ADR-0045), and zoomed in, the grid's box fills the pane, so a pinch
+  inside it could never zoom back out.
 - **"Use for …"** names each slicer below the view.
   - **A hand grid pins the slicer's `symbolUs`.** The value is manual, and the note reads
     "set by hand: 24 symbols over 9.98 ms". Typing a new value clears the note.

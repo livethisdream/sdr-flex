@@ -812,7 +812,9 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
   color:var(--dim); background:var(--plot-veil); padding:.12rem .38rem; border-radius:2px;
 }
 .trig.on { color:var(--ok); }
-.tstage .ts.gridding { cursor:crosshair; touch-action:none; }
+/* The Time pane zooms under two fingers whether or not the grid is out. */
+.tstage .ts { touch-action:none; }
+.tstage .ts.gridding { cursor:crosshair; }
 .gridbar {
   position:absolute; left:10px; right:10px; top:32px; z-index:3;
   display:flex; flex-wrap:wrap; align-items:center; gap:.3rem .6rem;
@@ -823,7 +825,15 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .gridbar .gm { color:var(--accent); }
 .gridbar .gm.hand { color:var(--warn, var(--accent)); }
 .gridbar .gv { color:var(--on-stage, var(--body)); }
-.gridbar .gw { flex-basis:100%; font-size:.6rem; opacity:.85; }
+.gridbar .gw { flex-basis:100%; font-size:.6rem; }
+.gridbar .gn { display:inline-flex; gap:.2rem; }
+.gridbar .gn button { min-width:1.7rem; touch-action:manipulation; }
+/* The Time pane's background is the theme's, not a colormap's floor, so what sits on
+   it takes the theme's text colors. --on-stage is for the waterfall and stays light. */
+.tstage .gridbar, .tstage .wholebtn { color:var(--body); }
+.tstage .wholebtn { background:var(--stage); }
+.tstage .wholebtn.on { color:var(--accent); }
+.tstage .gridbar .gv { color:var(--bright); }
 .gridbar button {
   font:inherit; color:inherit; background:none; border:1px solid var(--edge); border-radius:2px;
   padding:.08rem .4rem; cursor:pointer;
