@@ -106,8 +106,9 @@ export class SpectrumTrace {
 export class TimeSeries {
   constructor(canvas) { this.canvas = canvas; this.ctx = canvas.getContext('2d'); this.threshold = null; }
   /**
-   * `view` is the stretch of the frame on screen, as fractions of it: zoomed in, the
-   * vertical scale stays the whole frame's, so the waveform does not jump as it pans.
+   * `view` is what is on screen: `lo`–`hi` the stretch of the frame in time, and `ylo`–`yhi`
+   * the stretch of the automatic amplitude range, both as fractions. The automatic range is
+   * the whole frame's, so the waveform does not jump as it pans.
    */
   draw(data, spanS, view = { lo: 0, hi: 1 }) {
     const c = this.ctx;
@@ -125,17 +126,20 @@ export class TimeSeries {
     for (let i = 0; i < data.length; i++) { const v = data[i]; if (v > hi) hi = v; if (v < lo) lo = v; }
     const bipolar = lo < -Math.max(1e-9, hi * 0.02);
     const pad = 5 * dpr;
-    let y;
+    // the automatic range, value at its bottom and top, and where those sit on the canvas
+    let v0, v1, bot, tall;
     if (bipolar) {
       const amp = Math.max(Math.abs(lo), Math.abs(hi), 1e-6) * 1.1;
-      const mid = H / 2;
-      y = (v) => mid - (v / amp) * (H / 2 - pad);
+      v0 = -amp; v1 = amp; bot = H - pad; tall = H - 2 * pad;
+    } else {
+      v0 = 0; v1 = Math.max(hi, 1e-6) * 1.15; bot = H - 4 * dpr; tall = H - 10 * dpr;
+    }
+    const ylo = view.ylo ?? 0, yh = Math.max(1e-9, (view.yhi ?? 1) - ylo);
+    const y = (v) => bot - (((v - v0) / (v1 - v0) - ylo) / yh) * tall;
+    if (bipolar) {
       c.strokeStyle = css('--rule-lo', '#1B2130');
       c.lineWidth = 1 * dpr;
-      c.beginPath(); c.moveTo(0, mid); c.lineTo(W, mid); c.stroke();
-    } else {
-      const top = Math.max(hi, 1e-6) * 1.15;
-      y = (v) => H - 4 * dpr - (v / top) * (H - 10 * dpr);
+      c.beginPath(); c.moveTo(0, y(0)); c.lineTo(W, y(0)); c.stroke();
     }
 
     const N = data.length, vw = Math.max(1e-9, view.hi - view.lo);
@@ -178,6 +182,24 @@ export class TimeSeries {
       c.setLineDash([4 * dpr, 4 * dpr]);
       c.beginPath(); c.moveTo(0, ty); c.lineTo(W, ty); c.stroke();
       c.setLineDash([]);
+    }
+
+    // Zoomed in amplitude, the scale is no longer the obvious one, so it is labeled.
+    if (ylo > 0 || yh < 1) {
+      const at = (f) => v0 + (ylo + f * yh) * (v1 - v0);
+      const step = (v1 - v0) * yh;
+      const digits = Math.max(0, Math.min(6, 2 - Math.floor(Math.log10(Math.max(1e-12, Math.abs(step))))));
+      c.font = `${10 * dpr}px ${css('--mono', 'monospace')}`;
+      c.textBaseline = 'middle';
+      for (const f of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+        const v = at(f), yy = y(v), label = v.toFixed(digits), tw = c.measureText(label).width;
+        c.fillStyle = css('--stage', '#05070B');
+        c.fillRect(2 * dpr, yy - 7 * dpr, tw + 6 * dpr, 14 * dpr);
+        c.fillStyle = css('--dim', '#6E798C');
+        c.fillText(label, 5 * dpr, yy);
+        // the tick goes after the number: before it, it read as a minus sign
+        c.fillRect(tw + 9 * dpr, yy, 6 * dpr, 1 * dpr);
+      }
     }
   }
 }

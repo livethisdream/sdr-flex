@@ -1884,6 +1884,10 @@ want both options." So the grid measures itself first and can then be taken over
   through the samples, with dots. Also fixed: in light mode the readout and the `grid` button
   were near-white on white, because they used `--on-stage`, which follows the waterfall's
   colormap, on a pane whose background follows the theme.
+- **Then (2026-11-08):** on a real phone the readout over the plot hid the tops of the pulses,
+  and there was no amplitude zoom. The label, zoom, `grid` button and readout moved to a strip
+  above the waveform (`.thead`); on a phone the reason line hides behind a tap on the mode.
+  The pinch's vertical gap zooms amplitude, alt+wheel too, with labels down the left.
 - **Use for …:** a hand grid pins `symbolUs` with a note; an auto grid keeps it auto and points
   it at the box (`symbolUs.span`), where NRZ and Manchester measure with the same refinement.
   `setParam` gained a fifth argument, `{ from, span }`, carried over the socket.

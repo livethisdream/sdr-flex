@@ -34,12 +34,20 @@ number, and each says where that number came from.
   sit from the lines, which is the measure of a good hand alignment.
 - **Zoom, to judge the alignment.** Two fingers, or ctrl+wheel (a trackpad pinch), zoom the
   Time pane in time around the fingers or the cursor; a sideways scroll, or one finger with
-  no grid out, pans; a double tap or `0` shows the whole frame again. It zooms into the
+  no grid out, pans; a double tap or `0` shows the whole frame and its whole amplitude again.
+  The gap between the fingers up and down zooms amplitude, as on the map (ADR-0045), each gap
+  floored so fingers side by side zoom only time; alt+wheel zooms amplitude and shift+alt+wheel
+  pans it. Zoomed in amplitude, five labels down the left give the scale. It zooms into the
   frame already held, so what you see up close are its real samples, drawn as dots once
   they are far enough apart. The vertical scale stays the whole frame's. The pinch first
   set the symbol count; it moved to `−`/`+` because zoom is what a pinch means everywhere
   else in the app (ADR-0045), and zoomed in, the grid's box fills the pane, so a pinch
   inside it could never zoom back out.
+- **What the pane says sits above it, not on it.** The trigger label, the zoom, the `grid`
+  button and the grid's readout are a strip above the waveform. Over the plot, on a phone,
+  the readout hid the tops of every pulse. On a phone the readout's reason line is a tap on
+  "auto" or "by hand" away, which keeps the strip to three rows; it is the evidence
+  (ADR-0017), so it is hidden behind one tap rather than dropped.
 - **"Use for …"** names each slicer below the view.
   - **A hand grid pins the slicer's `symbolUs`.** The value is manual, and the note reads
     "set by hand: 24 symbols over 9.98 ms". Typing a new value clears the note.
