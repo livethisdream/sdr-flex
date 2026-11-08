@@ -1875,8 +1875,15 @@ want both options." So the grid measures itself first and can then be taken over
 - **`g` or the `grid` button**, then a box. The auto period starts from the downstream
   slicer's estimator and is refined from the edges (`dsp.refineSymbol`). On the scene's OOK
   it reads 417.0 µs with the lines ±5.7 µs from the edges. The estimator alone read 389 µs.
-- **By hand:** slide, stretch, wheel or pinch for the count, arrows to nudge. The readout keeps
-  the edges' RMS distance from the lines.
+- **By hand:** slide, stretch, `−`/`+` or the wheel for the count, arrows to nudge. The readout
+  keeps the edges' RMS distance from the lines.
+- **Zoom (follow-up, same day):** pinch or ctrl+wheel zooms the Time pane, a sideways scroll
+  pans, a double tap or `0` resets. Asked for on a phone: pinch-to-count worked, but there was
+  no way to get close enough to see a line against an edge. The pinch now zooms, and the count
+  moved to buttons. `TimeSeries.draw` takes a `view`; zoomed past a sample per pixel it draws
+  through the samples, with dots. Also fixed: in light mode the readout and the `grid` button
+  were near-white on white, because they used `--on-stage`, which follows the waterfall's
+  colormap, on a pane whose background follows the theme.
 - **Use for …:** a hand grid pins `symbolUs` with a note; an auto grid keeps it auto and points
   it at the box (`symbolUs.span`), where NRZ and Manchester measure with the same refinement.
   `setParam` gained a fifth argument, `{ from, span }`, carried over the socket.

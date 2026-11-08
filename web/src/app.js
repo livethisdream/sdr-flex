@@ -496,6 +496,7 @@ class App {
     this.tabs.set(this.channel, key);
     this.current = (key === 'spectrum' || key === 'time' || key === 'flow') ? this.channel : key;
     this.closeGrid();
+    this._tz = null;
   }
 
   view() {
@@ -1417,18 +1418,20 @@ class App {
   }
 
   /** The Time pane gets a real axis in ms, and says whether it is latched. */
-  renderTimeAxis(f) {
+  renderTimeAxis(f, view = { lo: 0, hi: 1 }) {
     const el = $('#taxis');
     if (!el) return;
-    const ms = f.spanS * 1e3;
+    const ms0 = view.lo * f.spanS * 1e3, ms = (view.hi - view.lo) * f.spanS * 1e3;
     el.innerHTML = [0, 0.25, 0.5, 0.75, 1].map((k) => {
-      const v = k * ms;
-      return `<span>${v.toFixed(ms < 20 ? 2 : 1)}${k === 1 ? ' ms' : ''}</span>`;
+      const v = ms0 + k * ms;
+      return `<span>${v.toFixed(ms < 2 ? 3 : ms < 20 ? 2 : 1)}${k === 1 ? ' ms' : ''}</span>`;
     }).join('');
     const badge = $('#trig');
     if (badge) {
-      badge.textContent = f.triggered ? `⊓ triggered · burst at ${f.t0.toFixed(3)} s` : '~ free-running';
+      const zoom = view.hi - view.lo < 1 ? ` · ${(1 / (view.hi - view.lo)).toFixed(1)}×` : '';
+      badge.textContent = (f.triggered ? `⊓ triggered · burst at ${f.t0.toFixed(3)} s` : '~ free-running') + zoom;
       badge.className = 'trig' + (f.triggered ? ' on' : '');
+      badge.title = zoom ? 'zoomed in: double-tap, or 0, for the whole frame' : '';
     }
   }
 
@@ -3636,6 +3639,7 @@ class App {
 
   /** Keyboard zoom works about the center, since there is no pointer to anchor to. */
   zoomKey(factor) {
+    if (this.view() === 'Time') { this.zoomTime(factor); return; }
     if (!this.hasSpectrum()) return;
     const p = this.vp(this.current);
     const width = p.zoomHi - p.zoomLo;
@@ -3695,13 +3699,31 @@ class App {
 
   /** Seconds at a client x on the Time pane, against the waveform it is holding. */
   gridTimeAt(clientX) {
-    const f = this._tsCache, r = $('#ts').getBoundingClientRect();
-    return f.t0 + ((clientX - r.left) / Math.max(1, r.width)) * f.spanS;
+    const f = this._tsCache, r = $('#ts').getBoundingClientRect(), v = this.tsView();
+    return f.t0 + (v.lo + ((clientX - r.left) / Math.max(1, r.width)) * (v.hi - v.lo)) * f.spanS;
   }
 
   gridX(t) {
-    const f = this._tsCache;
-    return (t - f.t0) / f.spanS;
+    const f = this._tsCache, v = this.tsView();
+    return ((t - f.t0) / f.spanS - v.lo) / (v.hi - v.lo);
+  }
+
+  /** The stretch of the waveform on the Time pane, as fractions of the frame it holds. */
+  tsView() { return this._tz || { lo: 0, hi: 1 }; }
+
+  setTimeView(lo, w) {
+    if (w >= 1 - 1e-9) { this._tz = null; return; }
+    lo = Math.max(0, Math.min(1 - w, lo));
+    this._tz = { lo, hi: lo + w };
+  }
+
+  /** Zoom the Time pane by `factor`, keeping what is under `at` (a fraction of the pane) there. */
+  zoomTime(factor, at = 0.5) {
+    const v = this.tsView(), w = v.hi - v.lo;
+    // no closer than eight samples across the pane
+    const n = this._tsCache ? this._tsCache.data.length : 1024;
+    const nw = Math.min(1, Math.max(Math.min(1, 8 / n), w * factor));
+    this.setTimeView(v.lo + at * w - at * nw, nw);
   }
 
   /** Measure a grid over `[t0, t1]`, or lay a hand one there when there is nothing to measure. */
@@ -3775,10 +3797,12 @@ class App {
       const g = st.g;
       const r = st.edges && st.edges.length ? symgrid.residual(g, st.edges) : null;
       const targets = this.gridTargets();
-      const why = st.note || (g.mode === 'auto' ? `auto: ${g.from}` : 'by hand — drag the ends, scroll for more or fewer symbols, arrows to nudge');
+      const why = st.note || (g.mode === 'auto' ? `auto: ${g.from}` : 'by hand — drag the ends, − + for the count, pinch to zoom, double-tap to zoom out, arrows to nudge');
       bar.innerHTML =
         `<span class="gm${g.mode === 'hand' ? ' hand' : ''}">${g.mode === 'auto' ? 'auto' : 'by hand'}</span>` +
         `<span class="gv">${esc(symgrid.describe(g))}</span>` +
+        `<span class="gn"><button data-g="less" title="fewer symbols over the same stretch (wheel)">−</button>` +
+        `<button data-g="more" title="more symbols over the same stretch (wheel)">+</button></span>` +
         (r != null ? `<span title="RMS distance from each edge to its nearest line">edges ±${esc(symgrid.fmtUs(r))}</span>` : '') +
         (g.mode === 'hand' && st.box ? `<button data-g="fit" title="measure it again over the box">fit</button>` : '') +
         targets.map((t) => `<button class="use" data-g="use" data-id="${t.id}" title="${g.mode === 'auto'
@@ -3787,14 +3811,31 @@ class App {
         `<span class="gw">${esc(why)}</span>`;
     }
     for (const b of bar.querySelectorAll('button')) {
-      b.addEventListener('pointerdown', (e) => e.stopPropagation());
+      const step = b.dataset.g === 'more' ? 1 : b.dataset.g === 'less' ? -1 : 0;
+      b.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        if (step) this.gridCountHold(step);
+      });
       b.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (step) return;
         if (b.dataset.g === 'close') this.closeGrid();
         else if (b.dataset.g === 'fit' && st.box) this.fitGridIn(st.box.t0, st.box.t1);
         else if (b.dataset.g === 'use') this.useGrid(+b.dataset.id || b.dataset.id);
       });
     }
+  }
+
+  /**
+   * One symbol more or fewer, then more while the button is held. The readout is redrawn
+   * under the finger on every step, so the release is caught on the window.
+   */
+  gridCountHold(step) {
+    const tick = () => { const st = this._grid; if (st && st.g) this.setGrid(symgrid.setCount(st.g, st.g.count + step)); };
+    clearTimeout(this._countHold);
+    tick();
+    const again = (ms) => { this._countHold = setTimeout(() => { tick(); again(70); }, ms); };
+    again(400);
   }
 
   drawGrid() {
@@ -3805,26 +3846,46 @@ class App {
     drawSymbolGrid(this.timeSeries, { xs, box, hand: st.g && st.g.mode === 'hand' });
   }
 
-  /** Pointer, wheel and pinch on the Time pane while the grid is out. */
+  /**
+   * Pointer, wheel and pinch on the Time pane. Two fingers (or ctrl+wheel, which is how a
+   * trackpad pinch arrives) zoom in time; a sideways scroll, or one finger when there is no
+   * grid, pans; a double tap goes back to the whole frame. With the grid out, one finger
+   * draws its box, moves it, or stretches its last line, and the wheel changes its count.
+   */
   wireGrid() {
     const ts = $('#ts'), btn = $('#gridbtn');
     btn.addEventListener('pointerdown', (e) => e.stopPropagation());
     btn.addEventListener('click', (e) => { e.stopPropagation(); this.gridOn() ? this.closeGrid() : this.openGrid(); });
+    addEventListener('pointerup', () => clearTimeout(this._countHold));
+    addEventListener('pointercancel', () => clearTimeout(this._countHold));
     const touches = new Map();
     const near = 12;
+    let zoom = null, pan = null, down = null, lastTap = { t: 0, x: 0 };
+    const frac = (x) => { const r = ts.getBoundingClientRect(); return Math.max(0, Math.min(1, (x - r.left) / Math.max(1, r.width))); };
+    // With the fingers one above the other the gap is nearly zero, so it is floored.
+    const pinch = () => { const [x1, x2] = [...touches.values()]; return { d: Math.max(40, Math.abs(x1 - x2)), mid: frac((x1 + x2) / 2) }; };
     ts.addEventListener('pointerdown', (e) => {
       const st = this._grid;
-      if (!st || !this._tsCache || e.button > 0) return;
-      e.preventDefault();
-      ts.setPointerCapture(e.pointerId);
+      if (!this._tsCache || e.button > 0) return;
       touches.set(e.pointerId, e.clientX);
-      const t = this.gridTimeAt(e.clientX);
-      if (touches.size === 2 && st.g) {
-        const [x1, x2] = [...touches.values()];
-        st.drag = { kind: 'pinch', d0: Math.max(8, Math.abs(x1 - x2)), g0: st.g };
+      ts.setPointerCapture(e.pointerId);
+      if (touches.size === 2) {
+        e.preventDefault();
+        // the first finger was the start of a pinch, not a drag: undo what it did
+        if (st && st.drag) { if (st.drag.g0) this.setGrid(st.drag.g0); st.drag = null; }
+        pan = null; down = null;
+        const p = pinch(), v = this.tsView();
+        zoom = { d0: p.d, w0: v.hi - v.lo, under: v.lo + p.mid * (v.hi - v.lo) };
         return;
       }
-      if (touches.size > 1) return;
+      if (touches.size > 2) return;
+      down = { x: e.clientX, t: performance.now() };
+      if (!st) {
+        if (this._tz) { e.preventDefault(); pan = { x0: e.clientX, v0: this.tsView() }; }
+        return;
+      }
+      e.preventDefault();
+      const t = this.gridTimeAt(e.clientX);
       const r = ts.getBoundingClientRect();
       if (st.g) {
         const ls = symgrid.lines(st.g);
@@ -3840,30 +3901,63 @@ class App {
       st.drag = { kind: 'box', t0: t, t1: t, x0: e.clientX };
     });
     ts.addEventListener('pointermove', (e) => {
-      const st = this._grid;
-      if (!st || !st.drag || !touches.has(e.pointerId)) return;
+      if (!touches.has(e.pointerId)) return;
       touches.set(e.pointerId, e.clientX);
+      if (zoom) {
+        if (touches.size !== 2) return;
+        // what was under the fingers stays under them, so moving both pans as well
+        const p = pinch(), n = this._tsCache.data.length;
+        const nw = Math.min(1, Math.max(Math.min(1, 8 / n), zoom.w0 * zoom.d0 / p.d));
+        this.setTimeView(zoom.under - p.mid * nw, nw);
+        return;
+      }
+      if (pan) {
+        const w = pan.v0.hi - pan.v0.lo;
+        this.setTimeView(pan.v0.lo - (e.clientX - pan.x0) / Math.max(1, ts.getBoundingClientRect().width) * w, w);
+        return;
+      }
+      const st = this._grid;
+      if (!st || !st.drag) return;
       const t = this.gridTimeAt(e.clientX), d = st.drag;
-      if (d.kind === 'pinch') {
-        const [x1, x2] = [...touches.values()];
-        // Fingers apart, symbols wider: fewer of them over the same stretch.
-        this.setGrid(symgrid.setCount(d.g0, d.g0.count * d.d0 / Math.max(8, Math.abs(x1 - x2))));
-      } else if (d.kind === 'move') this.setGrid(symgrid.move(d.g0, t - d.t));
+      if (d.kind === 'move') this.setGrid(symgrid.move(d.g0, t - d.t));
       else if (d.kind === 'stretch') this.setGrid(symgrid.stretch(d.g0, t));
       else if (d.kind === 'box') d.t1 = t;
     });
     const up = (e) => {
+      if (!touches.delete(e.pointerId)) return;
+      // after a pinch, the finger still down is not the start of anything
+      if (zoom) { if (!touches.size) zoom = null; return; }
+      pan = null;
+      const tapped = down && e.type === 'pointerup' && Math.abs(e.clientX - down.x) <= 6 && performance.now() - down.t < 300;
+      down = null;
+      if (tapped) {
+        const now = performance.now();
+        if (now - lastTap.t < 350 && Math.abs(e.clientX - lastTap.x) < 30) { this.setTimeView(0, 1); lastTap = { t: 0, x: 0 }; }
+        else lastTap = { t: now, x: e.clientX };
+      }
       const st = this._grid;
-      touches.delete(e.pointerId);
       if (!st || !st.drag) return;
       const d = st.drag;
-      if (d.kind === 'pinch' && touches.size) return;
       st.drag = null;
       if (d.kind === 'box' && Math.abs(e.clientX - d.x0) > 6) this.fitGridIn(Math.min(d.t0, d.t1), Math.max(d.t0, d.t1));
     };
     ts.addEventListener('pointerup', up);
     ts.addEventListener('pointercancel', up);
+    ts.addEventListener('lostpointercapture', up);
     ts.addEventListener('wheel', (e) => {
+      if (!this._tsCache) return;
+      if (e.ctrlKey) {
+        e.preventDefault();
+        this.zoomTime(Math.exp(Math.max(-1, Math.min(1, e.deltaY * 0.01))), frac(e.clientX));
+        return;
+      }
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        if (!this._tz) return;
+        e.preventDefault();
+        const v = this.tsView(), w = v.hi - v.lo;
+        this.setTimeView(v.lo + e.deltaX / Math.max(1, ts.getBoundingClientRect().width) * w, w);
+        return;
+      }
       const st = this._grid;
       if (!st || !st.g) return;
       e.preventDefault();
@@ -3875,7 +3969,8 @@ class App {
   gridKey(e) {
     const st = this._grid;
     if (!st || !st.g || !this._tsCache || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return false;
-    const px = this._tsCache.spanS / Math.max(1, $('#ts').getBoundingClientRect().width);
+    const v = this.tsView();
+    const px = this._tsCache.spanS * (v.hi - v.lo) / Math.max(1, $('#ts').getBoundingClientRect().width);
     const dt = e.key === 'ArrowLeft' ? -px : px;
     const g = st.g;
     this.setGrid(e.shiftKey ? symgrid.stretch(g, g.start + g.count * g.period + dt) : symgrid.move(g, dt));
@@ -4205,6 +4300,7 @@ class App {
     };
 
     const resetZoom = () => {
+      if (this.view() === 'Time') { this.setTimeView(0, 1); return; }
       const p = this.vp(this.current);
       p.zoomLo = 0; p.zoomHi = 1;
       this.renderStage();
@@ -4724,6 +4820,7 @@ class App {
         });
         if (f.kind === 'timeseries') {
           const n = this.node();
+          if (this._tsCache && Math.abs(f.spanS - this._tsCache.spanS) > 0.01 * f.spanS) this._tz = null;
           this.timeSeries.threshold = null;
           for (const c of this.engine.children(n.id)) if (c.op === 'core.pwm_slicer') this.timeSeries.threshold = c.params.threshold.value;
           this._tsCache = f;
@@ -4733,9 +4830,9 @@ class App {
         }
       }
       if (this._tsCache) {
-        this.timeSeries.draw(this._tsCache.data, this._tsCache.spanS);
+        this.timeSeries.draw(this._tsCache.data, this._tsCache.spanS, this.tsView());
         this.drawGrid();
-        this.renderTimeAxis(this._tsCache);
+        this.renderTimeAxis(this._tsCache, this.tsView());
       }
     } else if (v === 'Stream') {
       this.renderStream();

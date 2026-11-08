@@ -105,7 +105,11 @@ export class SpectrumTrace {
 
 export class TimeSeries {
   constructor(canvas) { this.canvas = canvas; this.ctx = canvas.getContext('2d'); this.threshold = null; }
-  draw(data, spanS) {
+  /**
+   * `view` is the stretch of the frame on screen, as fractions of it: zoomed in, the
+   * vertical scale stays the whole frame's, so the waveform does not jump as it pans.
+   */
+  draw(data, spanS, view = { lo: 0, hi: 1 }) {
     const c = this.ctx;
     const dpr = fit(this.canvas);
     const W = this.canvas.width, H = this.canvas.height;
@@ -134,17 +138,37 @@ export class TimeSeries {
       y = (v) => H - 4 * dpr - (v / top) * (H - 10 * dpr);
     }
 
-    // min/max envelope per pixel column — how a long capture draws at 2000 px
-    const per = data.length / W;
+    const N = data.length, vw = Math.max(1e-9, view.hi - view.lo);
+    const per = (N * vw) / W, first = view.lo * N;
     c.strokeStyle = css('--trace', '#D2E8E3');
     c.lineWidth = 1 * dpr;
     c.beginPath();
-    for (let x = 0; x < W; x++) {
-      let lo = Infinity, up = -Infinity;
-      const s = Math.floor(x * per), e = Math.min(data.length, Math.floor((x + 1) * per) + 1);
-      for (let i = s; i < e; i++) { if (data[i] < lo) lo = data[i]; if (data[i] > up) up = data[i]; }
-      if (lo === Infinity) continue;
-      c.moveTo(x + 0.5, y(lo)); c.lineTo(x + 0.5, y(up));
+    if (per >= 1) {
+      // min/max envelope per pixel column — how a long capture draws at 2000 px
+      for (let x = 0; x < W; x++) {
+        let lo = Infinity, up = -Infinity;
+        const s = Math.max(0, Math.floor(first + x * per)), e = Math.min(N, Math.floor(first + (x + 1) * per) + 1);
+        for (let i = s; i < e; i++) { if (data[i] < lo) lo = data[i]; if (data[i] > up) up = data[i]; }
+        if (lo === Infinity) continue;
+        c.moveTo(x + 0.5, y(lo)); c.lineTo(x + 0.5, y(up));
+      }
+    } else {
+      // Fewer samples than columns: a line through the samples, each where it falls in
+      // time, so a symbol line can be read against the sample it sits next to.
+      const at = (i) => (i - first) / per;
+      const s = Math.max(0, Math.floor(first) - 1), e = Math.min(N, Math.ceil(first + W * per) + 2);
+      let pen = false;
+      for (let i = s; i < e; i++) {
+        if (!Number.isFinite(data[i])) { pen = false; continue; }
+        if (pen) c.lineTo(at(i), y(data[i])); else c.moveTo(at(i), y(data[i]));
+        pen = true;
+      }
+      c.stroke();
+      if (1 / per > 6 * dpr) {
+        c.fillStyle = css('--trace', '#D2E8E3');
+        for (let i = s; i < e; i++) if (Number.isFinite(data[i])) c.fillRect(at(i) - 1.5 * dpr, y(data[i]) - 1.5 * dpr, 3 * dpr, 3 * dpr);
+      }
+      c.beginPath();
     }
     c.stroke();
 

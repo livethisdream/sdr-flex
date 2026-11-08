@@ -141,3 +141,20 @@ test('an IQ channel reads against time as amplitude or frequency', async () => {
   for (const v of fr.data) { if (Number.isNaN(v)) gaps++; else { on++; assert.ok(Math.abs(v) < 1, 'an unmodulated carrier sits at 0 Hz'); } }
   assert.ok(gaps > 0 && on > 0, 'the off symbols are left out');
 });
+
+test('zoomed in, each sample is drawn where its time falls, so a line can be read against it', async () => {
+  globalThis.window ??= { devicePixelRatio: 1 };
+  globalThis.document ??= { documentElement: {} };
+  globalThis.getComputedStyle ??= () => ({ getPropertyValue: () => '' });
+  const { TimeSeries } = await import('../src/views.js');
+  const pts = [];
+  const ctx = new Proxy({}, { get: (_, k) => k === 'moveTo' || k === 'lineTo' ? (x, y) => pts.push([x, y]) : () => {}, set: () => true });
+  const ts = new TimeSeries({ clientWidth: 1000, clientHeight: 200, width: 0, height: 0, getContext: () => ctx });
+  const data = new Float32Array(2000).map((_, i) => (i % 40 < 20 ? 1 : 0));
+  const view = { lo: 0.25, hi: 0.275 };                                      // 50 samples on 1000 px
+  ts.draw(data, 0.02, view);
+  // sample 520 is at fraction 0.26 of the frame, so 40% of the way across the view
+  const x520 = pts.find(([x]) => Math.abs(x - ((520 / 2000 - view.lo) / (view.hi - view.lo)) * 1000) < 1e-6);
+  assert.ok(x520, 'sample 520 is drawn at x = 400');
+  assert.ok(pts.every(([x]) => x > -40 && x < 1040), 'only the samples in view, and their neighbors');
+});
