@@ -57,6 +57,23 @@ number, and each says where that number came from.
     the box.
 - **No grid, no change.** A slicer nobody gridded measures the whole capture as before.
 
+- **"Slice as PWM · NRZ · Manchester"** when nothing below the view can take the grid.
+  Without a slicer, a drag across the symbols had nowhere to go. Each button builds the
+  chain, an AM demod first on an IQ channel, then the slicer, hands it the period exactly as
+  "use for" does, and opens its bits. The likely one is highlighted, from the box's runs
+  measured in grid periods (`symgrid.guessCoding`), and the reason line says what the guess
+  rests on:
+  - **PWM:** pulses one or two periods long, and every pulse with its gap the same length,
+    because every bit takes the same time ("a pulse with its gap is always 3.00").
+  - **Manchester:** with no slicer below, the grid is fitted to every edge, and Manchester
+    has one in the middle of each symbol, so its lines fall at half symbols. Every run is
+    then one or two lines, and the long ones all start on alternate lines, because they span
+    a symbol's middle. Its slicer is handed twice the grid's period (`scaleFor`).
+  - **NRZ:** otherwise, runs of one to several periods with no fixed shape.
+
+  It is a guess, so all three buttons are always there. On the scene's burst it picks PWM,
+  and the slicer it builds reads "SDR FLEX".
+
 ## Why both
 
 The person asked for hand alignment by name: "The best part of Inspectrum was doing the

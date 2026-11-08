@@ -1888,6 +1888,11 @@ want both options." So the grid measures itself first and can then be taken over
   and there was no amplitude zoom. The label, zoom, `grid` button and readout moved to a strip
   above the waveform (`.thead`); on a phone the reason line hides behind a tap on the mode.
   The pinch's vertical gap zooms amplitude, alt+wheel too, with labels down the left.
+- **Slice as (2026-11-08):** asked "how do I go from 'drag across a few symbols' to a fully
+  sliced string of bits/bytes?" With no slicer below, there was no path from the grid. Now
+  the readout offers PWM · NRZ · Manchester, highlights a guess from the runs in the box, and
+  builds AM demod plus slicer with the grid's period, then opens the bits. On the scene: PWM,
+  "SDR FLEX". Open: on a phone the Bits view's hex and text columns are off the right edge.
 - **Use for …:** a hand grid pins `symbolUs` with a note; an auto grid keeps it auto and points
   it at the box (`symbolUs.span`), where NRZ and Manchester measure with the same refinement.
   `setParam` gained a fifth argument, `{ from, span }`, carried over the socket.
