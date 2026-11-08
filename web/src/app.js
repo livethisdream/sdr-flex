@@ -3795,7 +3795,7 @@ class App {
   async useGrid(nodeId) {
     const g = this._grid && this._grid.g, n = this.engine.node(nodeId);
     if (!g || !n) return;
-    const h = symgrid.handoff(g);
+    const h = symgrid.handoff(g, symgrid.scaleFor(g, n.op));
     try {
       await this.engine.setParam(nodeId, 'symbolUs', h.value, h.mode, h.extra);
       this.notify(h.mode === 'manual'
@@ -3803,6 +3803,32 @@ class App {
         : `${this.tag(n)}: symbol period measured over the box, ${symgrid.fmtUs(g.period)} from the grid`, 6000);
     } catch (err) { this.notify(`could not set the symbol period: ${err.message}`, 9000); }
     this.renderStrip();
+  }
+
+  /**
+   * "Slice as …" with nothing below to take the grid: build the chain — an AM demod first on
+   * an IQ channel — hand the slicer the grid's period as "use for" would, and open it.
+   */
+  async sliceAs(op) {
+    const g = this._grid && this._grid.g;
+    if (!g) return;
+    try {
+      let parent = this.current;
+      if (this.node().out.kind === 'iq') parent = (await this.engine.addNode({ parent, op: 'core.am_envelope' })).id;
+      const sl = await this.engine.addNode({ parent, op });
+      const h = symgrid.handoff(g, symgrid.scaleFor(g, op));
+      await this.engine.setParam(sl.id, 'symbolUs', h.value, h.mode, h.extra);
+      this.closeGrid();
+      this.vp(sl.id);
+      this.setTab(sl.id);
+      this._tsCache = null;
+      this._bitsSeen = false;
+      this.refresh();
+      this.notify(`${this.tag(this.engine.node(sl.id))}: symbol period ${symgrid.fmtUs(g.period * symgrid.scaleFor(g, op))} from the grid`, 6000);
+    } catch (err) {
+      this.notify(`could not build the slicer: ${err.message}`, 9000);
+      this.refresh();
+    }
   }
 
   /** The button, the readout and the pane's cursor, from `_grid`. */
@@ -3822,7 +3848,14 @@ class App {
       const g = st.g;
       const r = st.edges && st.edges.length ? symgrid.residual(g, st.edges) : null;
       const targets = this.gridTargets();
-      const why = st.note || (g.mode === 'auto' ? `auto: ${g.from}` : 'by hand — drag the ends, − + for the count, pinch across for time and up and down for amplitude, double-tap for all, arrows to nudge');
+      const guess = !targets.length && g.coding;
+      const why = (st.note || (g.mode === 'auto' ? `auto: ${g.from}` : 'by hand — drag the ends, − + for the count, pinch across for time and up and down for amplitude, double-tap for all, arrows to nudge')) +
+        (guess ? ` · looks like ${guess.op === 'core.pwm_slicer' ? 'PWM' : guess.op === 'core.manchester' ? 'Manchester' : 'NRZ'}: ${guess.why}` : '');
+      const SLICERS = [['core.pwm_slicer', 'PWM'], ['core.nrz_slicer', 'NRZ'], ['core.manchester', 'Manchester']];
+      const sliceAs = targets.length ? '' : `<span class="gs">slice as` + SLICERS.map(([op, label]) =>
+        `<button data-g="slice" data-op="${op}" class="${guess && guess.op === op ? 'use' : ''}" title="${esc(
+          (guess && guess.op === op ? `the likely one: ${guess.why}. ` : '') +
+          `add ${this.node().out.kind === 'iq' ? 'an AM demod and ' : ''}a ${label} slicer with this symbol period, and show its bits`)}">${label}</button>`).join('') + `</span>`;
       bar.innerHTML =
         `<span class="gm${g.mode === 'hand' ? ' hand' : ''}">${g.mode === 'auto' ? 'auto' : 'by hand'}</span>` +
         `<span class="gv">${esc(symgrid.describe(g))}</span>` +
@@ -3830,6 +3863,7 @@ class App {
         `<button data-g="more" title="more symbols over the same stretch (wheel)">+</button></span>` +
         (r != null ? `<span title="RMS distance from each edge to its nearest line">edges ±${esc(symgrid.fmtUs(r))}</span>` : '') +
         (g.mode === 'hand' && st.box ? `<button data-g="fit" title="measure it again over the box">fit</button>` : '') +
+        sliceAs +
         targets.map((t) => `<button class="use" data-g="use" data-id="${t.id}" title="${g.mode === 'auto'
           ? 'keep it auto, measured over this box' : 'pin it to this period'}">use for ${esc(this.tag(t))}</button>`).join('') +
         `<button data-g="close" title="put the grid away (g)">✕</button>` +
@@ -3853,6 +3887,7 @@ class App {
         if (b.dataset.g === 'close') this.closeGrid();
         else if (b.dataset.g === 'fit' && st.box) this.fitGridIn(st.box.t0, st.box.t1);
         else if (b.dataset.g === 'use') this.useGrid(+b.dataset.id || b.dataset.id);
+        else if (b.dataset.g === 'slice') this.sliceAs(b.dataset.op);
       });
     }
   }

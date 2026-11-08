@@ -836,6 +836,7 @@ button { font:inherit; color:inherit; background:none; border:0; cursor:pointer;
 .gridbar .gw { flex-basis:100%; font-size:.6rem; }
 .gridbar .gn { display:inline-flex; gap:.2rem; }
 .gridbar .gn button { min-width:1.7rem; touch-action:manipulation; }
+.gridbar .gs { display:inline-flex; align-items:center; gap:.3rem; }
 /* On a phone the reason is a tap on "auto" or "by hand" away, so the strip stays two rows. */
 @media (max-width: 600px) {
   .gridbar .gw { display:none; }

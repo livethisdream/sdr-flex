@@ -176,3 +176,65 @@ test('zoomed in amplitude, a level sits where the view puts it, and the scale is
   assert.equal(text.length, 5, 'five labels down the side');
   assert.ok(+text[0] < +text[4], 'they count up the pane');
 });
+
+/** Runs of high and low, in symbols, as an envelope at `sps` samples a symbol. */
+function fromRuns(runs, sps = 40) {
+  const out = [];
+  let hi = false;
+  for (const n of [6, ...runs, 6]) { for (let i = 0; i < Math.round(n * sps); i++) out.push(hi ? 1 : 0); hi = !hi; }
+  return Float32Array.from(out);
+}
+
+test('the grid guesses the slicer from the runs in the box, and says why', () => {
+  // PWM as the scene sends it: a one is 2 high and 1 low, a zero 1 high and 2 low
+  const pwm = fromRuns([...'1011001110100101'].flatMap((b) => (b === '1' ? [2, 1] : [1, 2])).slice(0, -1));
+  const a = G.guessCoding(pwm, 0.5, 40);
+  assert.equal(a.op, 'core.pwm_slicer');
+  assert.match(a.why, /a pulse with its gap is always 3\.00/);
+  // NRZ: runs of any length
+  const b = G.guessCoding(fromRuns([1, 3, 2, 1, 1, 4, 2, 1, 3, 1, 2, 2]), 0.5, 40);
+  assert.equal(b.op, 'core.nrz_slicer');
+  assert.match(b.why, /runs of 1 to 4 symbols/);
+  // Manchester at half a symbol a line: each bit is 1-0 or 0-1, so long runs span a middle
+  const bits = '1101000111010010';
+  const halves = [...bits].flatMap((x) => (x === '1' ? [1, 0] : [0, 1]));
+  const runs = []; let last = null;
+  for (const h of halves) { if (h === last) runs[runs.length - 1]++; else { runs.push(1); last = h; } }
+  if (halves[0] === 0) runs.unshift(0.0001);       // fromRuns starts low
+  const m = G.guessCoding(fromRuns(runs.filter((n) => n >= 1)), 0.5, 40);
+  assert.equal(m.op, 'core.manchester');
+  assert.ok(m.half);
+  assert.equal(G.guessCoding(fromRuns([1, 1]), 0.5, 40), null, 'too little to go on');
+});
+
+test('a grid at half a symbol hands a Manchester slicer twice its period', () => {
+  const g = { start: 0, period: 208e-6, count: 40, mode: 'hand', kind: 'nrz' };
+  assert.equal(G.scaleFor(g, 'core.manchester'), 2);
+  assert.equal(G.scaleFor({ ...g, kind: 'manchester' }, 'core.manchester'), 1);
+  assert.equal(G.scaleFor(g, 'core.nrz_slicer'), 1);
+  assert.equal(G.handoff(g, 2).value, 416);
+});
+
+test('slice as: an AM demod and a PWM slicer built from the grid read the burst', async () => {
+  const { MESSAGE } = await import('../src/scene.js');
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  const c = e.root.out.centerHz;
+  e.t = 1.0;
+  const tu = await e.addNode({ parent: e.root.id, op: 'core.tuner', at: 1.0, selection: { f0: c - 50_000, f1: c } });
+  const f = e.frame(tu.id, { spanS: 0.05, trigger: 'auto', quantity: 'amplitude' });
+  const g = G.fitGrid(f.data, f.sampleRate, f.t0, 0, f.data.length);
+  assert.equal(g.coding && g.coding.op, 'core.pwm_slicer', g.coding && g.coding.why);
+  const am = await e.addNode({ parent: tu.id, op: 'core.am_envelope' });
+  const sl = await e.addNode({ parent: am.id, op: g.coding.op });
+  const h = G.handoff(g, G.scaleFor(g, g.coding.op));
+  await e.setParam(sl.id, 'symbolUs', h.value, h.mode, h.extra);
+  e.t = 2.0;
+  const bits = e.frame(sl.id, {});
+  const text = bits.groups.map((gr) => {
+    const bytes = [];
+    for (let i = 0; i + 8 <= gr.bits.length; i += 8) bytes.push(parseInt(gr.bits.slice(i, i + 8).join(''), 2));
+    return String.fromCharCode(...bytes.slice(2));
+  });
+  assert.ok(text.includes(MESSAGE), `read ${JSON.stringify(text)}`);
+});
