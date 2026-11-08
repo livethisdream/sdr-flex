@@ -158,3 +158,21 @@ test('zoomed in, each sample is drawn where its time falls, so a line can be rea
   assert.ok(x520, 'sample 520 is drawn at x = 400');
   assert.ok(pts.every(([x]) => x > -40 && x < 1040), 'only the samples in view, and their neighbors');
 });
+
+test('zoomed in amplitude, a level sits where the view puts it, and the scale is labeled', async () => {
+  globalThis.window ??= { devicePixelRatio: 1 };
+  globalThis.document ??= { documentElement: {} };
+  globalThis.getComputedStyle ??= () => ({ getPropertyValue: () => '' });
+  const { TimeSeries } = await import('../src/views.js');
+  const pts = [], text = [];
+  const ctx = new Proxy({}, { get: (_, k) => k === 'moveTo' || k === 'lineTo' ? (x, y) => pts.push([x, y])
+    : k === 'fillText' ? (t) => text.push(t) : k === 'measureText' ? () => ({ width: 30 }) : () => {}, set: () => true });
+  const ts = new TimeSeries({ clientWidth: 100, clientHeight: 210, width: 0, height: 0, getContext: () => ctx });
+  const data = new Float32Array(400).fill(0.5); data[0] = 1;                // the automatic range is 0 to 1.15
+  ts.draw(data, 0.01, { lo: 0, hi: 1, ylo: 0.25, yhi: 0.75 });
+  // 0.5 is 43.5% up the automatic range, so 37% up the view: H - 4 - 0.37 * (H - 10)
+  const want = 206 - ((0.5 / 1.15 - 0.25) / 0.5) * 200;
+  assert.ok(pts.some(([, y]) => Math.abs(y - want) < 1e-6), `0.5 drawn at y = ${want.toFixed(1)}`);
+  assert.equal(text.length, 5, 'five labels down the side');
+  assert.ok(+text[0] < +text[4], 'they count up the pane');
+});
