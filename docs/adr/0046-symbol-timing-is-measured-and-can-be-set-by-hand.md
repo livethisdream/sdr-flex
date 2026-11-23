@@ -73,6 +73,10 @@ number, and each says where that number came from.
 
   It is a guess, so all three buttons are always there. On the scene's burst it picks PWM,
   and the slicer it builds reads "SDR FLEX".
+- **Then any loaded plugin that reads `real`**, yours or shipped. It is built the same way and
+  handed the grid as `info.grid`, `{ start, period, count, threshold, mode }` in seconds, and
+  its `symbolUs` too if it has a setting by that name. That is how a decoder for one
+  protocol, kept privately in `SDRFLEX_PLUGINS`, gets the timing you measured by eye.
 
 ## Why both
 

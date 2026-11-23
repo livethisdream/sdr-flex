@@ -172,6 +172,18 @@ export class Graph {
     return null;
   }
 
+  /**
+   * The symbol grid "slice as" handed a plugin (ADR-0046), which it reads as `info.grid`:
+   * `{ start, period, count, threshold, mode }`, in seconds. Kept beside the nodes rather
+   * than on one, because a box's snapshot replaces the node and would drop it.
+   */
+  setGrid(nodeId, g) {
+    (this._grids ||= new Map()).set(nodeId, g && {
+      start: g.start, period: g.period, count: g.count, threshold: g.threshold ?? null, mode: g.mode });
+  }
+
+  gridFor(nodeId) { return (this._grids && this._grids.get(nodeId)) || null; }
+
   /** Is the source still being written? */
   isLive() { return !!(this.capture && this.capture.live); }
 
@@ -384,10 +396,20 @@ export class Graph {
       for (const k of Object.keys(n)) if (k[0] === '_') priv[k] = n[k];
       if (Object.keys(priv).length) mine.set(id, priv);
     }
+    // A plugin node lives only in this tab (`local`) and is in no snapshot. It stays as
+    // long as what it reads does; without this, the next change anywhere on the box
+    // dropped it from under the tab that was showing it.
+    const keep = [...this.nodes.values()].filter((n) => n.local);
     this.nodes = new Map();
     for (const n of snapshot.nodes) {
       if (mine.has(n.id)) Object.assign(n, mine.get(n.id));
       this.nodes.set(n.id, n);
+    }
+    for (let more = true; more;) {
+      more = false;
+      for (const n of keep) {
+        if (!this.nodes.has(n.id) && this.nodes.has(n.parent)) { this.nodes.set(n.id, n); more = true; }
+      }
     }
     this.root = snapshot.root ? this.nodes.get(snapshot.root) : null;
     this.letters = snapshot.letters;

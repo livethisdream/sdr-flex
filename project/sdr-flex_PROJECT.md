@@ -1893,6 +1893,18 @@ want both options." So the grid measures itself first and can then be taken over
   the readout offers PWM · NRZ · Manchester, highlights a guess from the runs in the box, and
   builds AM demod plus slicer with the grid's period, then opens the bits. On the scene: PWM,
   "SDR FLEX". Open: on a phone the Bits view's hex and text columns are off the right edge.
+- **Private plugins (2026-11-23):** asked to slice with their own decoders, kept private.
+  `SDRFLEX_PLUGINS` is now a list that adds to `web/plugins/` instead of replacing it, and
+  its files are badged **yours**. "Slice as" lists every loaded `real` plugin and hands it
+  the grid as `info.grid`. Three bugs on a box surfaced on the way and are fixed: plugins
+  were only ever fed bytes, a tab-only plugin node vanished at the next snapshot, and a
+  plugin pane showed "nothing decoded" while the capture played.
+  - On hermes the user's folder is `~/sdrflex-plugins`, mounted read-only at `/plugins` by
+    the local override. Their Hunter fan decoder lives there and nowhere in this repository.
+    It reads the recordings as a sync pulse plus 12 bits per frame, not the 4 + 13 their
+    notes say, so it reports raw bits and leaves the address split as a setting.
+  - Open: on a phone, a record row with several fields squeezes its text into a narrow
+    column. It's the same problem as the Bits view.
 - **Use for …:** a hand grid pins `symbolUs` with a note; an auto grid keeps it auto and points
   it at the box (`symbolUs.span`), where NRZ and Manchester measure with the same refinement.
   `setParam` gained a fifth argument, `{ from, span }`, carried over the socket.

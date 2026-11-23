@@ -85,7 +85,7 @@ export function remembered() { return readStore(); }
 export async function restore() {
   const out = { loaded: [], failed: [] };
   for (const p of readStore()) {
-    try { out.loaded.push(await loadSource(p.source, p.filename)); }
+    try { out.loaded.push(await loadSource(p.source, p.filename, 'dropped on this browser')); }
     catch (err) { out.failed.push({ filename: p.filename, error: err.message }); forget(p.id); }
   }
   return out;
@@ -141,25 +141,27 @@ function validate(m, where) {
  * could work inside would be a research project; this is a tool you run on your own
  * machine against your own captures, and the control is that you choose the file.
  */
-export async function loadSource(source, filename = 'plugin.js') {
+export async function loadSource(source, filename = 'plugin.js', local = null) {
   const url = 'data:text/javascript;charset=utf-8,' + encodeURIComponent(source);
   const mod = await import(/* @vite-ignore */ url);
   const m = validate(mod.manifest, filename);
   if (typeof mod.decode !== 'function') throw new Error(`${filename}: no decode() export`);
-  const entry = { ...m, decode: mod.decode, filename, source };
+  // `local` says where a plugin of yours came from, for the menu's "yours" badge; the
+  // shipped ones have none.
+  const entry = { ...m, decode: mod.decode, filename, source, ...(local ? { local } : {}) };
   registry.set(m.id, entry);
   return entry;
 }
 
 export async function loadFile(file) {
-  return loadSource(await file.text(), file.name);
+  return loadSource(await file.text(), file.name, 'dropped on this browser');
 }
 
 /** The plugins a server keeps, loaded into this tab. Failures are reported, not thrown. */
 export async function loadAll(sources) {
   const out = { loaded: [], failed: [] };
   for (const s of sources || []) {
-    try { out.loaded.push(await loadSource(s.source, s.filename)); }
+    try { out.loaded.push(await loadSource(s.source, s.filename, s.local || null)); }
     catch (err) { out.failed.push({ filename: s.filename, error: err.message }); }
   }
   return out;

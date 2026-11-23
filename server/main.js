@@ -39,9 +39,12 @@ export const CONFIG = {
   // box where /tmp is a small tmpfs, sixty seconds of 2.4 MS/s cu8 is 288 MB of RAM,
   // so this is worth being able to point at a disk.
   ringDir: process.env.SDRFLEX_RINGS || os.tmpdir(),
-  // Decoders the box offers every tab. The default is the directory in this repository,
-  // so what ships with the tool is actually in the tool.
-  pluginDir: process.env.SDRFLEX_PLUGINS || path.join(HERE, '..', 'web', 'plugins'),
+  // Decoders the box offers every tab: the directory in this repository, so what ships
+  // with the tool is actually in the tool, and then yours. `SDRFLEX_PLUGINS` is a list
+  // like PATH and adds to the shipped ones rather than replacing them, so a private
+  // decoder does not cost you DTMF. A file of yours with a shipped id wins.
+  pluginDir: path.join(HERE, '..', 'web', 'plugins'),
+  myPluginDirs: (process.env.SDRFLEX_PLUGINS || '').split(path.delimiter).filter(Boolean),
   // Decoders you added (ADR-0026). Unset by default: an adapter is a command line, so
   // this directory only exists because you said where it is.
   adapterDir: process.env.SDRFLEX_ADAPTERS || null,
@@ -228,13 +231,24 @@ function serveStatic(req, res, webDir, sessions = null) {
   });
 }
 
-export function createServer({ webDir, captureDir, quiet, ringDir, pluginDir,
+/** The plugin directories that exist: the shipped one, then yours, marked as yours. */
+export function pluginRoots(shipped, mine = [], log = () => {}) {
+  const out = shipped && fs.existsSync(shipped) ? [{ root: shipped, local: null }] : [];
+  for (const root of mine) {
+    if (fs.existsSync(root)) out.push({ root, local: 'from your plugin folder' });
+    else log(`SDRFLEX_PLUGINS names ${root}, which is not there`);
+  }
+  return out;
+}
+
+export function createServer({ webDir, captureDir, quiet, ringDir, pluginDir, myPluginDirs = [],
                                sessionDir = sessionDirFor(captureDir) } = CONFIG) {
   const log = quiet ? () => {} : (...a) => console.log('[sdr-flex]', ...a);
   const library = captureDir && fs.existsSync(captureDir) ? new Library(captureDir) : null;
   if (!library) log(`no capture directory at ${captureDir} — the synthetic scene only`);
   const dir = pluginDir === undefined ? CONFIG.pluginDir : pluginDir;
-  const plugins = dir && fs.existsSync(dir) ? new PluginDir(dir) : null;
+  const roots = pluginRoots(dir, myPluginDirs, log);
+  const plugins = roots.length ? new PluginDir(roots) : null;
 
   const sessions = sessionDir ? new SessionStore(sessionDir) : null;
   // Started now rather than when the first visitor arrives, who would otherwise get the slow
@@ -347,9 +361,9 @@ export async function start(cfg = CONFIG) {
       const n = library.list().length;
       log(`${n} capture${n === 1 ? '' : 's'} in ${cfg.captureDir}`);
     }
-    if (cfg.pluginDir && fs.existsSync(cfg.pluginDir)) {
-      const n = new PluginDir(cfg.pluginDir).list().length;
-      log(`${n} plugin${n === 1 ? '' : 's'} in ${cfg.pluginDir}`);
+    for (const r of pluginRoots(cfg.pluginDir, cfg.myPluginDirs)) {
+      const n = new PluginDir([r]).list().length;
+      log(`${n} plugin${n === 1 ? '' : 's'} in ${r.root}${r.local ? ' (yours)' : ''}`);
     }
     const table = adapters.list();
     log(`${decoders} of ${table.length} external decoders installed: ` +
