@@ -1444,7 +1444,7 @@ export class MockEngine extends Graph {
     }
     const args = {};
     for (const [k, v] of Object.entries(n.params)) args[k] = v.value;
-    const out = plugins.run(n.plugin, src.data, args, src.info);
+    const out = plugins.run(n.plugin, src.data, args, { ...src.info, grid: this.gridFor(nodeId) });
     n._records = out;
     return out;
   }
@@ -1495,7 +1495,8 @@ export class MockEngine extends Graph {
     // rule, applied to a kind that is not opaque at all).
     const pl = plugins.forKind(n.out.kind)
       .map((p) => ({ id: p.id, name: p.name, group: p.group || 'Decode',
-                     in: p.in, out: p.out, external: true }));
+                     in: p.in, out: p.out, external: true,
+                     ...(p.local ? { local: p.local, localWhy: p.local } : {}) }));
     return built.concat(ext, pl);
   }
 

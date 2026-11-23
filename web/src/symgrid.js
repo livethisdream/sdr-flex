@@ -49,14 +49,63 @@ export function fitGrid(data, fs, t0, a, b, kind = 'nrz') {
   const first = phase + P * Math.ceil((0 - phase) / P - 1e-9);       // first line in the box
   const count = Math.max(1, Math.floor((box.length - first) / P));
   const g = {
-    start: t0 + (a + first) / fs, period: P / fs, count, mode: 'auto',
+    start: t0 + (a + first) / fs, period: P / fs, count, mode: 'auto', kind,
     threshold: thr, confident: best.agreement > 0.6, agreement: best.agreement,
+    coding: guessCoding(box, thr, P, phase),
   };
   const r = residual(g, edges.map((e) => t0 + (a + e) / fs));
   g.from = `${edges.length} edges in the box agree on ${fmtUs(g.period)} (${Math.round(best.agreement * 100)}%)` +
     (r != null ? `, within ±${fmtUs(r)} of the lines` : '') +
     (g.confident ? '' : ' — they do not agree well, so this is a guess');
   return g;
+}
+
+/**
+ * Which slicer the box looks like it wants, from its runs measured in grid periods `P`
+ * (samples), with the lines at `phase`. Returns `{ op, why }`, `half` when the lines are half
+ * symbols, or null with too little to go on. It is a guess, and `why` says what it rests on.
+ *
+ * - PWM: pulses of two widths, one and two periods, and every pulse with the gap after it
+ *   the same length, because each bit takes the same time.
+ * - Manchester, fitted at half a symbol (its edges come every half): every run one or two
+ *   periods, and the long runs all start on alternate lines, because they span a symbol's
+ *   middle.
+ * - NRZ: otherwise; runs of one to several periods, with no fixed pulse shape.
+ */
+export function guessCoding(x, threshold, P, phase = 0) {
+  const runs = [];
+  let hi = x[0] > threshold, start = 0;
+  for (let i = 1; i <= x.length; i++) {
+    const h = i < x.length ? x[i] > threshold : !hi;
+    if (h !== hi) { runs.push({ hi, n: (i - start) / P, at: (start - phase) / P }); hi = h; start = i; }
+  }
+  runs.shift(); runs.pop();                                      // cut off by the box
+  const GAP = 4.5;                                               // longer lows are between bursts
+  const sym = runs.filter((r) => r.hi || r.n < GAP);
+  if (sym.length < 6) return null;
+  const near = (v, k) => Math.abs(v - k) < 0.3;
+  const highs = sym.filter((r) => r.hi).map((r) => r.n);
+  const sums = [];
+  for (let k = 0; k + 1 < runs.length; k++) {
+    if (runs[k].hi && !runs[k + 1].hi && runs[k + 1].n < GAP) sums.push(runs[k].n + runs[k + 1].n);
+  }
+  const mean = sums.reduce((a, v) => a + v, 0) / Math.max(1, sums.length);
+  const sd = Math.sqrt(sums.reduce((a, v) => a + (v - mean) ** 2, 0) / Math.max(1, sums.length));
+  const one = highs.filter((v) => near(v, 1)).length, two = highs.filter((v) => near(v, 2)).length;
+  if (sums.length >= 4 && sd < 0.25 && one && two && one + two >= 0.9 * highs.length) {
+    return { op: 'core.pwm_slicer',
+             why: `pulses are 1 or 2 symbols long, and a pulse with its gap is always ${mean.toFixed(2)}` };
+  }
+  const twos = sym.filter((r) => near(r.n, 2)).map((r) => ((Math.round(r.at) % 2) + 2) % 2);
+  if (sym.every((r) => near(r.n, 1) || near(r.n, 2)) && twos.length >= 4) {
+    const odd = twos.filter((p) => p === 1).length;
+    if (Math.max(odd, twos.length - odd) >= 0.9 * twos.length) {
+      return { op: 'core.manchester', half: true,
+               why: 'runs are 1 or 2 lines long and the long ones all start on alternate lines, so a symbol is 2 lines' };
+    }
+  }
+  const longest = Math.round(Math.max(...sym.map((r) => r.n)));
+  return { op: 'core.nrz_slicer', why: `runs of 1 to ${longest} symbols, with no fixed pulse shape` };
 }
 
 /** RMS distance, in seconds, from each edge inside the grid to its nearest line. */
@@ -112,16 +161,24 @@ export function describe(g) {
 }
 
 /**
+ * How many grid periods make one of `op`'s symbols: two for Manchester when the grid was
+ * fitted to its edges, which come every half symbol.
+ */
+export function scaleFor(g, op) {
+  return op === 'core.manchester' && g.kind !== 'manchester' ? 2 : 1;
+}
+
+/**
  * What "use this" writes into a slicer's symbol period: the value, its mode, and where it
  * came from. A hand grid pins the value; an auto grid leaves the slicer auto but points it
  * at the box, so it measures there with its own estimator.
  */
-export function handoff(g) {
-  const us = +(g.period * 1e6).toFixed(2);
+export function handoff(g, scale = 1) {
+  const us = +(g.period * scale * 1e6).toFixed(2);
   const width = g.count * g.period;
   if (g.mode === 'hand') {
     return { value: us, mode: 'manual',
-             extra: { from: `set by hand: ${g.count} symbols over ${fmtUs(width)}` } };
+             extra: { from: `set by hand: ${g.count / scale} symbols over ${fmtUs(width)}` } };
   }
   return { value: us, mode: 'auto',
            extra: { from: `the symbol grid — ${g.from}`, span: { t0: g.start, t1: g.start + width } } };

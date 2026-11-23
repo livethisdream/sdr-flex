@@ -281,7 +281,8 @@ export class RemoteEngine extends Graph {
     if (!n) return r.ops;
     const ext = plugins.forKind(n.out.kind)
       .map((p) => ({ id: p.id, name: p.name, group: p.group || 'Decode',
-                     in: p.in, out: p.out, external: true }));
+                     in: p.in, out: p.out, external: true,
+                     ...(p.local ? { local: p.local, localWhy: p.local } : {}) }));
     const have = new Set(r.ops.map((o) => o.id));
     return r.ops.concat(ext.filter((o) => !have.has(o.id)));
   }
@@ -482,11 +483,13 @@ export class RemoteEngine extends Graph {
     const n = this.node(nodeId);
     if (!n || !n.plugin) return null;
     const p = this.node(n.parent);
-    const src = p.out.kind === 'bytes' ? await this.sliceBytes(p.id) : null;
-    if (!src) return { records: [], error: 'nothing upstream has produced bytes yet' };
+    // Samples or bytes by the parent's kind, as the in-tab engine does. This read bytes
+    // whatever the manifest said, so on a box a decoder on `real` built and found nothing.
+    const src = await this.pluginFeed(p.id);
+    if (!src) return { records: [], error: `nothing upstream has produced ${p.out.kind} yet` };
     const args = {};
     for (const [k, v] of Object.entries(n.params)) args[k] = v.value;
-    const out = plugins.run(n.plugin, src.bytes, args);
+    const out = plugins.run(n.plugin, src.data, args, { ...src.info, grid: this.gridFor(nodeId) });
     n._records = out;
     return out;
   }

@@ -28,7 +28,7 @@ dependency is the Anthropic SDK, for the optional [assistant](#the-assistant); `
 | `SDRFLEX_CAPTURES` | `./captures` | Directory of captures to offer |
 | `SDRFLEX_WEB` | `../web` | The client to serve |
 | `SDRFLEX_RINGS` | the system temp directory | Where live recordings are kept |
-| `SDRFLEX_PLUGINS` | `../web/plugins` | Decoders the box offers every tab |
+| `SDRFLEX_PLUGINS` | unset | More decoders for every tab, beside the shipped `../web/plugins`: a list of directories, like `PATH` |
 | `SDRFLEX_SESSIONS` | `<captures>/.sessions` | Saved sessions. Inside the capture directory because that is the directory you mounted — one beside the source tree is one a rebuild deletes. No capture directory, no sessions |
 | `SDRFLEX_ENGINE` | found at startup | `gnuradio` requires GNU Radio and stops with the reason if there is none. Any other value, such as `js`, runs the built-in JavaScript engine. Unset, GNU Radio is used when it is found |
 | `SDRFLEX_GR_PYTHON` | `python3`, then radioconda's | The Python that has GNU Radio. Any installation works, because the server starts that Python rather than linking against GNU Radio |
@@ -381,7 +381,7 @@ adapters instead.
 
 Two places a decoder can come from, with deliberately different trust stories:
 
-- **The box.** Every `.js` file in `SDRFLEX_PLUGINS` is sent to every tab that connects
+- **The box.** Every `.js` file in `web/plugins/` and in `SDRFLEX_PLUGINS` is sent to every tab that connects
   and loaded there. Those are the operator's own files — the same trust as the capture
   directory — and it is how a decoder that ships with the tool is actually in the tool.
 - **Your browser.** A file dropped on the window is kept in that browser and nowhere

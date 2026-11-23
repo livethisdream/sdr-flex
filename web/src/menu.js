@@ -108,7 +108,7 @@ export class ContextMenu {
     const item = (o, cls) =>
       `<button class="ctx-i${cls ? ' ' + cls : ''}${o.stub ? ' stub' : ''}"` +
       ` data-op="${o.id}"${o.key && !o.stub ? ` data-key="${o.key}"` : ''}${o.hint ? ` title="${o.hint}"` : ''}>${o.name}` +
-      `${o.local ? `<span class="ext mine" title="from your ${o.local} pack">yours</span>`
+      `${o.local ? `<span class="ext mine" title="${o.localWhy || `from your ${o.local} pack`}">yours</span>`
         : o.external ? '<span class="ext">ext</span>'
         // A recipe: a saved arrangement of GNU Radio blocks (ADR-0043), not one operation.
         : o.recipe ? '<span class="ext rcp" title="a recipe: a GNU Radio Companion hier block in recipes/">recipe</span>' : ''}` +

@@ -159,10 +159,14 @@ export function decode(data, params, info) { … }   // → [{ text, … }]
 and whichever the parent happens to be for `*`.
 
 **`info` is what a decoder cannot work out for itself**: `{ kind, sampleRate, centerHz,
-count, t0, t1 }`. Anything reading samples needs the rate — a tone decoder that assumes
+count, t0, t1, grid }`. Anything reading samples needs the rate — a tone decoder that assumes
 8 kHz and is handed 48 reports every digit as a different one. It is a third argument so
 that a decoder which does not care never has to mention it; every plugin written against
 the two-argument form still works.
+
+**`grid`** is the symbol grid, when the plugin was built from one with "slice as"
+(ADR-0046): `{ start, period, count, threshold, mode }`, in seconds. It is `null` otherwise,
+so a decoder that uses it needs a fallback.
 
 **How much it gets**: the whole span, or the pinned clip if there is one — the same rule
 an external decoder gets, because one handed the two hundred milliseconds that happen to
@@ -175,6 +179,17 @@ samples through `readSpan`, on demand and cached, on the engine's clock — and 
 routes a read through a JS function. Such a node would build, appear in the menu and
 produce nothing, so it is refused at load with that reason rather than at run time with
 a shrug. The general block is a real thing to want and a different piece of work.
+
+## Keeping your own
+
+A decoder for one remote, one meter, one thing on your bench is yours, and does not belong
+in this repository. Two places keep it:
+
+- **`SDRFLEX_PLUGINS`** on the box: a list of directories, like `PATH`, read *after* the
+  shipped `web/plugins/`, so yours add to them rather than replacing them, and a file of
+  yours with a shipped id wins. With Docker, mount the directory read-only and point the
+  variable at it. The menu badges these **yours**.
+- **Dropping the file on the window**, which keeps it in that browser only.
 
 ## Distribution
 

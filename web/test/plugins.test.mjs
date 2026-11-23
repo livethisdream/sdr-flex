@@ -230,3 +230,88 @@ test('the shipped decoder is planned and read off a byte stream, with no box any
   assert.deepEqual(rows[0].sample, [message]);
   assert.equal(rows[0].thin, false);
 });
+
+// ── your own folder, beside the shipped one ─────────────────────────────────
+
+test('a box reads the shipped folder and then yours, and marks yours', async () => {
+  const os = await import('node:os');
+  const { PluginDir } = await import('../../server/plugindir.js');
+  const { pluginRoots } = await import('../../server/main.js');
+  const mine = fs.mkdtempSync(path.join(os.tmpdir(), 'sdrflex-mine-'));
+  fs.writeFileSync(path.join(mine, 'pulses.js'), src({ id: 't.mine', name: 'mine', in: 'real', out: 'events' }));
+  const roots = pluginRoots(DIR, [mine, path.join(mine, 'not-there')]);
+  assert.deepEqual(roots.map((r) => !!r.local), [false, true], 'a folder that is not there is skipped');
+  const list = new PluginDir(roots).list();
+  const shipped = list.filter((f) => !f.local).map((f) => f.filename);
+  assert.ok(shipped.includes('dtmf.js'), 'adding yours does not cost the shipped ones');
+  const last = list[list.length - 1];
+  assert.equal(last.filename, 'pulses.js', 'yours come last, so on a shared id yours wins');
+  const got = await plugins.loadAll([last]);
+  assert.match(got.loaded[0].local, /plugin folder/);
+});
+
+// ── "slice as" a plugin, handed the grid ────────────────────────────────────
+
+/** A made-up pulse-width decoder: it knows nothing of the burst but what the grid says. */
+const PULSES = src({ id: 't.pulses', name: 'pulse widths', in: 'real', out: 'events' }, `
+export function decode(x, params, info) {
+  const g = info.grid; if (!g) return [{ text: 'no grid' }];
+  const P = g.period * info.sampleRate;
+  let lo = Infinity, hi = -Infinity;
+  for (const v of x) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const thr = (lo + hi) / 2, out = [];
+  let bits = [], run = 0, high = false;
+  const end = () => { if (bits.length >= 16) out.push(bits); bits = []; };
+  for (let i = 0; i <= x.length; i++) {
+    const h = i < x.length && x[i] > thr;
+    if (h === high) { run++; continue; }
+    const n = run / P;
+    if (high) bits.push(n > 1.5 ? 1 : 0); else if (n > 4.5) end();
+    high = h; run = 1;
+  }
+  end();
+  return out.map((b) => {
+    const bytes = [];
+    for (let i = 0; i + 8 <= b.length; i += 8) bytes.push(parseInt(b.slice(i, i + 8).join(''), 2));
+    return { text: String.fromCharCode(...bytes.slice(2)), bits: b.length };
+  });
+}`);
+
+test('slice as a plugin: it is handed the grid, and reads the burst with it', async () => {
+  const { MockEngine } = await import('../src/engine.js');
+  const G = await import('../src/symgrid.js');
+  const { MESSAGE } = await import('../src/scene.js');
+  await plugins.loadSource(PULSES, 'pulses.js', 'from your plugin folder');
+  const e = new MockEngine({ latency: false });
+  await e.createSession();
+  const c = e.root.out.centerHz;
+  e.t = 1.0;
+  const tu = await e.addNode({ parent: e.root.id, op: 'core.tuner', at: 1.0, selection: { f0: c - 50_000, f1: c } });
+  const f = e.frame(tu.id, { spanS: 0.05, trigger: 'auto', quantity: 'amplitude' });
+  const g = G.fitGrid(f.data, f.sampleRate, f.t0, 0, f.data.length);
+  const am = await e.addNode({ parent: tu.id, op: 'core.am_envelope' });
+  const pl = await e.addNode({ parent: am.id, op: 't.pulses' });
+  assert.equal(pl.plugin, 't.pulses');
+  assert.equal((await e.runPlugin(pl.id)).records[0].text, 'no grid', 'nothing is handed over unasked');
+  e.setGrid(pl.id, g);
+  assert.ok(Math.abs(e.gridFor(pl.id).period - g.period) < 1e-12);
+  e.t = 2.0;
+  const out = await e.runPlugin(pl.id);
+  assert.ok(!out.error, out.error);
+  assert.ok(out.records.some((r) => r.text === MESSAGE), `read ${JSON.stringify(out.records.map((r) => r.text))}`);
+});
+
+test('a plugin node on a box survives the next snapshot, while what it reads does', async () => {
+  // It lives only in the tab, so no snapshot carries it; adopting one used to drop it.
+  const { Graph } = await import('../src/graph.js');
+  const g = new Graph();
+  const root = { id: 'n1', parent: null, op: 'core.source', out: { kind: 'iq' } };
+  const am = { id: 'n2', parent: 'n1', op: 'core.am_envelope', out: { kind: 'real' } };
+  g._adopt({ root: 'n1', nodes: [root, am] });
+  g.nodes.set('p1', { id: 'p1', parent: 'n2', plugin: 't.pulses', local: true, out: { kind: 'events' } });
+  g.nodes.set('p2', { id: 'p2', parent: 'p1', plugin: 't.pulses', local: true, out: { kind: 'events' } });
+  g._adopt({ root: 'n1', nodes: [{ ...root }, { ...am }] });
+  assert.ok(g.node('p1') && g.node('p2'), 'kept, and so is one built on it');
+  g._adopt({ root: 'n1', nodes: [{ ...root }] });
+  assert.equal(g.node('p1'), undefined, 'gone with its parent');
+});

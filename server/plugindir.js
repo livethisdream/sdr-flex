@@ -18,21 +18,31 @@ import path from 'node:path';
 const MAX_BYTES = 1 << 20;
 
 export class PluginDir {
-  constructor(root) { this.root = root; }
+  /**
+   * `roots` is a directory, or a list of `{ root, local }` read in order. `local` marks
+   * the files as yours rather than shipped, which the menu badges; a later directory's
+   * file is sent later, so on a shared id yours is the one the tab keeps.
+   */
+  constructor(roots) {
+    this.roots = typeof roots === 'string' ? [{ root: roots, local: null }] : roots;
+  }
 
-  /** Every `.js` in the directory, with its source. Unreadable files are skipped. */
+  /** Every `.js` in the directories, with its source. Unreadable files are skipped. */
   list() {
-    let names;
-    try { names = fs.readdirSync(this.root); } catch { return []; }
     const out = [];
-    for (const name of names.sort()) {
-      if (!/\.js$/i.test(name)) continue;
-      const full = path.join(this.root, name);
-      try {
-        const st = fs.statSync(full);
-        if (!st.isFile() || st.size > MAX_BYTES) continue;
-        out.push({ filename: name, source: fs.readFileSync(full, 'utf8'), bytes: st.size });
-      } catch { /* vanished or unreadable between the listing and the read */ }
+    for (const { root, local } of this.roots) {
+      let names;
+      try { names = fs.readdirSync(root); } catch { continue; }
+      for (const name of names.sort()) {
+        if (!/\.js$/i.test(name)) continue;
+        const full = path.join(root, name);
+        try {
+          const st = fs.statSync(full);
+          if (!st.isFile() || st.size > MAX_BYTES) continue;
+          out.push({ filename: name, source: fs.readFileSync(full, 'utf8'), bytes: st.size,
+                     ...(local ? { local } : {}) });
+        } catch { /* vanished or unreadable between the listing and the read */ }
+      }
     }
     return out;
   }
